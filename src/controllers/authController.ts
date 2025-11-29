@@ -3,6 +3,7 @@ import User from '../models/User';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { generateToken } from '../utils/generateToken';
 import { AppError } from '../middleware/errorHandler';
+import { AuthRequest } from '../middleware/auth';
 
 interface SignupRequest extends Request {
   body: {

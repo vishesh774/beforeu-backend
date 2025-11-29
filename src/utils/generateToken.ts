@@ -13,8 +13,9 @@ export const generateToken = (payload: TokenPayload): string => {
     throw new Error('JWT_SECRET is not defined in environment variables');
   }
 
+  // Type assertion to handle StringValue type from jsonwebtoken
   return jwt.sign(payload, secret, {
-    expiresIn
+    expiresIn: expiresIn as any
   });
 };
 

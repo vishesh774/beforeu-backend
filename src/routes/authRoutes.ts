@@ -4,7 +4,6 @@ import { sendOTP, verifyOTPController, completeProfile } from '../controllers/ot
 import { signupValidator, loginValidator } from '../validators/authValidator';
 import { validate } from '../middleware/validate';
 import { protect } from '../middleware/auth';
-import { body } from 'express-validator';
 
 const router = express.Router();
 

@@ -10,7 +10,7 @@ export interface AuthRequest extends Request {
   };
 }
 
-export const protect = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+export const protect = async (req: AuthRequest, _res: Response, next: NextFunction): Promise<void> => {
   try {
     let token: string | undefined;
 
