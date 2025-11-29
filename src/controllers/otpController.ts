@@ -72,7 +72,7 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
   // User exists - generate token and return user data
   const token = generateToken({
     userId: user._id.toString(),
-    email: user.email
+    email: user.email || undefined
   });
 
   res.status(200).json({
@@ -84,6 +84,7 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
         name: user.name,
         email: user.email,
         phone: user.phone,
+        role: user.role,
         credits: user.credits,
         activePlanId: user.activePlanId,
         familyMembers: user.familyMembers,
@@ -101,8 +102,8 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
 export const completeProfile = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { phone, name, email } = req.body;
 
-  if (!phone || !name || !email) {
-    return next(new AppError('Phone, name, and email are required', 400));
+  if (!phone || !name) {
+    return next(new AppError('Phone and name are required', 400));
   }
 
   // Verify that OTP was verified for this phone
@@ -123,15 +124,18 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   if (user) {
     // Update existing user
     user.name = name;
-    user.email = email;
+    if (email) {
+      user.email = email;
+    }
     await user.save();
   } else {
-    // Create new user
+    // Create new user with default role as 'customer'
     user = await User.create({
       name,
-      email,
+      email: email || '',
       phone,
       password: 'temp-password-' + Date.now(), // Temporary password, user can set later
+      role: 'customer', // Default role for OTP-based signups
       credits: 0,
       familyMembers: [],
       addresses: []
@@ -141,7 +145,7 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   // Generate token
   const token = generateToken({
     userId: user._id.toString(),
-    email: user.email
+    email: user.email || undefined
   });
 
   res.status(201).json({
@@ -153,6 +157,7 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
         name: user.name,
         email: user.email,
         phone: user.phone,
+        role: user.role,
         credits: user.credits,
         activePlanId: user.activePlanId,
         familyMembers: user.familyMembers,

@@ -1,8 +1,14 @@
 /**
  * Generate a random 6-digit OTP
+ * For testing: Returns hardcoded "123456"
  */
 export const generateOTP = (): string => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  // TODO: Remove hardcoded OTP in production
+  // For testing purposes, return hardcoded OTP
+  return '123456';
+  
+  // Production code (commented out for now):
+  // return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
 /**

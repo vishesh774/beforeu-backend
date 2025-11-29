@@ -5,22 +5,45 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import connectDB from './config/database';
 import authRoutes from './routes/authRoutes';
+import adminRoutes from './routes/adminRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
 // Load environment variables
 dotenv.config();
 
-// Connect to database
-connectDB();
+console.log('🚀 Starting BeforeU Backend Server...');
+console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`🔌 Port: ${process.env.PORT || 5000}`);
 
 const app: Application = express();
+
+// Connect to database (non-blocking - server will start even if DB fails)
+connectDB().catch((error) => {
+  console.error('Failed to connect to database:', error);
+  console.error('Server will continue but database operations will fail');
+  // Don't exit - allow server to start for testing
+  // process.exit(1);
+});
 
 // Security middleware
 app.use(helmet());
 
-// CORS configuration
+// CORS configuration - Allow both customer platform and admin panel
+const allowedOrigins = process.env.CORS_ORIGIN 
+  ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
+  : ['http://localhost:3000', 'http://localhost:3001']; // Customer platform and admin panel
+
 const corsOptions = {
-  origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   optionsSuccessStatus: 200
 };
@@ -39,7 +62,23 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // Routes
+console.log('📝 Registering routes...');
+
+// Root route for testing
+app.get('/', (_req, res) => {
+  res.status(200).json({
+    success: true,
+    message: 'BeforeU API Server',
+    version: '1.0.0',
+    endpoints: {
+      health: '/health',
+      auth: '/api/auth'
+    }
+  });
+});
+
 app.get('/health', (_req, res) => {
+  console.log('✅ Health endpoint called');
   res.status(200).json({
     success: true,
     message: 'Server is running',
@@ -48,6 +87,8 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
+console.log('✅ Routes registered successfully');
 
 // 404 handler
 app.use(notFound);
@@ -57,8 +98,28 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
+// Verify routes are registered before starting server
+console.log('🔍 Verifying route registration...');
+const routes = app._router?.stack || [];
+console.log(`✅ Found ${routes.length} middleware/routes registered`);
+
 app.listen(PORT, () => {
-  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  console.log(`\n✅ ==========================================`);
+  console.log(`🚀 Server SUCCESSFULLY started!`);
+  console.log(`📍 Port: ${PORT}`);
+  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`\n📡 Available endpoints:`);
+  console.log(`   GET  http://localhost:${PORT}/`);
+  console.log(`   GET  http://localhost:${PORT}/health`);
+  console.log(`   POST http://localhost:${PORT}/api/auth/send-otp`);
+  console.log(`   POST http://localhost:${PORT}/api/auth/verify-otp`);
+  console.log(`✅ ==========================================\n`);
+}).on('error', (err: any) => {
+  console.error('❌ Server failed to start:', err);
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use. Kill the process or use a different port.`);
+  }
+  process.exit(1);
 });
 
 export default app;

@@ -1,11 +1,15 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
+export type UserRole = 'customer' | 'Admin' | 'Supervisor' | 'Incharge';
+
 export interface IUser extends Document {
   name: string;
   email: string;
   phone: string;
   password: string;
+  role: UserRole;
+  isActive: boolean;
   activePlanId?: string;
   credits: number;
   familyMembers: Array<{
@@ -52,14 +56,19 @@ const UserSchema = new Schema<IUser>(
     },
     email: {
       type: String,
-      required: [true, 'Please provide an email'],
+      required: false,
       unique: true,
+      sparse: true, // Allows multiple null/empty values
       lowercase: true,
       trim: true,
-      match: [
-        /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/,
-        'Please provide a valid email'
-      ]
+      validate: {
+        validator: function(v: string) {
+          // Allow empty string, but if provided, must be valid email
+          return !v || /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(v);
+        },
+        message: 'Please provide a valid email'
+      },
+      default: ''
     },
     phone: {
       type: String,
@@ -72,6 +81,17 @@ const UserSchema = new Schema<IUser>(
       required: [true, 'Please provide a password'],
       minlength: [6, 'Password must be at least 6 characters'],
       select: false // Don't return password by default
+    },
+    role: {
+      type: String,
+      enum: ['customer', 'Admin', 'Supervisor', 'Incharge'],
+      default: 'customer',
+      required: true
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+      required: true
     },
     activePlanId: {
       type: String,
@@ -96,18 +116,15 @@ const UserSchema = new Schema<IUser>(
 );
 
 // Hash password before saving
-(UserSchema as any).pre('save', async function (this: IUser, next: (err?: Error) => void) {
+UserSchema.pre('save', async function (this: IUser) {
+  // Skip if password hasn't been modified
   if (!this.isModified('password')) {
-    return next();
+    return;
   }
 
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error as Error);
-  }
+  // Hash the password
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
 });
 
 // Method to compare password
