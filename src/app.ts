@@ -98,7 +98,7 @@ app.use(notFound);
 // Error handler
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 5000
 
 // Verify routes are registered before starting server
 console.log('🔍 Verifying route registration...');
@@ -108,7 +108,7 @@ console.log(`✅ Found ${routes.length} middleware/routes registered`);
 app.listen(PORT, () => {
   console.log(`\n✅ ==========================================`);
   console.log(`🚀 Server SUCCESSFULLY started!`);
-  console.log(`📍 Port: ${PORT}`);
+  console.log(`📍 Listening on 0.0.0.0:${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
 }).on('error', (err: any) => {
   console.error('❌ Server failed to start:', err);
