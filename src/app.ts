@@ -18,14 +18,6 @@ console.log(`🔌 Port: ${process.env.PORT || 5000}`);
 
 const app: Application = express();
 
-// Connect to database (non-blocking - server will start even if DB fails)
-connectDB().catch((error) => {
-  console.error('Failed to connect to database:', error);
-  console.error('Server will continue but database operations will fail');
-  // Don't exit - allow server to start for testing
-  // process.exit(1);
-});
-
 // Security middleware
 app.use(helmet());
 
@@ -118,18 +110,34 @@ console.log('🔍 Verifying route registration...');
 const routes = app._router?.stack || [];
 console.log(`✅ Found ${routes.length} middleware/routes registered`);
 
-app.listen(PORT, () => {
-  console.log(`\n✅ ==========================================`);
-  console.log(`🚀 Server SUCCESSFULLY started!`);
-  console.log(`📍 Listening on 0.0.0.0:${PORT}`);
-  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-}).on('error', (err: any) => {
-  console.error('❌ Server failed to start:', err);
-  if (err.code === 'EADDRINUSE') {
-    console.error(`❌ Port ${PORT} is already in use. Kill the process or use a different port.`);
+// Connect to database and then start server
+const startServer = async () => {
+  try {
+    console.log('🔄 Connecting to database...');
+    await connectDB();
+    console.log('✅ Database connection established');
+    
+    app.listen(PORT, () => {
+      console.log(`\n✅ ==========================================`);
+      console.log(`🚀 Server SUCCESSFULLY started!`);
+      console.log(`📍 Listening on 0.0.0.0:${PORT}`);
+      console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`📍 Database: Connected`);
+    }).on('error', (err: any) => {
+      console.error('❌ Server failed to start:', err);
+      if (err.code === 'EADDRINUSE') {
+        console.error(`❌ Port ${PORT} is already in use. Kill the process or use a different port.`);
+      }
+      process.exit(1);
+    });
+  } catch (error) {
+    console.error('❌ Failed to connect to database:', error);
+    console.error('❌ Server cannot start without database connection');
+    process.exit(1);
   }
-  process.exit(1);
-});
+};
+
+startServer();
 
 export default app;
 

@@ -5,9 +5,9 @@ const connectDB = async (): Promise<void> => {
     const mongoURI = process.env.MONGODB_URI;
     
     if (!mongoURI) {
-      console.warn('⚠️  MONGODB_URI is not defined in environment variables');
-      console.warn('⚠️  Server will start but database operations will fail');
-      return;
+      const error = new Error('MONGODB_URI is not defined in environment variables');
+      console.error('❌', error.message);
+      throw error;
     }
 
     // Connection options optimized for cloud deployments (Fly.io, etc.)
@@ -24,11 +24,14 @@ const connectDB = async (): Promise<void> => {
     const conn = await mongoose.connect(mongoURI, options);
 
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+    
+    // Ensure connection is ready before proceeding
+    if (mongoose.connection.readyState !== 1) {
+      throw new Error('MongoDB connection not ready after connect');
+    }
   } catch (error) {
     console.error('❌ Error connecting to MongoDB:', error);
-    console.warn('⚠️  Server will continue but database operations will fail');
-    // Don't exit - allow server to start for testing
-    // process.exit(1);
+    throw error; // Re-throw to allow caller to handle
   }
 };
 
