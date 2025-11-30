@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import User from '../models/User';
+import Address from '../models/Address';
+import FamilyMember from '../models/FamilyMember';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { generateToken } from '../utils/generateToken';
 import { AppError } from '../middleware/errorHandler';
@@ -190,6 +193,182 @@ export const getMe = asyncHandler(async (req: Request, res: Response, next: Next
   res.status(200).json({
     success: true,
     data: {
+      user: userData
+    }
+  });
+});
+
+// @desc    Add a new address for the authenticated user
+// @route   POST /api/auth/addresses
+// @access  Private
+export const addAddress = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { label, fullAddress, area, coordinates, isDefault } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  if (!label || !fullAddress) {
+    return next(new AppError('Label and full address are required', 400));
+  }
+
+  // Convert userId string to ObjectId
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Generate unique address ID
+  const addressId = `addr-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  // If this is set as default, unset all other default addresses
+  if (isDefault) {
+    await Address.updateMany(
+      { userId: userIdObj },
+      { isDefault: false }
+    );
+  }
+
+  // Create the address
+  const address = await Address.create({
+    userId: userIdObj,
+    id: addressId,
+    label,
+    fullAddress,
+    area: area || undefined,
+    coordinates: coordinates ? {
+      lat: coordinates.lat,
+      lng: coordinates.lng
+    } : undefined,
+    isDefault: isDefault || false
+  });
+
+  // Aggregate updated user data
+  const userData = await aggregateUserData(userIdObj);
+
+  res.status(201).json({
+    success: true,
+    data: {
+      address: {
+        id: address.id,
+        label: address.label,
+        fullAddress: address.fullAddress,
+        area: address.area,
+        coordinates: address.coordinates,
+        isDefault: address.isDefault
+      },
+      user: userData
+    }
+  });
+});
+
+// @desc    Update an existing address for the authenticated user
+// @route   PUT /api/auth/addresses/:id
+// @access  Private
+export const updateAddress = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { id } = req.params;
+  const { label, fullAddress, area, coordinates, isDefault } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  if (!label || !fullAddress) {
+    return next(new AppError('Label and full address are required', 400));
+  }
+
+  // Convert userId string to ObjectId
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Find the address and verify it belongs to the user
+  const address = await Address.findOne({ userId: userIdObj, id });
+  if (!address) {
+    return next(new AppError('Address not found', 404));
+  }
+
+  // If this is set as default, unset all other default addresses
+  if (isDefault) {
+    await Address.updateMany(
+      { userId: userIdObj, id: { $ne: id } },
+      { isDefault: false }
+    );
+  }
+
+  // Update the address
+  address.label = label;
+  address.fullAddress = fullAddress;
+  if (area !== undefined) address.area = area;
+  if (coordinates) {
+    address.coordinates = {
+      lat: coordinates.lat,
+      lng: coordinates.lng
+    };
+  }
+  address.isDefault = isDefault || false;
+  await address.save();
+
+  // Aggregate updated user data
+  const userData = await aggregateUserData(userIdObj);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      address: {
+        id: address.id,
+        label: address.label,
+        fullAddress: address.fullAddress,
+        area: address.area,
+        coordinates: address.coordinates,
+        isDefault: address.isDefault
+      },
+      user: userData
+    }
+  });
+});
+
+// @desc    Add a new family member for the authenticated user
+// @route   POST /api/auth/family-members
+// @access  Private
+export const addFamilyMember = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { name, relation, phone, email } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  if (!name || !relation || !phone) {
+    return next(new AppError('Name, relation, and phone are required', 400));
+  }
+
+  // Convert userId string to ObjectId
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Generate unique family member ID
+  const memberId = `fam-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  // Create the family member
+  const familyMember = await FamilyMember.create({
+    userId: userIdObj,
+    id: memberId,
+    name,
+    relation,
+    phone,
+    email: email || undefined
+  });
+
+  // Aggregate updated user data
+  const userData = await aggregateUserData(userIdObj);
+
+  res.status(201).json({
+    success: true,
+    data: {
+      familyMember: {
+        id: familyMember.id,
+        name: familyMember.name,
+        relation: familyMember.relation,
+        phone: familyMember.phone,
+        email: familyMember.email
+      },
       user: userData
     }
   });

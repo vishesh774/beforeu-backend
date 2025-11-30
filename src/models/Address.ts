@@ -5,6 +5,11 @@ export interface IAddress extends Document {
   id: string; // Custom ID for frontend reference
   label: string;
   fullAddress: string;
+  area?: string;
+  coordinates?: {
+    lat: number;
+    lng: number;
+  };
   isDefault: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -33,6 +38,18 @@ const AddressSchema = new Schema<IAddress>(
       type: String,
       required: [true, 'Please provide a full address'],
       trim: true
+    },
+    area: {
+      type: String,
+      trim: true
+    },
+    coordinates: {
+      lat: {
+        type: Number
+      },
+      lng: {
+        type: Number
+      }
     },
     isDefault: {
       type: Boolean,

@@ -25,6 +25,11 @@ export interface AggregatedUserData {
     id: string;
     label: string;
     fullAddress: string;
+    area?: string;
+    coordinates?: {
+      lat: number;
+      lng: number;
+    };
     isDefault: boolean;
   }>;
   createdAt: Date;
@@ -68,6 +73,11 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
       id: addr.id,
       label: addr.label,
       fullAddress: addr.fullAddress,
+      area: addr.area,
+      coordinates: addr.coordinates ? {
+        lat: addr.coordinates.lat,
+        lng: addr.coordinates.lng
+      } : undefined,
       isDefault: addr.isDefault
     })),
     createdAt: user.createdAt,
