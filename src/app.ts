@@ -24,7 +24,7 @@ app.use(helmet());
 // CORS configuration - Allow both customer platform and admin panel
 const allowedOrigins = process.env.CORS_ORIGIN 
   ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-  : ['http://localhost:3000', 'http://localhost:3001']; // Customer platform and admin panel
+  : ['https://beforeu-customer-platform.vercel.app', 'https://beforeu-admin-dashboard.vercel.app']; // Customer platform and admin panel
 
 // In production, log allowed origins for debugging
 if (process.env.NODE_ENV === 'production') {
