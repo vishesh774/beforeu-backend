@@ -10,7 +10,18 @@ const connectDB = async (): Promise<void> => {
       return;
     }
 
-    const conn = await mongoose.connect(mongoURI);
+    // Connection options optimized for cloud deployments (Fly.io, etc.)
+    const options = {
+      serverSelectionTimeoutMS: 60000, // 60 seconds - increased for cloud deployments
+      socketTimeoutMS: 45000, // 45 seconds
+      connectTimeoutMS: 30000, // 30 seconds
+      retryWrites: true,
+      retryReads: true,
+      maxPoolSize: 10, // Maintain up to 10 socket connections
+      minPoolSize: 2, // Maintain at least 2 socket connections
+    };
+
+    const conn = await mongoose.connect(mongoURI, options);
 
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
