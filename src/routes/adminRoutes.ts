@@ -27,6 +27,10 @@ import {
   getCustomer,
   toggleCustomerStatus
 } from '../controllers/customerController';
+import {
+  getAllBookings,
+  getBookingById
+} from '../controllers/bookingController';
 import { requireAdmin } from '../middleware/adminAuth';
 
 const router = express.Router();
@@ -67,6 +71,10 @@ router.patch('/service-partners/:id/toggle-status', toggleServicePartnerStatus);
 router.get('/customers', getAllCustomers);
 router.get('/customers/:id', getCustomer);
 router.patch('/customers/:id/toggle-status', toggleCustomerStatus);
+
+// Booking management routes
+router.get('/bookings', getAllBookings);
+router.get('/bookings/:id', getBookingById);
 
 export default router;
 
