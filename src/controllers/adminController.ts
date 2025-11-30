@@ -3,6 +3,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { AdminRequest } from '../middleware/adminAuth';
 import User from '../models/User';
+import { initializeUserRecords } from '../utils/userHelpers';
 
 // @desc    Get all admin users (excluding customers) with pagination and filters
 // @route   GET /api/admin/users
@@ -50,7 +51,7 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response, _nex
 
   // Get paginated users
   const users = await User.find(filter)
-    .select('-password -familyMembers -addresses')
+    .select('-password')
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);
@@ -73,6 +74,41 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response, _nex
         limit,
         total,
         pages: Math.ceil(total / limit)
+      }
+    }
+  });
+});
+
+// @desc    Get single admin user by ID
+// @route   GET /api/admin/users/:id
+// @access  Private/Admin
+export const getUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { id } = req.params;
+  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
+
+  const user = await User.findById(id).select('-password');
+  
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  // Check if user is an admin user (not a customer)
+  if (!adminRoles.includes(user.role as 'Admin' | 'Supervisor' | 'Incharge')) {
+    return next(new AppError('User not found', 404));
+  }
+
+  res.status(200).json({
+    success: true,
+    data: {
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        isActive: user.isActive,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
       }
     }
   });
@@ -114,11 +150,11 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
     phone,
     password,
     role,
-    isActive: true,
-    credits: 0,
-    familyMembers: [],
-    addresses: []
+    isActive: true
   });
+
+  // Initialize user-related records (credits and plan)
+  await initializeUserRecords(user._id);
 
   res.status(201).json({
     success: true,

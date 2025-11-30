@@ -130,9 +130,8 @@ export const verifyOTP = async (phone: string, otp: string): Promise<{ success: 
       };
     }
 
-    // Mark as verified
-    otpRecord.verified = true;
-    await otpRecord.save();
+    // Mark as verified and delete the OTP record
+    await OTP.findByIdAndDelete(otpRecord._id);
 
     return {
       success: true,

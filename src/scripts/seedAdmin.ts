@@ -7,6 +7,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import User from '../models/User';
 import connectDB from '../config/database';
+import { initializeUserRecords } from '../utils/userHelpers';
 
 // Load environment variables
 dotenv.config();
@@ -47,11 +48,11 @@ const createAdminUser = async () => {
       email: adminEmail,
       phone: '+911234567890', // Dummy phone number
       password: 'admin1', // Will be hashed by pre-save hook
-      role: 'Admin',
-      credits: 0,
-      familyMembers: [],
-      addresses: []
+      role: 'Admin'
     });
+
+    // Initialize user-related records
+    await initializeUserRecords(adminUser._id);
 
     console.log('✅ Admin user created successfully!');
     console.log(`   Email: ${adminUser.email}`);

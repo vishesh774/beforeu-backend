@@ -4,6 +4,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { generateToken } from '../utils/generateToken';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
+import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
 
 interface SignupRequest extends Request {
   body: {
@@ -38,11 +39,17 @@ export const signup = asyncHandler(async (req: SignupRequest, res: Response, nex
     email,
     phone,
     password,
-    role: 'customer', // Default role for signups
-    credits: 0,
-    familyMembers: [],
-    addresses: []
+    role: 'customer' // Default role for signups
   });
+
+  // Initialize user-related records (credits and plan)
+  await initializeUserRecords(user._id);
+
+  // Aggregate user data
+  const userData = await aggregateUserData(user._id);
+  if (!userData) {
+    return next(new AppError('Failed to create user data', 500));
+  }
 
   // Generate token
   const token = generateToken({
@@ -55,17 +62,7 @@ export const signup = asyncHandler(async (req: SignupRequest, res: Response, nex
     success: true,
     message: 'User registered successfully',
     data: {
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        credits: user.credits,
-        activePlanId: user.activePlanId,
-        familyMembers: user.familyMembers,
-        addresses: user.addresses
-      },
+      user: userData,
       token
     }
   });
@@ -94,6 +91,17 @@ export const login = asyncHandler(async (req: Request, res: Response, next: Next
     return next(new AppError('Invalid credentials', 401));
   }
 
+  // Check if user is active
+  if (!user.isActive) {
+    return next(new AppError('Your account has been deactivated. Please contact support.', 403));
+  }
+
+  // Aggregate user data
+  const userData = await aggregateUserData(user._id);
+  if (!userData) {
+    return next(new AppError('Failed to load user data', 500));
+  }
+
   // Generate token
   const token = generateToken({
     userId: user._id.toString(),
@@ -105,17 +113,7 @@ export const login = asyncHandler(async (req: Request, res: Response, next: Next
     success: true,
     message: 'Login successful',
     data: {
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        credits: user.credits,
-        activePlanId: user.activePlanId,
-        familyMembers: user.familyMembers,
-        addresses: user.addresses
-      },
+      user: userData,
       token
     }
   });
@@ -150,6 +148,12 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
     return next(new AppError('Invalid credentials', 401));
   }
 
+  // Aggregate user data
+  const userData = await aggregateUserData(user._id);
+  if (!userData) {
+    return next(new AppError('Failed to load user data', 500));
+  }
+
   // Generate token
   const token = generateToken({
     userId: user._id.toString(),
@@ -161,17 +165,7 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
     success: true,
     message: 'Admin login successful',
     data: {
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        credits: user.credits,
-        activePlanId: user.activePlanId,
-        familyMembers: user.familyMembers,
-        addresses: user.addresses
-      },
+      user: userData,
       token
     }
   });
@@ -187,26 +181,16 @@ export const getMe = asyncHandler(async (req: Request, res: Response, next: Next
     return next(new AppError('User not authenticated', 401));
   }
 
-  const user = await User.findById(authReq.user.id);
+  const userData = await aggregateUserData(authReq.user.id);
   
-  if (!user) {
+  if (!userData) {
     return next(new AppError('User not found', 404));
   }
 
   res.status(200).json({
     success: true,
     data: {
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        role: user.role,
-        credits: user.credits,
-        activePlanId: user.activePlanId,
-        familyMembers: user.familyMembers,
-        addresses: user.addresses
-      }
+      user: userData
     }
   });
 });

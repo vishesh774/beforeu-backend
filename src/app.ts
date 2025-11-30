@@ -108,12 +108,6 @@ app.listen(PORT, () => {
   console.log(`🚀 Server SUCCESSFULLY started!`);
   console.log(`📍 Port: ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`\n📡 Available endpoints:`);
-  console.log(`   GET  http://localhost:${PORT}/`);
-  console.log(`   GET  http://localhost:${PORT}/health`);
-  console.log(`   POST http://localhost:${PORT}/api/auth/send-otp`);
-  console.log(`   POST http://localhost:${PORT}/api/auth/verify-otp`);
-  console.log(`✅ ==========================================\n`);
 }).on('error', (err: any) => {
   console.error('❌ Server failed to start:', err);
   if (err.code === 'EADDRINUSE') {

@@ -1,7 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
-export type UserRole = 'customer' | 'Admin' | 'Supervisor' | 'Incharge';
+export type UserRole = 'customer' | 'Admin' | 'Supervisor' | 'Incharge' | 'ServicePartner';
 
 export interface IUser extends Document {
   name: string;
@@ -10,40 +10,10 @@ export interface IUser extends Document {
   password: string;
   role: UserRole;
   isActive: boolean;
-  activePlanId?: string;
-  credits: number;
-  familyMembers: Array<{
-    id: string;
-    name: string;
-    relation: string;
-    phone: string;
-    email?: string;
-  }>;
-  addresses: Array<{
-    id: string;
-    label: string;
-    fullAddress: string;
-    isDefault: boolean;
-  }>;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
-
-const FamilyMemberSchema = new Schema({
-  id: { type: String, required: true },
-  name: { type: String, required: true },
-  relation: { type: String, required: true },
-  phone: { type: String, required: true },
-  email: { type: String }
-}, { _id: false });
-
-const AddressSchema = new Schema({
-  id: { type: String, required: true },
-  label: { type: String, required: true },
-  fullAddress: { type: String, required: true },
-  isDefault: { type: Boolean, default: false }
-}, { _id: false });
 
 const UserSchema = new Schema<IUser>(
   {
@@ -84,7 +54,7 @@ const UserSchema = new Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ['customer', 'Admin', 'Supervisor', 'Incharge'],
+      enum: ['customer', 'Admin', 'Supervisor', 'Incharge', 'ServicePartner'],
       default: 'customer',
       required: true
     },
@@ -92,22 +62,6 @@ const UserSchema = new Schema<IUser>(
       type: Boolean,
       default: true,
       required: true
-    },
-    activePlanId: {
-      type: String,
-      default: null
-    },
-    credits: {
-      type: Number,
-      default: 0
-    },
-    familyMembers: {
-      type: [FamilyMemberSchema],
-      default: []
-    },
-    addresses: {
-      type: [AddressSchema],
-      default: []
     }
   },
   {
