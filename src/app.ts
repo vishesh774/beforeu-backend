@@ -103,7 +103,7 @@ app.use(notFound);
 // Error handler
 app.use(errorHandler);
 
-const PORT = process.env.PORT || 5000
+const PORT = parseInt(process.env.PORT || '5000', 10)
 
 // Verify routes are registered before starting server
 console.log('🔍 Verifying route registration...');
@@ -117,7 +117,7 @@ const startServer = async () => {
     await connectDB();
     console.log('✅ Database connection established');
     
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`\n✅ ==========================================`);
       console.log(`🚀 Server SUCCESSFULLY started!`);
       console.log(`📍 Listening on 0.0.0.0:${PORT}`);
