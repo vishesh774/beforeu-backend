@@ -44,6 +44,11 @@ fly secrets set JWT_SECRET="your-secure-random-string"
 # Node environment
 fly secrets set NODE_ENV="production"
 
+# CORS Origins - IMPORTANT: Set your frontend URLs here
+# For multiple origins, separate with commas (no spaces)
+# Example: "https://your-app.vercel.app,https://admin.vercel.app"
+fly secrets set CORS_ORIGIN="https://your-customer-platform.vercel.app,https://your-admin-panel.vercel.app"
+
 # Port (optional, defaults to 5000)
 fly secrets set PORT="5000"
 ```
@@ -154,6 +159,7 @@ fly logs --app beforeu-backend
 | `MONGODB_URI` | Yes | MongoDB connection string | `mongodb+srv://user:pass@cluster.mongodb.net/dbname` |
 | `JWT_SECRET` | Yes | Secret for JWT signing | Random secure string |
 | `NODE_ENV` | Yes | Environment | `production` |
+| `CORS_ORIGIN` | Yes | Comma-separated frontend URLs | `https://app.vercel.app,https://admin.vercel.app` |
 | `PORT` | No | Server port (defaults to 5000) | `5000` |
 
 ## Scaling
