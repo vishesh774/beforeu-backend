@@ -12,11 +12,9 @@ primary_region = "bom"
   PORT = "5000"
 
 [[services]]
-  http_checks = []
   internal_port = 5000
   processes = ["app"]
   protocol = "tcp"
-  script_checks = []
   auto_start_machines = true
   auto_stop_machines = false
   min_machines_running = 1
