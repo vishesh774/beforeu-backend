@@ -4,9 +4,6 @@
 app = "beforeu-backend"
 primary_region = "bom"
 
-[build]
-  dockerfile = "Dockerfile"
-
 [env]
   NODE_ENV = "production"
   PORT = "5000"

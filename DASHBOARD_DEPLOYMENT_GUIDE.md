@@ -43,11 +43,17 @@ This guide uses:
 
 ### Step 3: Configure Build Settings
 
-1. In the app dashboard, go to **"Settings"** → **"Build"**
-2. Ensure **Build Type** is set to **"Dockerfile"**
-3. Verify **Dockerfile Path** is `backend/Dockerfile`
+1. In the app dashboard, go to **"Settings"** → **"Build"** or **"Source"** tab
+2. **IMPORTANT**: Ensure **Build Type** is set to **"Dockerfile"** (NOT "Buildpacks" or "Auto-detect")
+3. Verify **Dockerfile Path** is `backend/Dockerfile` (relative to repo root)
 4. **Build Command**: Leave empty (uses Dockerfile)
-5. Click **"Save"**
+5. **Buildpacks**: Should be empty/disabled (we use Dockerfile, not buildpacks)
+6. Click **"Save"** or **"Update"**
+
+**If you see "Buildpacks" selected:**
+- Change it to **"Dockerfile"**
+- This prevents Fly.io from trying to use Node.js buildpacks
+- The Dockerfile will handle the build process
 
 ---
 
@@ -339,6 +345,37 @@ You can also trigger deployments manually:
 - Dockerfile path incorrect
 - Build errors in code
 - MongoDB connection string incorrect
+
+### Issue: "launch manifest was created for a app, but this is a NodeJS app"
+
+**Symptoms**: Error during deployment: `Error: launch manifest was created for a app, but this is a NodeJS app`
+
+**Cause**: Fly.io is detecting your app as Node.js and trying to use buildpacks instead of Dockerfile.
+
+**Solutions:**
+
+1. **Configure Build Type in Dashboard**:
+   - Go to Fly.io dashboard → Your app → **"Settings"** → **"Build"** or **"Source"**
+   - Change **Build Type** from **"Buildpacks"** or **"Auto-detect"** to **"Dockerfile"**
+   - Set **Dockerfile Path** to `backend/Dockerfile`
+   - **Disable buildpacks** (should be empty/unchecked)
+   - Click **"Save"**
+
+2. **Verify fly.toml**:
+   - Ensure `fly.toml` does NOT have `[build]` section with buildpacks
+   - Dockerfile should be auto-detected
+   - If you have `[build]` section, it should only specify `dockerfile = "Dockerfile"`
+
+3. **Reconnect GitHub Repository** (if needed):
+   - Go to **"Source"** tab
+   - Disconnect and reconnect GitHub repository
+   - When reconnecting, ensure **Build Type** is set to **"Dockerfile"**
+
+4. **Manual Deploy via CLI** (to verify):
+   ```bash
+   cd backend
+   fly deploy --remote-only
+   ```
 
 ### Issue: MongoDB Connection Failed
 
