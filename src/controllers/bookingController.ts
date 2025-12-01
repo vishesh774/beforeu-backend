@@ -349,6 +349,127 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
   });
 });
 
+/**
+ * Generate a 4-digit booking OTP deterministically based on booking ID
+ * This ensures the same booking always has the same OTP
+ */
+function generateBookingOTP(bookingId: string): string {
+  // Simple hash function to generate consistent 4-digit OTP
+  let hash = 0;
+  for (let i = 0; i < bookingId.length; i++) {
+    const char = bookingId.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  // Convert to positive 4-digit number
+  const otp = Math.abs(hash) % 10000;
+  return String(otp).padStart(4, '0');
+}
+
+// @desc    Get single booking by ID (Customer)
+// @route   GET /api/bookings/:bookingId
+// @access  Private
+export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  console.log('[getUserBookingById] Route hit, params:', req.params);
+  const userId = req.user?.id;
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  const { bookingId } = req.params;
+  console.log('[getUserBookingById] Booking ID:', bookingId, 'User ID:', userId);
+  if (!bookingId) {
+    return next(new AppError('Booking ID is required', 400));
+  }
+
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Find booking and ensure it belongs to the user
+  const booking = await Booking.findOne({ 
+    bookingId,
+    userId: userIdObj 
+  });
+
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // Get order items
+  const items = await OrderItem.find({ bookingId: booking._id })
+    .populate('serviceId', 'name icon')
+    .populate('serviceVariantId', 'name description');
+
+  // Generate booking OTP (4-digit, deterministic)
+  const bookingOTP = generateBookingOTP(booking.bookingId);
+
+  // Get assigned professional if any (from order items)
+  let assignedProfessional = null;
+  const itemsWithPartner = await OrderItem.find({ bookingId: booking._id })
+    .populate('assignedPartnerId', 'name phone email rating jobsCompleted');
+  
+  // Check if any item has an assigned partner
+  const itemWithPartner = itemsWithPartner.find(item => item.assignedPartnerId);
+  if (itemWithPartner && itemWithPartner.assignedPartnerId) {
+    const partner = itemWithPartner.assignedPartnerId as any;
+    assignedProfessional = {
+      id: partner._id.toString(),
+      name: partner.name || 'Professional',
+      phone: partner.phone,
+      email: partner.email,
+      rating: partner.rating || 4.5,
+      jobsCompleted: partner.jobsCompleted || 0
+    };
+  }
+
+  // Transform status to match frontend expectations
+  const statusMap: Record<string, string> = {
+    'pending': 'Upcoming',
+    'confirmed': 'Upcoming',
+    'in_progress': 'Upcoming',
+    'completed': 'Completed',
+    'cancelled': 'Cancelled'
+  };
+
+  const bookingData = {
+    id: booking.bookingId,
+    bookingId: booking.bookingId,
+    items: items.map(item => ({
+      serviceId: (item.serviceId as any).id || item.serviceId.toString(),
+      variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
+      variantName: item.variantName,
+      serviceName: item.serviceName,
+      price: item.finalPrice,
+      originalPrice: item.originalPrice,
+      creditCost: item.creditValue,
+      quantity: item.quantity
+    })),
+    totalAmount: booking.totalAmount,
+    status: statusMap[booking.status] || 'Upcoming',
+    date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
+    time: booking.scheduledTime || '',
+    address: {
+      id: booking.addressId,
+      label: booking.address.label,
+      fullAddress: booking.address.fullAddress,
+      area: booking.address.area,
+      coordinates: booking.address.coordinates,
+      isDefault: false // Not stored in booking, default to false
+    },
+    type: booking.bookingType,
+    otp: bookingOTP, // Include OTP in response
+    professional: assignedProfessional, // Include assigned professional if any
+    createdAt: booking.createdAt,
+    updatedAt: booking.updatedAt
+  };
+
+  res.status(200).json({
+    success: true,
+    data: {
+      booking: bookingData
+    }
+  });
+});
+
 // @desc    Get all bookings (Admin)
 // @route   GET /api/admin/bookings
 // @access  Private/Admin
