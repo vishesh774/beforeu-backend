@@ -1,5 +1,5 @@
 import express from 'express';
-import { signup, login, adminLogin, getMe, addAddress, updateAddress, addFamilyMember } from '../controllers/authController';
+import { signup, login, adminLogin, getMe, addAddress, updateAddress, deleteAddress, addFamilyMember } from '../controllers/authController';
 import { sendOTP, verifyOTPController, completeProfile } from '../controllers/otpController';
 import { signupValidator, loginValidator } from '../validators/authValidator';
 import { validate } from '../middleware/validate';
@@ -23,6 +23,7 @@ router.post('/admin/login', validate(loginValidator), adminLogin);
 router.get('/me', protect, getMe);
 router.post('/addresses', protect, addAddress);
 router.put('/addresses/:id', protect, updateAddress);
+router.delete('/addresses/:id', protect, deleteAddress);
 router.post('/family-members', protect, addFamilyMember);
 
 export default router;

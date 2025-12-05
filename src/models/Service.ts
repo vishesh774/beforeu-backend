@@ -4,6 +4,8 @@ export interface IService extends Document {
   id: string; // Custom ID field (e.g., 'police-consult', 'home-maintenance')
   name: string;
   icon: string; // LucideReact icon name (e.g., 'Shield', 'Wrench')
+  description: string;
+  highlight: string;
   isActive: boolean;
   serviceRegions: string[]; // Array of service region IDs
   tags: string[]; // Array of service-level tags
@@ -32,6 +34,20 @@ const ServiceSchema = new Schema<IService>(
       type: String,
       required: [true, 'Please provide an icon name'],
       trim: true
+    },
+    description: {
+      type: String,
+      required: [true, 'Please provide a service description'],
+      trim: true,
+      default: '',
+      maxlength: [200, 'Service description cannot exceed 200 characters']
+    },
+    highlight: {
+      type: String,
+      required: [true, 'Please provide a service highlight'],
+      trim: true,
+      default: '',
+      maxlength: [100, 'Service highlight cannot exceed 100 characters']
     },
     isActive: {
       type: Boolean,

@@ -77,33 +77,84 @@ export const getServicesByLocation = asyncHandler(async (req: Request, res: Resp
   // Group variants by service
   const servicesWithVariants = services.map(service => {
     const serviceVariants = variants
-      .filter(v => v.serviceId.toString() === service._id.toString())
-      .map(v => ({
-        id: v.id,
-        name: v.name,
-        description: v.description,
-        price: v.finalPrice,
-        originalPrice: v.originalPrice,
-        creditCost: v.creditValue,
-        durationMin: v.estimatedTimeMinutes,
-        includedInSubscription: v.includedInSubscription,
-        remarks: v.remarks,
-        tags: v.tags
-      }));
+      .filter(v => v.serviceId.toString() === service._id.toString());
+
+    // Extract sub-service names
+    const subServicesNames = serviceVariants.map(v => v.name);
 
     return {
-      id: service.id,
-      name: service.name,
-      icon: service.icon,
-      description: '', // Add description if needed
-      variants: serviceVariants
+      id: service.id, // Service ID
+      serviceId: service.id, // Service ID (explicit alias for clarity)
+      name: service.name, // Service Name
+      icon: service.icon, // Service Icon
+      description: service.description || '', // Description
+      highlight: service.highlight || '', // Highlight
+      subServicesNames: subServicesNames, // SubServices Names
+      tags: service.tags || [] // Service Tags
     };
-  }).filter(service => service.variants.length > 0); // Only return services with active variants
+  }).filter(service => service.subServicesNames.length > 0); // Only return services with active variants
 
   res.status(200).json({
     success: true,
     data: {
       services: servicesWithVariants
+    }
+  });
+});
+
+// @desc    Get all sub-services (variants) for a specific service
+// @route   GET /api/services/:serviceId/sub-services
+// @access  Public
+export const getSubServicesByServiceId = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { serviceId } = req.params;
+
+  if (!serviceId) {
+    return next(new AppError('Service ID is required', 400));
+  }
+
+  // Find the service by ID (custom id field, not MongoDB _id)
+  const service = await Service.findOne({ id: serviceId, isActive: true });
+  
+  if (!service) {
+    return next(new AppError('Service not found or inactive', 404));
+  }
+
+  // Get all active variants (sub-services) for this service
+  const variants = await ServiceVariant.find({
+    serviceId: service._id,
+    isActive: true
+  }).sort({ name: 1 });
+
+  // Map variants to include all details
+  const subServices = variants.map(variant => ({
+    id: variant.id,
+    name: variant.name,
+    description: variant.description,
+    icon: variant.icon || null,
+    inclusions: variant.inclusions || [],
+    exclusions: variant.exclusions || [],
+    originalPrice: variant.originalPrice,
+    finalPrice: variant.finalPrice,
+    estimatedTimeMinutes: variant.estimatedTimeMinutes,
+    includedInSubscription: variant.includedInSubscription,
+    creditCost: variant.creditValue,
+    tags: variant.tags || [],
+    createdAt: variant.createdAt,
+    updatedAt: variant.updatedAt
+  }));
+
+  res.status(200).json({
+    success: true,
+    data: {
+      service: {
+        id: service.id,
+        name: service.name,
+        icon: service.icon,
+        description: service.description,
+        highlight: service.highlight,
+        tags: service.tags || []
+      },
+      subServices: subServices
     }
   });
 });
@@ -604,7 +655,7 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
 
   const items = await OrderItem.find({ bookingId: booking._id })
     .populate('serviceId', 'name icon')
-    .populate('serviceVariantId', 'name description remarks tags')
+    .populate('serviceVariantId', 'name description inclusions exclusions tags')
     .populate('assignedPartnerId', 'name phone email');
 
   const bookingData = {
@@ -623,7 +674,8 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
       variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
       variantName: item.variantName,
       description: (item.serviceVariantId as any).description,
-      remarks: (item.serviceVariantId as any).remarks || [],
+      inclusions: (item.serviceVariantId as any).inclusions || [],
+      exclusions: (item.serviceVariantId as any).exclusions || [],
       tags: (item.serviceVariantId as any).tags || [],
       quantity: item.quantity,
       originalPrice: item.originalPrice,

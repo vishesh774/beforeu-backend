@@ -325,6 +325,55 @@ export const updateAddress = asyncHandler(async (req: AuthRequest, res: Response
   });
 });
 
+// @desc    Delete an address for the authenticated user
+// @route   DELETE /api/auth/addresses/:id
+// @access  Private
+export const deleteAddress = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { id } = req.params;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  // Convert userId string to ObjectId
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Find the address and verify it belongs to the user
+  const address = await Address.findOne({ userId: userIdObj, id });
+  if (!address) {
+    return next(new AppError('Address not found', 404));
+  }
+
+  // Check if user has at least one address remaining
+  const addressCount = await Address.countDocuments({ userId: userIdObj });
+  if (addressCount <= 1) {
+    return next(new AppError('Cannot delete the last address. You must have at least one address.', 400));
+  }
+
+  // Delete the address
+  await Address.deleteOne({ userId: userIdObj, id });
+
+  // If deleted address was default, set the first remaining address as default
+  if (address.isDefault) {
+    const remainingAddress = await Address.findOne({ userId: userIdObj });
+    if (remainingAddress) {
+      remainingAddress.isDefault = true;
+      await remainingAddress.save();
+    }
+  }
+
+  // Aggregate updated user data
+  const userData = await aggregateUserData(userIdObj);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      user: userData
+    }
+  });
+});
+
 // @desc    Add a new family member for the authenticated user
 // @route   POST /api/auth/family-members
 // @access  Private

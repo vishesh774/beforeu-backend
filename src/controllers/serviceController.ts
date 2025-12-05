@@ -91,6 +91,8 @@ export const getAllServices = asyncHandler(async (req: Request, res: Response, _
         id: service.id,
         name: service.name,
         icon: service.icon,
+        description: service.description,
+        highlight: service.highlight,
         isActive: service.isActive,
         variantCount: variantCountMap[service._id.toString()] || 0,
         serviceRegions: service.serviceRegions || [],
@@ -129,12 +131,16 @@ export const getService = asyncHandler(async (req: Request, res: Response, next:
         id: service.id,
         name: service.name,
         icon: service.icon,
+        description: service.description,
+        highlight: service.highlight,
         isActive: service.isActive,
         variants: variants.map(v => ({
           id: v.id,
           name: v.name,
           description: v.description,
-          remarks: v.remarks,
+          icon: v.icon,
+          inclusions: v.inclusions || [],
+          exclusions: v.exclusions || [],
           originalPrice: v.originalPrice,
           finalPrice: v.finalPrice,
           estimatedTimeMinutes: v.estimatedTimeMinutes,
@@ -156,11 +162,25 @@ export const getService = asyncHandler(async (req: Request, res: Response, next:
 // @route   POST /api/admin/services
 // @access  Private/Admin
 export const createService = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { id, name, icon, isActive, variants, serviceRegions, tags } = req.body;
+  const { id, name, icon, description, highlight, isActive, variants, serviceRegions, tags } = req.body;
 
   // Validate required fields
   if (!id || !name || !icon || variants === undefined) {
     return next(new AppError('ID, name, icon, and variants are required', 400));
+  }
+
+  // Description and highlight are optional but must be strings if provided
+  if (description !== undefined && typeof description !== 'string') {
+    return next(new AppError('Service description must be a string', 400));
+  }
+  if (description !== undefined && description.length > 200) {
+    return next(new AppError('Service description cannot exceed 200 characters', 400));
+  }
+  if (highlight !== undefined && typeof highlight !== 'string') {
+    return next(new AppError('Service highlight must be a string', 400));
+  }
+  if (highlight !== undefined && highlight.length > 100) {
+    return next(new AppError('Service highlight cannot exceed 100 characters', 400));
   }
 
   // Validate variants
@@ -191,9 +211,12 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
     if (typeof variant.isActive !== 'boolean') {
       return next(new AppError('Each variant must have a valid isActive (boolean)', 400));
     }
-    // Validate remarks and tags are arrays
-    if (!Array.isArray(variant.remarks)) {
-      return next(new AppError('Each variant must have remarks as an array', 400));
+    // Validate inclusions/exclusions and tags are arrays (optional)
+    if (variant.inclusions !== undefined && !Array.isArray(variant.inclusions)) {
+      return next(new AppError('Each variant must have inclusions as an array', 400));
+    }
+    if (variant.exclusions !== undefined && !Array.isArray(variant.exclusions)) {
+      return next(new AppError('Each variant must have exclusions as an array', 400));
     }
     if (!Array.isArray(variant.tags)) {
       return next(new AppError('Each variant must have tags as an array', 400));
@@ -223,27 +246,41 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
     id,
     name,
     icon,
+    description: description !== undefined ? description : '',
+    highlight: highlight !== undefined ? highlight : '',
     isActive: isActive !== undefined ? isActive : true,
     serviceRegions: serviceRegions || [],
     tags: tags || []
   });
 
   // Create variants separately
+  // Remove any remarks field if present (legacy field, replaced by inclusions/exclusions)
   const createdVariants = await ServiceVariant.insertMany(
-    variants.map(variant => ({
-      serviceId: service._id,
-      id: variant.id,
-      name: variant.name,
-      description: variant.description,
-      remarks: variant.remarks || [],
-      originalPrice: variant.originalPrice,
-      finalPrice: variant.finalPrice,
-      estimatedTimeMinutes: variant.estimatedTimeMinutes,
-      includedInSubscription: variant.includedInSubscription,
-      creditValue: variant.creditValue,
-      tags: variant.tags || [],
-      isActive: variant.isActive !== undefined ? variant.isActive : true
-    }))
+    variants.map(variant => {
+      const { remarks, ...variantData } = variant as any; // Remove remarks if present
+      const variantDoc: any = {
+        serviceId: service._id,
+        id: variantData.id,
+        name: variantData.name,
+        description: variantData.description,
+        inclusions: variantData.inclusions || [],
+        exclusions: variantData.exclusions || [],
+        originalPrice: variantData.originalPrice,
+        finalPrice: variantData.finalPrice,
+        estimatedTimeMinutes: variantData.estimatedTimeMinutes,
+        includedInSubscription: variantData.includedInSubscription,
+        creditValue: variantData.creditValue,
+        tags: variantData.tags || [],
+        isActive: variantData.isActive !== undefined ? variantData.isActive : true
+      };
+      
+      // Only include icon if it has a value (not null, undefined, or empty string)
+      if (variantData.icon !== null && variantData.icon !== undefined && String(variantData.icon).trim() !== '') {
+        variantDoc.icon = String(variantData.icon).trim();
+      }
+      
+      return variantDoc;
+    })
   );
 
   res.status(201).json({
@@ -254,12 +291,16 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
         id: service.id,
         name: service.name,
         icon: service.icon,
+        description: service.description,
+        highlight: service.highlight,
         isActive: service.isActive,
         variants: createdVariants.map(v => ({
           id: v.id,
           name: v.name,
           description: v.description,
-          remarks: v.remarks,
+          icon: v.icon,
+          inclusions: v.inclusions || [],
+          exclusions: v.exclusions || [],
           originalPrice: v.originalPrice,
           finalPrice: v.finalPrice,
           estimatedTimeMinutes: v.estimatedTimeMinutes,
@@ -282,7 +323,7 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
 // @access  Private/Admin
 export const updateService = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
-  const { name, icon, isActive, variants, serviceRegions, tags } = req.body;
+  const { name, icon, description, highlight, isActive, variants, serviceRegions, tags } = req.body;
 
   const service = await Service.findOne({ id });
   if (!service) {
@@ -290,9 +331,21 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
   }
 
   // Update fields
-  if (name) service.name = name;
-  if (icon) service.icon = icon;
+  if (name !== undefined) service.name = name;
+  if (icon !== undefined) service.icon = icon;
   if (isActive !== undefined) service.isActive = isActive;
+  if (description !== undefined) {
+    if (typeof description !== 'string' || description.length > 200) {
+      return next(new AppError('Service description must be a string up to 200 characters', 400));
+    }
+    service.description = description;
+  }
+  if (highlight !== undefined) {
+    if (typeof highlight !== 'string' || highlight.length > 100) {
+      return next(new AppError('Service highlight must be a string up to 100 characters', 400));
+    }
+    service.highlight = highlight;
+  }
   if (serviceRegions !== undefined) {
     if (!Array.isArray(serviceRegions)) {
       return next(new AppError('serviceRegions must be an array', 400));
@@ -337,9 +390,12 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
       if (typeof variant.isActive !== 'boolean') {
         return next(new AppError('Each variant must have a valid isActive (boolean)', 400));
       }
-      // Validate remarks and tags are arrays
-      if (!Array.isArray(variant.remarks)) {
-        return next(new AppError('Each variant must have remarks as an array', 400));
+      // Validate inclusions/exclusions and tags are arrays (optional)
+      if (variant.inclusions !== undefined && !Array.isArray(variant.inclusions)) {
+        return next(new AppError('Each variant must have inclusions as an array', 400));
+      }
+      if (variant.exclusions !== undefined && !Array.isArray(variant.exclusions)) {
+        return next(new AppError('Each variant must have exclusions as an array', 400));
       }
       if (!Array.isArray(variant.tags)) {
         return next(new AppError('Each variant must have tags as an array', 400));
@@ -362,22 +418,37 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
 
     // Update or create variants
     for (const variant of variants) {
+      // Remove any remarks field if present (legacy field, replaced by inclusions/exclusions)
+      const { remarks, ...variantData } = variant as any;
+      
+      const updateData: any = {
+        serviceId: service._id,
+        id: variantData.id,
+        name: variantData.name,
+        description: variantData.description,
+        inclusions: variantData.inclusions || [],
+        exclusions: variantData.exclusions || [],
+        originalPrice: variantData.originalPrice,
+        finalPrice: variantData.finalPrice,
+        estimatedTimeMinutes: variantData.estimatedTimeMinutes,
+        includedInSubscription: variantData.includedInSubscription,
+        creditValue: variantData.creditValue,
+        tags: variantData.tags || [],
+        isActive: variantData.isActive
+      };
+      
+      // Handle optional icon field - only include if it has a value
+      // Omit the field entirely if null, undefined, or empty string
+      // The schema setter will handle normalization
+      if (variantData.icon !== null && variantData.icon !== undefined && String(variantData.icon).trim() !== '') {
+        updateData.icon = String(variantData.icon).trim();
+      }
+      // If icon is null/empty/undefined, we don't include it in updateData
+      // This means the field won't be updated (existing value remains) or will be omitted on create
+      
       await ServiceVariant.findOneAndUpdate(
-        { serviceId: service._id, id: variant.id },
-        {
-          serviceId: service._id,
-          id: variant.id,
-          name: variant.name,
-          description: variant.description,
-          remarks: variant.remarks || [],
-          originalPrice: variant.originalPrice,
-          finalPrice: variant.finalPrice,
-          estimatedTimeMinutes: variant.estimatedTimeMinutes,
-          includedInSubscription: variant.includedInSubscription,
-          creditValue: variant.creditValue,
-          tags: variant.tags || [],
-          isActive: variant.isActive
-        },
+        { serviceId: service._id, id: variantData.id },
+        updateData,
         { upsert: true, new: true }
       );
     }
@@ -394,12 +465,16 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
         id: service.id,
         name: service.name,
         icon: service.icon,
+        description: service.description,
+        highlight: service.highlight,
         isActive: service.isActive,
         variants: updatedVariants.map(v => ({
           id: v.id,
           name: v.name,
           description: v.description,
-          remarks: v.remarks,
+          icon: v.icon,
+          inclusions: v.inclusions || [],
+          exclusions: v.exclusions || [],
           originalPrice: v.originalPrice,
           finalPrice: v.finalPrice,
           estimatedTimeMinutes: v.estimatedTimeMinutes,
@@ -459,7 +534,9 @@ export const toggleServiceStatus = asyncHandler(async (req: Request, res: Respon
           id: v.id,
           name: v.name,
           description: v.description,
-          remarks: v.remarks,
+          icon: v.icon,
+          inclusions: v.inclusions || [],
+          exclusions: v.exclusions || [],
           originalPrice: v.originalPrice,
           finalPrice: v.finalPrice,
           estimatedTimeMinutes: v.estimatedTimeMinutes,

@@ -5,7 +5,9 @@ export interface IServiceVariant extends Document {
   id: string; // Custom ID field (e.g., 'police-consult-basic', 'police-consult-premium')
   name: string;
   description: string;
-  remarks: string[]; // Array of remarks/notes
+  icon?: string; // Optional icon name
+  inclusions?: string[]; // Included points (optional)
+  exclusions?: string[]; // Excluded points (optional)
   originalPrice: number;
   finalPrice: number;
   estimatedTimeMinutes: number; // Estimated time to complete job in minutes
@@ -42,14 +44,39 @@ const ServiceVariantSchema = new Schema<IServiceVariant>(
       trim: true,
       maxlength: [300, 'Description cannot exceed 300 characters']
     },
-    remarks: {
+    icon: {
+      type: Schema.Types.Mixed,
+      required: false,
+      default: undefined,
+      set: (value: string | null | undefined) => {
+        // Allow null, undefined, or empty string - return undefined to omit field
+        if (value === null || value === undefined) {
+          return undefined;
+        }
+        const trimmed = String(value).trim();
+        return trimmed === '' ? undefined : trimmed;
+      }
+    },
+    inclusions: {
       type: [String],
       default: [],
+      required: false,
       validate: {
-        validator: function(remarks: string[]) {
-          return remarks.every(remark => typeof remark === 'string' && remark.trim().length > 0);
+        validator: function(items: string[]) {
+          return items.every(item => typeof item === 'string' && item.trim().length > 0);
         },
-        message: 'All remarks must be non-empty strings'
+        message: 'All inclusions must be non-empty strings'
+      }
+    },
+    exclusions: {
+      type: [String],
+      default: [],
+      required: false,
+      validate: {
+        validator: function(items: string[]) {
+          return items.every(item => typeof item === 'string' && item.trim().length > 0);
+        },
+        message: 'All exclusions must be non-empty strings'
       }
     },
     originalPrice: {

@@ -1,0 +1,1284 @@
+{
+	"info": {
+		"name": "BeforeU API Collection",
+		"description": "Complete API collection for BeforeU backend services",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "beforeu-api"
+	},
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{authToken}}",
+				"type": "string"
+			}
+		]
+	},
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "http://localhost:5001",
+			"type": "string"
+		},
+		{
+			"key": "authToken",
+			"value": "",
+			"type": "string"
+		},
+		{
+			"key": "adminToken",
+			"value": "",
+			"type": "string"
+		}
+	],
+	"item": [
+		{
+			"name": "Authentication",
+			"item": [
+				{
+					"name": "Send OTP",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"phone\": \"+1234567890\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/send-otp",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "send-otp"]
+						}
+					}
+				},
+				{
+					"name": "Verify OTP",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"phone\": \"+1234567890\",\n  \"otp\": \"123456\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/verify-otp",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "verify-otp"]
+						}
+					}
+				},
+				{
+					"name": "Complete Profile",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/complete-profile",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "complete-profile"]
+						}
+					}
+				},
+				{
+					"name": "Signup",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"phone\": \"+1234567890\",\n  \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/signup",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "signup"]
+						}
+					}
+				},
+				{
+					"name": "Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"john@example.com\",\n  \"password\": \"password123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/login",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "login"]
+						}
+					}
+				},
+				{
+					"name": "Admin Login",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"admin123\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/admin/login",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "admin", "login"]
+						}
+					}
+				},
+				{
+					"name": "Get Me",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/me",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "me"]
+						}
+					}
+				},
+				{
+					"name": "Add Address",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"home-1\",\n  \"label\": \"Home\",\n  \"fullAddress\": \"123 Main St, City, State 12345\",\n  \"area\": \"Downtown\",\n  \"coordinates\": {\n    \"lat\": 12.9716,\n    \"lng\": 77.5946\n  },\n  \"isDefault\": true\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/addresses",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "addresses"]
+						}
+					}
+				},
+				{
+					"name": "Update Address",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"label\": \"Home Updated\",\n  \"fullAddress\": \"123 Main St, City, State 12345\",\n  \"area\": \"Downtown\",\n  \"coordinates\": {\n    \"lat\": 12.9716,\n    \"lng\": 77.5946\n  },\n  \"isDefault\": true\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/addresses/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "addresses", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "home-1"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Delete Address",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/addresses/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "addresses", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "home-1"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Add Family Member",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Jane Doe\",\n  \"relation\": \"Spouse\",\n  \"phone\": \"+1234567891\",\n  \"email\": \"jane@example.com\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/auth/family-members",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "auth", "family-members"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Services (Public)",
+			"item": [
+				{
+					"name": "Get Services by Location",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/services/by-location?lat=12.9716&lng=77.5946",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "services", "by-location"],
+							"query": [
+								{
+									"key": "lat",
+									"value": "12.9716",
+									"description": "Latitude"
+								},
+								{
+									"key": "lng",
+									"value": "77.5946",
+									"description": "Longitude"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Sub-Services by Service ID",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/services/:serviceId/sub-services",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "services", ":serviceId", "sub-services"],
+							"variable": [
+								{
+									"key": "serviceId",
+									"value": "salon-for-women",
+									"description": "Service ID (e.g., salon-for-women)"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Bookings",
+			"item": [
+				{
+					"name": "Create Booking",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"addressId\": \"home-1\",\n  \"bookingType\": \"ASAP\",\n  \"items\": [\n    {\n      \"serviceId\": \"salon-for-women\",\n      \"variantId\": \"hair-cut\",\n      \"quantity\": 1\n    }\n  ],\n  \"notes\": \"Please call before arriving\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/bookings",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "bookings"]
+						}
+					}
+				},
+				{
+					"name": "Create Scheduled Booking",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"addressId\": \"home-1\",\n  \"bookingType\": \"SCHEDULED\",\n  \"scheduledDate\": \"2024-12-25\",\n  \"scheduledTime\": \"14:00\",\n  \"items\": [\n    {\n      \"serviceId\": \"salon-for-women\",\n      \"variantId\": \"hair-cut\",\n      \"quantity\": 1\n    }\n  ],\n  \"notes\": \"Please call before arriving\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/bookings",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "bookings"]
+						}
+					}
+				},
+				{
+					"name": "Get User Bookings",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/bookings",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "bookings"]
+						}
+					}
+				},
+				{
+					"name": "Get Booking by ID",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{authToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/bookings/:bookingId",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "bookings", ":bookingId"],
+							"variable": [
+								{
+									"key": "bookingId",
+									"value": "BOOK123456"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Admin - Users",
+			"item": [
+				{
+					"name": "Get All Users",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/users",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "users"]
+						}
+					}
+				},
+				{
+					"name": "Get User by ID",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/users/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "users", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "user-id-here"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Create User",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"John Doe\",\n  \"email\": \"john@example.com\",\n  \"phone\": \"+1234567890\",\n  \"password\": \"password123\",\n  \"role\": \"customer\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/users",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "users"]
+						}
+					}
+				},
+				{
+					"name": "Update User",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"John Doe Updated\",\n  \"email\": \"john.updated@example.com\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/users/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "users", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "user-id-here"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Deactivate User",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PATCH",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/users/:id/deactivate",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "users", ":id", "deactivate"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "user-id-here"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Admin - Services",
+			"item": [
+				{
+					"name": "Get All Services",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/services?page=1&limit=10&search=&isActive=true",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "services"],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number"
+								},
+								{
+									"key": "limit",
+									"value": "10",
+									"description": "Items per page"
+								},
+								{
+									"key": "search",
+									"value": "",
+									"description": "Search query"
+								},
+								{
+									"key": "isActive",
+									"value": "true",
+									"description": "Filter by active status"
+								},
+								{
+									"key": "tag",
+									"value": "",
+									"description": "Filter by tag",
+									"disabled": true
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Get Service by ID",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/services/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "services", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "salon-for-women"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Create Service",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"id\": \"salon-for-women\",\n  \"name\": \"Salon for Women\",\n  \"icon\": \"Scissors\",\n  \"description\": \"Premium beauty services at your doorstep\",\n  \"highlight\": \"Up to 40% off\",\n  \"isActive\": true,\n  \"tags\": [\"Popular\", \"Trending\"],\n  \"serviceRegions\": [],\n  \"variants\": [\n    {\n      \"id\": \"hair-cut\",\n      \"name\": \"Hair Cut\",\n      \"description\": \"Professional hair cutting service\",\n      \"icon\": \"scissors\",\n      \"inclusions\": [\"Hair wash\", \"Styling\"],\n      \"exclusions\": [\"Hair color\"],\n      \"originalPrice\": 1000,\n      \"finalPrice\": 800,\n      \"estimatedTimeMinutes\": 60,\n      \"includedInSubscription\": false,\n      \"creditValue\": 1,\n      \"tags\": [\"Popular\"],\n      \"isActive\": true\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/services",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "services"]
+						}
+					}
+				},
+				{
+					"name": "Update Service",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Salon for Women Updated\",\n  \"icon\": \"Scissors\",\n  \"description\": \"Premium beauty services at your doorstep\",\n  \"highlight\": \"Up to 40% off\",\n  \"isActive\": true,\n  \"tags\": [\"Popular\", \"Trending\"],\n  \"serviceRegions\": [],\n  \"variants\": [\n    {\n      \"id\": \"hair-cut\",\n      \"name\": \"Hair Cut\",\n      \"description\": \"Professional hair cutting service\",\n      \"icon\": \"scissors\",\n      \"inclusions\": [\"Hair wash\", \"Styling\"],\n      \"exclusions\": [\"Hair color\"],\n      \"originalPrice\": 1000,\n      \"finalPrice\": 800,\n      \"estimatedTimeMinutes\": 60,\n      \"includedInSubscription\": false,\n      \"creditValue\": 1,\n      \"tags\": [\"Popular\"],\n      \"isActive\": true\n    }\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/services/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "services", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "salon-for-women"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Toggle Service Status",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PATCH",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/services/:id/toggle-status",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "services", ":id", "toggle-status"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "salon-for-women"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Admin - Service Regions",
+			"item": [
+				{
+					"name": "Get All Service Regions",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-regions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-regions"]
+						}
+					}
+				},
+				{
+					"name": "Get Service Region by ID",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-regions/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-regions", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "region-id-here"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Create Service Region",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Bangalore Central\",\n  \"polygon\": [\n    { \"lat\": 12.9716, \"lng\": 77.5946 },\n    { \"lat\": 12.9816, \"lng\": 77.6046 },\n    { \"lat\": 12.9916, \"lng\": 77.6146 },\n    { \"lat\": 12.9716, \"lng\": 77.5946 }\n  ],\n  \"isActive\": true\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-regions",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-regions"]
+						}
+					}
+				},
+				{
+					"name": "Update Service Region",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"Bangalore Central Updated\",\n  \"polygon\": [\n    { \"lat\": 12.9716, \"lng\": 77.5946 },\n    { \"lat\": 12.9816, \"lng\": 77.6046 },\n    { \"lat\": 12.9916, \"lng\": 77.6146 },\n    { \"lat\": 12.9716, \"lng\": 77.5946 }\n  ],\n  \"isActive\": true\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-regions/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-regions", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "region-id-here"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Toggle Service Region Status",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PATCH",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-regions/:id/toggle-status",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-regions", ":id", "toggle-status"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "region-id-here"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Check Point in Region",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"lat\": 12.9716,\n  \"lng\": 77.5946\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-regions/check-point",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-regions", "check-point"]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Admin - Service Partners",
+			"item": [
+				{
+					"name": "Get All Service Partners",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-partners",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-partners"]
+						}
+					}
+				},
+				{
+					"name": "Get Service Partner by ID",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-partners/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-partners", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "partner-id-here"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Create Service Partner",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"John's Plumbing Service\",\n  \"email\": \"john@plumbing.com\",\n  \"phone\": \"+1234567890\",\n  \"services\": [\"plumbing\", \"electrical\"],\n  \"isActive\": true\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-partners",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-partners"]
+						}
+					}
+				},
+				{
+					"name": "Update Service Partner",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name\": \"John's Plumbing Service Updated\",\n  \"email\": \"john.updated@plumbing.com\",\n  \"phone\": \"+1234567890\",\n  \"services\": [\"plumbing\", \"electrical\"],\n  \"isActive\": true\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-partners/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-partners", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "partner-id-here"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Toggle Service Partner Status",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PATCH",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/service-partners/:id/toggle-status",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "service-partners", ":id", "toggle-status"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "partner-id-here"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Admin - Customers",
+			"item": [
+				{
+					"name": "Get All Customers",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/customers",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "customers"]
+						}
+					}
+				},
+				{
+					"name": "Get Customer by ID",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/customers/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "customers", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "customer-id-here"
+								}
+							]
+						}
+					}
+				},
+				{
+					"name": "Toggle Customer Status",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "PATCH",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/customers/:id/toggle-status",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "customers", ":id", "toggle-status"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "customer-id-here"
+								}
+							]
+						}
+					}
+				}
+			]
+		},
+		{
+			"name": "Admin - Bookings",
+			"item": [
+				{
+					"name": "Get All Bookings",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/bookings",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "bookings"]
+						}
+					}
+				},
+				{
+					"name": "Get Booking by ID",
+					"request": {
+						"auth": {
+							"type": "bearer",
+							"bearer": [
+								{
+									"key": "token",
+									"value": "{{adminToken}}",
+									"type": "string"
+								}
+							]
+						},
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/api/admin/bookings/:id",
+							"host": ["{{baseUrl}}"],
+							"path": ["api", "admin", "bookings", ":id"],
+							"variable": [
+								{
+									"key": "id",
+									"value": "booking-id-here"
+								}
+							]
+						}
+					}
+				}
+			]
+		}
+	]
+}
+
