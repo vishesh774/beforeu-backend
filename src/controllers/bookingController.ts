@@ -356,11 +356,42 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
     return next(new AppError('User not authenticated', 401));
   }
 
-  const userIdObj = new mongoose.Types.ObjectId(userId);
+  // Pagination parameters
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = parseInt(req.query.limit as string) || 20;
+  const skip = (page - 1) * limit;
 
-  const bookings = await Booking.find({ userId: userIdObj })
+  // Status filter - map frontend status to backend status
+  const statusFilter = req.query.status as string | undefined;
+  const filter: any = { userId: new mongoose.Types.ObjectId(userId) };
+
+  if (statusFilter) {
+    // Map frontend status values to backend status values
+    const statusMap: Record<string, string[]> = {
+      'Upcoming': ['pending', 'confirmed', 'in_progress'],
+      'Completed': ['completed'],
+      'Cancelled': ['cancelled']
+    };
+
+    if (statusMap[statusFilter]) {
+      filter.status = { $in: statusMap[statusFilter] };
+    } else {
+      // Also support direct backend status values
+      const backendStatuses = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
+      if (backendStatuses.includes(statusFilter)) {
+        filter.status = statusFilter;
+      }
+    }
+  }
+
+  // Get total count for pagination
+  const total = await Booking.countDocuments(filter);
+
+  // Fetch bookings with pagination
+  const bookings = await Booking.find(filter)
     .sort({ createdAt: -1 })
-    .limit(50);
+    .skip(skip)
+    .limit(limit);
 
   const bookingsWithItems = await Promise.all(
     bookings.map(async (booking) => {
@@ -370,32 +401,58 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
 
       return {
         id: booking.bookingId,
+        bookingId: booking.bookingId,
         items: items.map(item => ({
-          serviceId: (item.serviceId as any).id || item.serviceId.toString(),
-          variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
+          serviceId: (item.serviceId as any)?.id || (item.serviceId as any)?._id?.toString() || item.serviceId.toString(),
+          serviceVariantId: (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
+          variantId: (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
           variantName: item.variantName,
           serviceName: item.serviceName,
           price: item.finalPrice,
           originalPrice: item.originalPrice,
-          creditCost: item.creditValue,
+          creditCost: item.creditValue || 0,
           quantity: item.quantity
         })),
         totalAmount: booking.totalAmount,
+        taxAmount: booking.totalAmount - (booking.totalOriginalAmount - booking.creditsUsed), // Approximate tax
+        itemTotal: booking.totalOriginalAmount - booking.creditsUsed,
         status: booking.status === 'pending' ? 'Upcoming' : 
                 booking.status === 'completed' ? 'Completed' : 
-                booking.status === 'cancelled' ? 'Cancelled' : 'Upcoming',
-        date: booking.scheduledDate || booking.createdAt.toISOString(),
+                booking.status === 'cancelled' ? 'Cancelled' : 
+                booking.status === 'confirmed' ? 'Upcoming' :
+                booking.status === 'in_progress' ? 'Upcoming' : 'Upcoming',
+        date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
         time: booking.scheduledTime || '',
-        address: booking.address,
-        type: booking.bookingType
+        address: {
+          id: booking.addressId || '',
+          label: booking.address?.label || 'Address',
+          fullAddress: booking.address?.fullAddress || '',
+          area: booking.address?.area,
+          coordinates: booking.address?.coordinates,
+          isDefault: false // Address from booking doesn't track default status
+        },
+        type: booking.bookingType === 'ASAP' ? 'ASAP' : 'SCHEDULED',
+        paymentStatus: booking.paymentStatus,
+        createdAt: booking.createdAt.toISOString(),
+        updatedAt: booking.updatedAt.toISOString()
       };
     })
   );
 
+  const totalPages = Math.ceil(total / limit);
+
   res.status(200).json({
     success: true,
     data: {
-      bookings: bookingsWithItems
+      bookings: bookingsWithItems,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1
+      }
     }
   });
 });

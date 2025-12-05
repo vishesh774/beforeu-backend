@@ -423,3 +423,41 @@ export const addFamilyMember = asyncHandler(async (req: AuthRequest, res: Respon
   });
 });
 
+// @desc    Delete a family member for the authenticated user
+// @route   DELETE /api/auth/family-members/:id
+// @access  Private
+export const deleteFamilyMember = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { id } = req.params;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  if (!id) {
+    return next(new AppError('Family member ID is required', 400));
+  }
+
+  // Convert userId string to ObjectId
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Find the family member and verify it belongs to the user
+  const familyMember = await FamilyMember.findOne({ userId: userIdObj, id });
+  if (!familyMember) {
+    return next(new AppError('Family member not found', 404));
+  }
+
+  // Delete the family member
+  await FamilyMember.deleteOne({ userId: userIdObj, id });
+
+  // Aggregate updated user data
+  const userData = await aggregateUserData(userIdObj);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      user: userData
+    }
+  });
+});
+
