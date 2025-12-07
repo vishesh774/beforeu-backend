@@ -31,6 +31,38 @@ import {
   getAllBookings,
   getBookingById
 } from '../controllers/bookingController';
+import {
+  getAllPolicies,
+  getPolicy,
+  createPolicy,
+  updatePolicy,
+  deletePolicy,
+  updateSequence
+} from '../controllers/refundCancellationPolicyController';
+import {
+  getAllFAQs,
+  getFAQ,
+  createFAQ,
+  updateFAQ,
+  deleteFAQ,
+  updateSequence as updateFAQSequence
+} from '../controllers/faqController';
+import {
+  getAllRules,
+  getRule,
+  createRule,
+  updateRule,
+  deleteRule,
+  updateSequence as updateRulesSequence
+} from '../controllers/serviceDefinitionsVisitRulesController';
+import {
+  getAllTerms,
+  getTerm,
+  createTerm,
+  updateTerm,
+  deleteTerm,
+  updateSequence as updateTermsSequence
+} from '../controllers/termsAndConditionsController';
 import { requireAdmin } from '../middleware/adminAuth';
 
 const router = express.Router();
@@ -75,6 +107,38 @@ router.patch('/customers/:id/toggle-status', toggleCustomerStatus);
 // Booking management routes
 router.get('/bookings', getAllBookings);
 router.get('/bookings/:id', getBookingById);
+
+// Refund & Cancellation Policy routes
+router.get('/refund-cancellation-policies', getAllPolicies);
+router.get('/refund-cancellation-policies/:id', getPolicy);
+router.post('/refund-cancellation-policies', createPolicy);
+router.put('/refund-cancellation-policies/:id', updatePolicy);
+router.delete('/refund-cancellation-policies/:id', deletePolicy);
+router.patch('/refund-cancellation-policies/update-sequence', updateSequence);
+
+// FAQ routes
+router.get('/faqs', getAllFAQs);
+router.get('/faqs/:id', getFAQ);
+router.post('/faqs', createFAQ);
+router.put('/faqs/:id', updateFAQ);
+router.delete('/faqs/:id', deleteFAQ);
+router.patch('/faqs/update-sequence', updateFAQSequence);
+
+// Service Definitions & Visit Rules routes
+router.get('/service-definitions-visit-rules', getAllRules);
+router.get('/service-definitions-visit-rules/:id', getRule);
+router.post('/service-definitions-visit-rules', createRule);
+router.put('/service-definitions-visit-rules/:id', updateRule);
+router.delete('/service-definitions-visit-rules/:id', deleteRule);
+router.patch('/service-definitions-visit-rules/update-sequence', updateRulesSequence);
+
+// Terms & Conditions routes
+router.get('/terms-and-conditions', getAllTerms);
+router.get('/terms-and-conditions/:id', getTerm);
+router.post('/terms-and-conditions', createTerm);
+router.put('/terms-and-conditions/:id', updateTerm);
+router.delete('/terms-and-conditions/:id', deleteTerm);
+router.patch('/terms-and-conditions/update-sequence', updateTermsSequence);
 
 export default router;
 
