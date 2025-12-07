@@ -4,13 +4,17 @@ import { AppError } from '../middleware/errorHandler';
 import Plan from '../models/Plan';
 
 // @desc    Get all plans
-// @route   GET /api/admin/plans
-// @access  Private/Admin
+// @route   GET /api/admin/plans or GET /api/auth/plans
+// @access  Private/Admin (for admin) or Public (for customers - only active plans)
 export const getAllPlans = asyncHandler(async (req: Request, res: Response) => {
   const { planStatus } = req.query;
   
   const filter: any = {};
-  if (planStatus !== undefined) {
+  // If accessed via /api/auth/plans (customer route), only show active plans
+  const isCustomerRoute = req.path.includes('/auth/plans');
+  if (isCustomerRoute) {
+    filter.planStatus = 'active';
+  } else if (planStatus !== undefined) {
     filter.planStatus = planStatus;
   }
 
