@@ -15,6 +15,8 @@ export interface IServiceVariant extends Document {
   creditValue: number; // Value in credits
   serviceType: 'Virtual' | 'In-Person'; // Service delivery type
   availableForPurchase: boolean; // Whether this variant can be purchased
+  extraTimeSlabs: number; // Extra time slabs in minutes (15 min increments)
+  extraCharges: number; // Extra charges for additional time
   tags: string[]; // Array of tags
   isActive: boolean;
   createdAt: Date;
@@ -116,6 +118,18 @@ const ServiceVariantSchema = new Schema<IServiceVariant>(
       type: Boolean,
       default: true,
       required: true
+    },
+    extraTimeSlabs: {
+      type: Number,
+      required: false,
+      min: 0,
+      default: 0
+    },
+    extraCharges: {
+      type: Number,
+      required: false,
+      min: 0,
+      default: 0
     },
     tags: {
       type: [String],

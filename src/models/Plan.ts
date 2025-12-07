@@ -18,6 +18,7 @@ export interface IPlan extends Document {
   originalPrice: number;
   finalPrice: number;
   totalMembers: number;
+  extraDiscount?: number; // Optional discount percentage (0-100)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -88,11 +89,11 @@ const PlanSchema = new Schema<IPlan>(
       default: [],
       validate: {
         validator: function(services: IPlanService[]) {
-          // Check for duplicate serviceIds
-          const serviceIds = services.map(s => s.serviceId);
-          return new Set(serviceIds).size === serviceIds.length;
+          // Check for duplicate subServiceIds
+          const subServiceIds = services.map(s => s.subServiceId);
+          return new Set(subServiceIds).size === subServiceIds.length;
         },
-        message: 'Each service can only be added once to a plan'
+        message: 'Each sub-service can only be added once to a plan'
       }
     },
     originalPrice: {
@@ -109,6 +110,12 @@ const PlanSchema = new Schema<IPlan>(
       type: Number,
       required: [true, 'Total members is required'],
       min: [1, 'Total members must be at least 1']
+    },
+    extraDiscount: {
+      type: Number,
+      required: false,
+      min: [0, 'Extra discount cannot be negative'],
+      max: [100, 'Extra discount cannot exceed 100']
     }
   },
   {

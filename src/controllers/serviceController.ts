@@ -148,6 +148,8 @@ export const getService = asyncHandler(async (req: Request, res: Response, next:
           creditValue: v.creditValue,
           serviceType: v.serviceType,
           availableForPurchase: v.availableForPurchase,
+          extraTimeSlabs: v.extraTimeSlabs || 0,
+          extraCharges: v.extraCharges || 0,
           tags: v.tags,
           isActive: v.isActive
         })),
@@ -280,6 +282,8 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
         creditValue: variantData.creditValue,
         serviceType: variantData.serviceType || 'In-Person',
         availableForPurchase: variantData.availableForPurchase !== undefined ? variantData.availableForPurchase : true,
+        extraTimeSlabs: variantData.extraTimeSlabs !== undefined ? variantData.extraTimeSlabs : 0,
+        extraCharges: variantData.extraCharges !== undefined ? variantData.extraCharges : 0,
         tags: variantData.tags || [],
         isActive: variantData.isActive !== undefined ? variantData.isActive : true
       };
@@ -447,6 +451,8 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
         creditValue: variantData.creditValue,
         serviceType: variantData.serviceType || 'In-Person',
         availableForPurchase: variantData.availableForPurchase !== undefined ? variantData.availableForPurchase : true,
+        extraTimeSlabs: variantData.extraTimeSlabs !== undefined ? variantData.extraTimeSlabs : 0,
+        extraCharges: variantData.extraCharges !== undefined ? variantData.extraCharges : 0,
         tags: variantData.tags || [],
         isActive: variantData.isActive
       };

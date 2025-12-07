@@ -58,7 +58,7 @@ export const getPlan = asyncHandler(async (req: Request, res: Response, next: an
 // @route   POST /api/admin/plans
 // @access  Private/Admin
 export const createPlan = asyncHandler(async (req: Request, res: Response, next: any) => {
-  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers } = req.body;
+  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, extraDiscount } = req.body;
 
   if (!planName || !planName.trim()) {
     return next(new AppError('Plan name is required', 400));
@@ -100,10 +100,10 @@ export const createPlan = asyncHandler(async (req: Request, res: Response, next:
     (service.totalCountLimit === undefined || (typeof service.totalCountLimit === 'number' && service.totalCountLimit >= 0))
   );
 
-  // Check for duplicate serviceIds
-  const serviceIds = validServices.map((s: any) => s.serviceId);
-  if (new Set(serviceIds).size !== serviceIds.length) {
-    return next(new AppError('Each service can only be added once to a plan', 400));
+  // Check for duplicate subServiceIds
+  const subServiceIds = validServices.map((s: any) => s.subServiceId);
+  if (new Set(subServiceIds).size !== subServiceIds.length) {
+    return next(new AppError('Each sub-service can only be added once to a plan', 400));
   }
 
   const plan = await Plan.create({
@@ -116,7 +116,8 @@ export const createPlan = asyncHandler(async (req: Request, res: Response, next:
     services: validServices,
     originalPrice,
     finalPrice,
-    totalMembers
+    totalMembers,
+    extraDiscount: extraDiscount !== undefined && extraDiscount !== null ? extraDiscount : undefined
   });
 
   res.status(201).json({
@@ -135,7 +136,7 @@ export const createPlan = asyncHandler(async (req: Request, res: Response, next:
 // @access  Private/Admin
 export const updatePlan = asyncHandler(async (req: Request, res: Response, next: any) => {
   const { id } = req.params;
-  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers } = req.body;
+  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, extraDiscount } = req.body;
 
   const plan = await Plan.findById(id);
 
@@ -204,6 +205,16 @@ export const updatePlan = asyncHandler(async (req: Request, res: Response, next:
     plan.totalMembers = totalMembers;
   }
 
+  if (extraDiscount !== undefined) {
+    if (extraDiscount === null) {
+      plan.extraDiscount = undefined;
+    } else if (extraDiscount < 0 || extraDiscount > 100) {
+      return next(new AppError('Extra discount must be between 0 and 100', 400));
+    } else {
+      plan.extraDiscount = extraDiscount;
+    }
+  }
+
   if (services !== undefined) {
     if (!Array.isArray(services)) {
       return next(new AppError('Services must be an array', 400));
@@ -212,13 +223,15 @@ export const updatePlan = asyncHandler(async (req: Request, res: Response, next:
     // Validate services array
     const validServices = services.filter((service: any) => 
       service.serviceId && 
-      typeof service.totalCountLimit === 'number' && service.totalCountLimit >= 0
+      service.subServiceId &&
+      service.subServiceName &&
+      (service.totalCountLimit === undefined || (typeof service.totalCountLimit === 'number' && service.totalCountLimit >= 0))
     );
 
-    // Check for duplicate serviceIds
-    const serviceIds = validServices.map((s: any) => s.serviceId);
-    if (new Set(serviceIds).size !== serviceIds.length) {
-      return next(new AppError('Each service can only be added once to a plan', 400));
+    // Check for duplicate subServiceIds
+    const subServiceIds = validServices.map((s: any) => s.subServiceId);
+    if (new Set(subServiceIds).size !== subServiceIds.length) {
+      return next(new AppError('Each sub-service can only be added once to a plan', 400));
     }
 
     plan.services = validServices;
