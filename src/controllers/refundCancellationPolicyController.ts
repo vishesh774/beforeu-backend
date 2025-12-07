@@ -4,13 +4,17 @@ import { AppError } from '../middleware/errorHandler';
 import RefundCancellationPolicy from '../models/RefundCancellationPolicy';
 
 // @desc    Get all refund & cancellation policies
-// @route   GET /api/admin/refund-cancellation-policies
-// @access  Private/Admin
+// @route   GET /api/admin/refund-cancellation-policies or GET /api/auth/refund-cancellation-policies
+// @access  Private/Admin (for admin) or Public (for customers - only active policies)
 export const getAllPolicies = asyncHandler(async (req: Request, res: Response) => {
   const { isActive } = req.query;
   
   const filter: any = {};
-  if (isActive !== undefined) {
+  // If accessed via /api/auth/refund-cancellation-policies (customer route), only show active policies
+  const isCustomerRoute = req.path.includes('/auth/refund-cancellation-policies');
+  if (isCustomerRoute) {
+    filter.isActive = true;
+  } else if (isActive !== undefined) {
     filter.isActive = isActive === 'true';
   }
 

@@ -4,13 +4,17 @@ import { AppError } from '../middleware/errorHandler';
 import FAQ from '../models/FAQ';
 
 // @desc    Get all FAQs
-// @route   GET /api/admin/faqs
-// @access  Private/Admin
+// @route   GET /api/admin/faqs or GET /api/auth/faqs
+// @access  Private/Admin (for admin) or Public (for customers - only active FAQs)
 export const getAllFAQs = asyncHandler(async (req: Request, res: Response) => {
   const { isActive } = req.query;
   
   const filter: any = {};
-  if (isActive !== undefined) {
+  // If accessed via /api/auth/faqs (customer route), only show active FAQs
+  const isCustomerRoute = req.path.includes('/auth/faqs');
+  if (isCustomerRoute) {
+    filter.isActive = true;
+  } else if (isActive !== undefined) {
     filter.isActive = isActive === 'true';
   }
 

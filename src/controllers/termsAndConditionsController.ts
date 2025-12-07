@@ -4,13 +4,17 @@ import { AppError } from '../middleware/errorHandler';
 import TermsAndConditions from '../models/TermsAndConditions';
 
 // @desc    Get all terms and conditions
-// @route   GET /api/admin/terms-and-conditions
-// @access  Private/Admin
+// @route   GET /api/admin/terms-and-conditions or GET /api/auth/terms-and-conditions
+// @access  Private/Admin (for admin) or Public (for customers - only active terms)
 export const getAllTerms = asyncHandler(async (req: Request, res: Response) => {
   const { isActive } = req.query;
   
   const filter: any = {};
-  if (isActive !== undefined) {
+  // If accessed via /api/auth/terms-and-conditions (customer route), only show active terms
+  const isCustomerRoute = req.path.includes('/auth/terms-and-conditions');
+  if (isCustomerRoute) {
+    filter.isActive = true;
+  } else if (isActive !== undefined) {
     filter.isActive = isActive === 'true';
   }
 

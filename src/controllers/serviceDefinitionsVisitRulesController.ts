@@ -4,13 +4,17 @@ import { AppError } from '../middleware/errorHandler';
 import ServiceDefinitionsVisitRules from '../models/ServiceDefinitionsVisitRules';
 
 // @desc    Get all service definitions & visit rules
-// @route   GET /api/admin/service-definitions-visit-rules
-// @access  Private/Admin
+// @route   GET /api/admin/service-definitions-visit-rules or GET /api/auth/service-definitions-visit-rules
+// @access  Private/Admin (for admin) or Public (for customers - only active rules)
 export const getAllRules = asyncHandler(async (req: Request, res: Response) => {
   const { isActive } = req.query;
   
   const filter: any = {};
-  if (isActive !== undefined) {
+  // If accessed via /api/auth/service-definitions-visit-rules (customer route), only show active rules
+  const isCustomerRoute = req.path.includes('/auth/service-definitions-visit-rules');
+  if (isCustomerRoute) {
+    filter.isActive = true;
+  } else if (isActive !== undefined) {
     filter.isActive = isActive === 'true';
   }
 
