@@ -11,6 +11,7 @@ import OrderItem from '../models/OrderItem';
 import Address from '../models/Address';
 // import UserCredits from '../models/UserCredits';
 import User from '../models/User';
+import ServicePartner from '../models/ServicePartner';
 
 // Helper function to check if a point is inside a polygon
 function isPointInPolygon(point: { lat: number; lng: number }, polygon: { lat: number; lng: number }[]): boolean {
@@ -587,7 +588,14 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
   const skip = (page - 1) * limit;
 
   const statusFilter = req.query.status as string | undefined;
+  const paymentStatusFilter = req.query.paymentStatus as string | undefined;
   const searchQuery = req.query.search as string | undefined;
+  const startDate = req.query.startDate as string | undefined;
+  const endDate = req.query.endDate as string | undefined;
+  const customerName = req.query.customerName as string | undefined;
+  const customerPhone = req.query.customerPhone as string | undefined;
+  const customerEmail = req.query.customerEmail as string | undefined;
+  const assignedPartner = req.query.assignedPartner as string | undefined;
 
   const filter: any = {};
 
@@ -597,14 +605,109 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
       'confirmed': 'confirmed',
       'in_progress': 'in_progress',
       'completed': 'completed',
-      'cancelled': 'cancelled'
+      'cancelled': 'cancelled',
+      'refund_initiated': 'refund_initiated',
     };
     if (statusMap[statusFilter]) {
       filter.status = statusMap[statusFilter];
     }
   }
 
-  // Search by booking ID or customer name
+  if (paymentStatusFilter) {
+    const paymentStatusMap: Record<string, string> = {
+      'pending': 'pending',
+      'paid': 'paid',
+      'refunded': 'refunded'
+    };
+    if (paymentStatusMap[paymentStatusFilter]) {
+      filter.paymentStatus = paymentStatusMap[paymentStatusFilter];
+    }
+  }
+
+  // Date range filter (scheduledDate or createdAt)
+  if (startDate || endDate) {
+    const dateFilter: any = {};
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      dateFilter.$gte = start;
+    }
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      dateFilter.$lte = end;
+    }
+    
+    // Filter by scheduledDate if available, otherwise by createdAt
+    // Use $or to match either scheduledDate or createdAt (for ASAP bookings)
+    const dateConditions: any[] = [
+      { scheduledDate: dateFilter }
+    ];
+    
+    // For bookings without scheduledDate (ASAP), use createdAt
+    dateConditions.push({
+      $and: [
+        { $or: [{ scheduledDate: { $exists: false } }, { scheduledDate: null }] },
+        { createdAt: dateFilter }
+      ]
+    });
+    
+    // Combine date filter with existing filters using $and
+    if (Object.keys(filter).length > 0) {
+      filter.$and = [
+        ...(filter.$and || []),
+        { $or: dateConditions }
+      ];
+    } else {
+      filter.$or = dateConditions;
+    }
+  }
+
+  // Customer filters - combine all customer criteria into one query
+  if (customerName || customerPhone || customerEmail) {
+    const customerQuery: any = {};
+    
+    if (customerName && customerName.trim()) {
+      customerQuery.name = { $regex: customerName.trim(), $options: 'i' };
+    }
+    if (customerPhone && customerPhone.trim()) {
+      customerQuery.phone = { $regex: customerPhone.trim(), $options: 'i' };
+    }
+    if (customerEmail && customerEmail.trim()) {
+      customerQuery.email = { $regex: customerEmail.trim(), $options: 'i' };
+    }
+    
+    const matchingUsers = await User.find(customerQuery).select('_id');
+    const userIds = matchingUsers.map(u => u._id);
+    
+    if (userIds.length === 0) {
+      // No matching users, return empty result
+      filter.userId = { $in: [] };
+    } else {
+      filter.userId = { $in: userIds };
+    }
+  }
+
+  // Assigned partner filter
+  let bookingIdsByPartner: mongoose.Types.ObjectId[] | null = null;
+  if (assignedPartner && assignedPartner.trim()) {
+    const partnerRegex = { $regex: assignedPartner.trim(), $options: 'i' };
+    
+    // Find service partners matching the name
+    const matchingPartners = await ServicePartner.find({ name: partnerRegex }).select('_id');
+    const partnerIds = matchingPartners.map(p => p._id);
+    
+    if (partnerIds.length > 0) {
+      // Find order items with these partner IDs
+      const orderItems = await OrderItem.find({ assignedPartnerId: { $in: partnerIds } }).select('bookingId');
+      bookingIdsByPartner = [...new Set(orderItems.map(item => item.bookingId))];
+    } else {
+      // No matching partners, return empty result
+      bookingIdsByPartner = [];
+    }
+  }
+
+  // Search by booking ID or customer name (general search)
   if (searchQuery && searchQuery.trim()) {
     const escapedQuery = searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const searchRegex = { $regex: escapedQuery, $options: 'i' };
@@ -620,10 +723,51 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
     const userIds = matchingUsers.map(u => u._id);
     
     // Find bookings matching booking ID or user IDs
-    filter.$or = [
-      { bookingId: searchRegex },
-      ...(userIds.length > 0 ? [{ userId: { $in: userIds } }] : [])
+    const searchFilter: any[] = [
+      { bookingId: searchRegex }
     ];
+    if (userIds.length > 0) {
+      searchFilter.push({ userId: { $in: userIds } });
+    }
+    
+    // Combine with existing $or conditions
+    if (filter.$or) {
+      // If we already have $or from date filter, combine with $and
+      if (filter.$and) {
+        filter.$and.push({ $or: searchFilter });
+      } else {
+        filter.$and = [
+          { $or: filter.$or },
+          { $or: searchFilter }
+        ];
+        delete filter.$or;
+      }
+    } else {
+      filter.$or = searchFilter;
+    }
+  }
+
+  // Apply assigned partner filter
+  if (bookingIdsByPartner !== null) {
+    if (bookingIdsByPartner.length === 0) {
+      // No matching bookings, return empty result
+      filter._id = { $in: [] };
+    } else {
+      // Convert bookingIds to ObjectIds for comparison
+      const bookingObjectIds = bookingIdsByPartner.map(id => 
+        typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id
+      );
+      
+      if (filter._id) {
+        // Intersect with existing filter
+        const existingIds = Array.isArray(filter._id.$in) ? filter._id.$in : [];
+        filter._id.$in = bookingObjectIds.filter(id => 
+          existingIds.some((existing: any) => existing.toString() === id.toString())
+        );
+      } else {
+        filter._id = { $in: bookingObjectIds };
+      }
+    }
   }
 
   const total = await Booking.countDocuments(filter);

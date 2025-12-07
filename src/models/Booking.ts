@@ -19,7 +19,7 @@ export interface IBooking extends Document {
   totalAmount: number;
   totalOriginalAmount: number; // Before discounts
   creditsUsed: number;
-  status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated'
   paymentStatus: 'pending' | 'paid' | 'refunded';
   notes?: string;
   createdAt: Date;
@@ -96,7 +96,7 @@ const BookingSchema = new Schema<IBooking>(
     },
     status: {
       type: String,
-      enum: ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'],
+      enum: ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'refund_initiated'],
       default: 'pending',
       required: true
     },
