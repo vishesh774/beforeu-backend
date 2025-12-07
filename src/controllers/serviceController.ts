@@ -146,6 +146,8 @@ export const getService = asyncHandler(async (req: Request, res: Response, next:
           estimatedTimeMinutes: v.estimatedTimeMinutes,
           includedInSubscription: v.includedInSubscription,
           creditValue: v.creditValue,
+          serviceType: v.serviceType,
+          availableForPurchase: v.availableForPurchase,
           tags: v.tags,
           isActive: v.isActive
         })),
@@ -207,6 +209,12 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
     }
     if (typeof variant.includedInSubscription !== 'boolean') {
       return next(new AppError('Each variant must have a valid includedInSubscription (boolean)', 400));
+    }
+    if (variant.serviceType && !['Virtual', 'In-Person'].includes(variant.serviceType)) {
+      return next(new AppError('Service type must be either "Virtual" or "In-Person"', 400));
+    }
+    if (typeof variant.availableForPurchase !== 'undefined' && typeof variant.availableForPurchase !== 'boolean') {
+      return next(new AppError('Each variant must have a valid availableForPurchase (boolean)', 400));
     }
     if (typeof variant.isActive !== 'boolean') {
       return next(new AppError('Each variant must have a valid isActive (boolean)', 400));
@@ -270,6 +278,8 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
         estimatedTimeMinutes: variantData.estimatedTimeMinutes,
         includedInSubscription: variantData.includedInSubscription,
         creditValue: variantData.creditValue,
+        serviceType: variantData.serviceType || 'In-Person',
+        availableForPurchase: variantData.availableForPurchase !== undefined ? variantData.availableForPurchase : true,
         tags: variantData.tags || [],
         isActive: variantData.isActive !== undefined ? variantData.isActive : true
       };
@@ -306,6 +316,8 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
           estimatedTimeMinutes: v.estimatedTimeMinutes,
           includedInSubscription: v.includedInSubscription,
           creditValue: v.creditValue,
+          serviceType: v.serviceType,
+          availableForPurchase: v.availableForPurchase,
           tags: v.tags,
           isActive: v.isActive
         })),
@@ -433,6 +445,8 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
         estimatedTimeMinutes: variantData.estimatedTimeMinutes,
         includedInSubscription: variantData.includedInSubscription,
         creditValue: variantData.creditValue,
+        serviceType: variantData.serviceType || 'In-Person',
+        availableForPurchase: variantData.availableForPurchase !== undefined ? variantData.availableForPurchase : true,
         tags: variantData.tags || [],
         isActive: variantData.isActive
       };
@@ -480,6 +494,8 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
           estimatedTimeMinutes: v.estimatedTimeMinutes,
           includedInSubscription: v.includedInSubscription,
           creditValue: v.creditValue,
+          serviceType: v.serviceType,
+          availableForPurchase: v.availableForPurchase,
           tags: v.tags,
           isActive: v.isActive
         })),
@@ -513,7 +529,14 @@ export const toggleServiceStatus = asyncHandler(async (req: Request, res: Respon
     variant.isActive = !variant.isActive;
     await variant.save();
   } else {
-    // Toggle service-level status
+    // Toggle service-level status (mark as inactive instead of deleting)
+    // Ensure description and highlight are set to empty string if undefined
+    if (service.description === undefined || service.description === null) {
+      service.description = '';
+    }
+    if (service.highlight === undefined || service.highlight === null) {
+      service.highlight = '';
+    }
     service.isActive = !service.isActive;
     await service.save();
   }
@@ -542,6 +565,8 @@ export const toggleServiceStatus = asyncHandler(async (req: Request, res: Respon
           estimatedTimeMinutes: v.estimatedTimeMinutes,
           includedInSubscription: v.includedInSubscription,
           creditValue: v.creditValue,
+          serviceType: v.serviceType,
+          availableForPurchase: v.availableForPurchase,
           tags: v.tags,
           isActive: v.isActive
         })),

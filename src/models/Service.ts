@@ -37,14 +37,14 @@ const ServiceSchema = new Schema<IService>(
     },
     description: {
       type: String,
-      required: [true, 'Please provide a service description'],
+      required: false,
       trim: true,
       default: '',
       maxlength: [200, 'Service description cannot exceed 200 characters']
     },
     highlight: {
       type: String,
-      required: [true, 'Please provide a service highlight'],
+      required: false,
       trim: true,
       default: '',
       maxlength: [100, 'Service highlight cannot exceed 100 characters']

@@ -13,6 +13,8 @@ export interface IServiceVariant extends Document {
   estimatedTimeMinutes: number; // Estimated time to complete job in minutes
   includedInSubscription: boolean;
   creditValue: number; // Value in credits
+  serviceType: 'Virtual' | 'In-Person'; // Service delivery type
+  availableForPurchase: boolean; // Whether this variant can be purchased
   tags: string[]; // Array of tags
   isActive: boolean;
   createdAt: Date;
@@ -103,6 +105,17 @@ const ServiceVariantSchema = new Schema<IServiceVariant>(
       type: Number,
       required: true,
       min: 0
+    },
+    serviceType: {
+      type: String,
+      enum: ['Virtual', 'In-Person'],
+      required: [true, 'Service type is required'],
+      default: 'In-Person'
+    },
+    availableForPurchase: {
+      type: Boolean,
+      default: true,
+      required: true
     },
     tags: {
       type: [String],

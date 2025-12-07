@@ -63,6 +63,13 @@ import {
   deleteTerm,
   updateSequence as updateTermsSequence
 } from '../controllers/termsAndConditionsController';
+import {
+  getAllPlans,
+  getPlan,
+  createPlan,
+  updatePlan,
+  deletePlan
+} from '../controllers/planController';
 import { requireAdmin } from '../middleware/adminAuth';
 
 const router = express.Router();
@@ -139,6 +146,13 @@ router.post('/terms-and-conditions', createTerm);
 router.put('/terms-and-conditions/:id', updateTerm);
 router.delete('/terms-and-conditions/:id', deleteTerm);
 router.patch('/terms-and-conditions/update-sequence', updateTermsSequence);
+
+// Plan routes
+router.get('/plans', getAllPlans);
+router.get('/plans/:id', getPlan);
+router.post('/plans', createPlan);
+router.put('/plans/:id', updatePlan);
+router.delete('/plans/:id', deletePlan);
 
 export default router;
 
