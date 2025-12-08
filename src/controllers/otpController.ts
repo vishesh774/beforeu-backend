@@ -114,19 +114,30 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   if (user) {
     // Update existing user
     user.name = name;
-    if (email) {
-      user.email = email;
+    // Only set email if provided and not empty, otherwise set to undefined to avoid unique constraint violation
+    if (email && email.trim()) {
+      user.email = email.trim().toLowerCase();
+    } else {
+      user.email = undefined; // Set to undefined instead of empty string to allow sparse unique index
     }
     await user.save();
   } else {
     // Create new user with default role as 'customer'
-    user = await User.create({
+    // Only include email if provided and not empty
+    const userData: any = {
       name,
-      email: email || '',
       phone,
       password: 'temp-password-' + Date.now(), // Temporary password, user can set later
       role: 'customer' // Default role for OTP-based signups
-    });
+    };
+    
+    // Only add email if provided and not empty
+    if (email && email.trim()) {
+      userData.email = email.trim().toLowerCase();
+    }
+    // Don't set email at all if not provided (undefined) - this allows sparse unique index to work
+    
+    user = await User.create(userData);
     
     // Initialize user-related records
     await initializeUserRecords(user._id);

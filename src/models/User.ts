@@ -28,17 +28,18 @@ const UserSchema = new Schema<IUser>(
       type: String,
       required: false,
       unique: true,
-      sparse: true, // Allows multiple null/empty values
+      sparse: true, // Allows multiple null/undefined values (but not empty strings)
       lowercase: true,
       trim: true,
       validate: {
         validator: function(v: string) {
-          // Allow empty string, but if provided, must be valid email
-          return !v || /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(v);
+          // Allow null/undefined, but if provided, must be valid email
+          if (!v) return true; // Allow null/undefined/empty
+          return /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(v);
         },
         message: 'Please provide a valid email'
       },
-      default: ''
+      // Don't set default - undefined is better for sparse unique index
     },
     phone: {
       type: String,
