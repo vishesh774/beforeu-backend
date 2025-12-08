@@ -49,7 +49,7 @@ export const requireAdmin = async (
       // Attach admin user to request
       (req as AdminRequest).adminUser = {
         id: user._id.toString(),
-        email: user.email,
+        email: user?.email || '',
         role: user.role
       };
 

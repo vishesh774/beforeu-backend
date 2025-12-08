@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { createAndSendOTP, verifyOTP } from '../services/otpService';
-import User from '../models/User';
+import User, { UserRole } from '../models/User';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
 
@@ -114,17 +114,32 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   if (user) {
     // Update existing user
     user.name = name;
-    // Only set email if provided and not empty, otherwise set to undefined to avoid unique constraint violation
+    // Only set email if provided and not empty, otherwise unset the field to avoid unique constraint violation
     if (email && email.trim()) {
       user.email = email.trim().toLowerCase();
+      await user.save();
     } else {
-      user.email = undefined; // Set to undefined instead of empty string to allow sparse unique index
+      // Unset the email field using updateOne to avoid unique constraint violation
+      await User.updateOne(
+        { _id: user._id },
+        { $unset: { email: '' } }
+      );
+      // Reload user to get updated data
+      user = await User.findById(user._id);
+      if (!user) {
+        return next(new AppError('Failed to update user', 500));
+      }
     }
-    await user.save();
   } else {
     // Create new user with default role as 'customer'
     // Only include email if provided and not empty
-    const userData: any = {
+    const userData: {
+      name: string;
+      phone: string;
+      password: string;
+      role: UserRole;
+      email?: string;
+    } = {
       name,
       phone,
       password: 'temp-password-' + Date.now(), // Temporary password, user can set later
@@ -137,10 +152,19 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
     }
     // Don't set email at all if not provided (undefined) - this allows sparse unique index to work
     
-    user = await User.create(userData);
+    const newUser = await User.create(userData);
+    if (!newUser) {
+      return next(new AppError('Failed to create user', 500));
+    }
+    user = newUser;
     
     // Initialize user-related records
     await initializeUserRecords(user._id);
+  }
+
+  // Ensure user exists (TypeScript guard)
+  if (!user) {
+    return next(new AppError('Failed to create or update user', 500));
   }
 
   // Aggregate user data

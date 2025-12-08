@@ -35,7 +35,7 @@ export const protect = async (req: AuthRequest, _res: Response, next: NextFuncti
     // Attach user to request
     req.user = {
       id: user._id.toString(),
-      email: user.email
+      email: user?.email || ''
     };
 
     next();

@@ -5,7 +5,7 @@ export type UserRole = 'customer' | 'Admin' | 'Supervisor' | 'Incharge' | 'Servi
 
 export interface IUser extends Document {
   name: string;
-  email: string;
+  email?: string; // Optional email field
   phone: string;
   password: string;
   role: UserRole;
