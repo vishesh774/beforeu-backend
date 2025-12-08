@@ -3,6 +3,7 @@ import FamilyMember from '../models/FamilyMember';
 import Address from '../models/Address';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
+import Plan from '../models/Plan';
 import mongoose from 'mongoose';
 
 export interface AggregatedUserData {
@@ -14,6 +15,19 @@ export interface AggregatedUserData {
   isActive: boolean;
   credits: number;
   activePlanId?: string;
+  activePlan?: {
+    id: string;
+    planName: string;
+    planTitle: string;
+    planSubTitle: string;
+    planStatus: 'active' | 'inactive';
+    allowSOS: boolean;
+    totalCredits: number;
+    originalPrice: number;
+    finalPrice: number;
+    totalMembers: number;
+    extraDiscount?: number;
+  };
   familyMembers: Array<{
     id: string;
     name: string;
@@ -53,6 +67,27 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
     UserPlan.findOne({ userId: user._id })
   ]);
 
+  // Fetch active plan details if activePlanId exists
+  let activePlan = undefined;
+  if (userPlan?.activePlanId) {
+    const plan = await Plan.findById(userPlan.activePlanId);
+    if (plan) {
+      activePlan = {
+        id: plan._id.toString(),
+        planName: plan.planName,
+        planTitle: plan.planTitle,
+        planSubTitle: plan.planSubTitle,
+        planStatus: plan.planStatus,
+        allowSOS: plan.allowSOS,
+        totalCredits: plan.totalCredits,
+        originalPrice: plan.originalPrice,
+        finalPrice: plan.finalPrice,
+        totalMembers: plan.totalMembers,
+        extraDiscount: plan.extraDiscount
+      };
+    }
+  }
+
   return {
     id: user._id.toString(),
     name: user.name,
@@ -62,6 +97,7 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
     isActive: user.isActive,
     credits: userCredits?.credits || 0,
     activePlanId: userPlan?.activePlanId || undefined,
+    activePlan,
     familyMembers: familyMembers.map(fm => ({
       id: fm.id,
       name: fm.name,
