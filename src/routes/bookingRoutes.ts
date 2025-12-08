@@ -1,10 +1,11 @@
 import express from 'express';
-import { getServicesByLocation, getSubServicesByServiceId, createBooking, getUserBookings, getUserBookingById } from '../controllers/bookingController';
+import { getAllServices, getServicesByLocation, getSubServicesByServiceId, createBooking, getUserBookings, getUserBookingById } from '../controllers/bookingController';
 import { protect } from '../middleware/auth';
 
 const router = express.Router();
 
 // Public routes - get services
+router.get('/services/all', getAllServices);
 router.get('/services/by-location', getServicesByLocation);
 router.get('/services/:serviceId/sub-services', getSubServicesByServiceId);
 

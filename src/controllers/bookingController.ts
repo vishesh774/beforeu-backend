@@ -29,6 +29,50 @@ function isPointInPolygon(point: { lat: number; lng: number }, polygon: { lat: n
   return inside;
 }
 
+// @desc    Get all active services (without location requirement)
+// @route   GET /api/services/all
+// @access  Public
+export const getAllServices = asyncHandler(async (_req: Request, res: Response, _next: NextFunction) => {
+  // Find all active services
+  const services = await Service.find({
+    isActive: true
+  }).sort({ name: 1 });
+
+  // Get all variants for these services
+  const serviceIds = services.map(s => s._id);
+  const variants = await ServiceVariant.find({
+    serviceId: { $in: serviceIds },
+    isActive: true
+  }).sort({ name: 1 });
+
+  // Group variants by service
+  const servicesWithVariants = services.map(service => {
+    const serviceVariants = variants
+      .filter(v => v.serviceId.toString() === service._id.toString());
+
+    // Extract sub-service names
+    const subServicesNames = serviceVariants.map(v => v.name);
+
+    return {
+      id: service.id, // Service ID
+      serviceId: service.id, // Service ID (explicit alias for clarity)
+      name: service.name, // Service Name
+      icon: service.icon, // Service Icon
+      description: service.description || '', // Description
+      highlight: service.highlight || '', // Highlight
+      subServicesNames: subServicesNames, // SubServices Names
+      tags: service.tags || [] // Service Tags
+    };
+  }).filter(service => service.subServicesNames.length > 0); // Only return services with active variants
+
+  res.status(200).json({
+    success: true,
+    data: {
+      services: servicesWithVariants
+    }
+  });
+});
+
 // @desc    Get services available at a specific location
 // @route   GET /api/services/by-location
 // @access  Public
