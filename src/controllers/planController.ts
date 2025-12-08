@@ -1,7 +1,12 @@
 import { Request, Response } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
+import { AuthRequest } from '../middleware/auth';
 import Plan from '../models/Plan';
+import User from '../models/User';
+import UserPlan from '../models/UserPlan';
+import UserCredits from '../models/UserCredits';
+import mongoose from 'mongoose';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -271,6 +276,86 @@ export const deletePlan = asyncHandler(async (req: Request, res: Response, next:
   res.status(200).json({
     success: true,
     message: 'Plan deleted successfully'
+  });
+});
+
+// @desc    Purchase a plan
+// @route   POST /api/auth/plans/purchase
+// @access  Private
+export const purchasePlan = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
+  const { planId } = req.body;
+  const userIdString = req.user?.id;
+
+  if (!userIdString) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  if (!planId) {
+    return next(new AppError('Plan ID is required', 400));
+  }
+
+  // Find the plan
+  const plan = await Plan.findById(planId);
+  if (!plan) {
+    return next(new AppError('Plan not found', 404));
+  }
+
+  if (plan.planStatus !== 'active') {
+    return next(new AppError('Plan is not available for purchase', 400));
+  }
+
+  // Convert userId string to ObjectId
+  const userId = new mongoose.Types.ObjectId(userIdString);
+
+  // Check if user exists
+  const user = await User.findById(userId);
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  // Get plan ID as string
+  const planIdString = plan._id.toString();
+
+  // Update or create UserPlan record
+  let userPlan = await UserPlan.findOne({ userId });
+  if (!userPlan) {
+    userPlan = await UserPlan.create({
+      userId,
+      activePlanId: planIdString
+    });
+  } else {
+    userPlan.activePlanId = planIdString;
+    await userPlan.save();
+  }
+
+  // Update or create UserCredits record (add plan credits)
+  let userCredits = await UserCredits.findOne({ userId });
+  const currentCredits = userCredits?.credits || 0;
+  const newCredits = currentCredits + plan.totalCredits;
+  
+  if (!userCredits) {
+    userCredits = await UserCredits.create({
+      userId,
+      credits: newCredits
+    });
+  } else {
+    userCredits.credits = newCredits;
+    await userCredits.save();
+  }
+
+  // Generate order ID (simple format: ORDER-{timestamp}-{userId})
+  const orderId = `ORDER-${Date.now()}-${userIdString.slice(-6)}`;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      plan: {
+        ...plan.toObject(),
+        id: plan._id.toString()
+      },
+      orderId
+    },
+    message: 'Plan purchased successfully'
   });
 });
 
