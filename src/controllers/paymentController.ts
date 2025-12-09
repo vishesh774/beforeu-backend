@@ -143,9 +143,11 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       return next(new AppError('Plan not found', 404));
     }
 
-    // Verify amount matches plan price
+    // Verify amount matches plan price (with tolerance of 5 Rs = 500 paise)
     const planAmountInPaise = Math.round(plan.finalPrice * 100);
-    if (amount !== planAmountInPaise) {
+    const tolerance = 500; // 5 Rs tolerance
+    const amountDifference = Math.abs(amount - planAmountInPaise);
+    if (amountDifference > tolerance) {
       return next(new AppError(`Amount mismatch. Expected ₹${plan.finalPrice}, got ₹${amount / 100}`, 400));
     }
   }
@@ -318,6 +320,14 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         return next(new AppError('Plan not found', 404));
       }
 
+      // Verify amount matches plan price (with tolerance of 5 Rs = 500 paise)
+      const planAmountInPaise = Math.round(plan.finalPrice * 100);
+      const tolerance = 500; // 5 Rs tolerance
+      const amountDifference = Math.abs(order.amount - planAmountInPaise);
+      if (amountDifference > tolerance) {
+        return next(new AppError(`Amount mismatch. Expected ₹${plan.finalPrice}, got ₹${order.amount / 100}`, 400));
+      }
+
       // Get plan ID as string
       const planIdString = plan._id.toString();
 
@@ -418,10 +428,12 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         });
       }
 
-      // Verify amount matches
+      // Verify amount matches (with tolerance of 5 Rs = 500 paise)
       const calculatedAmountInPaise = Math.round(totalAmount * 100);
-      if (order.amount !== calculatedAmountInPaise) {
-        return next(new AppError('Amount mismatch', 400));
+      const tolerance = 500; // 5 Rs tolerance
+      const amountDifference = Math.abs(order.amount - calculatedAmountInPaise);
+      if (amountDifference > tolerance) {
+        return next(new AppError(`Amount mismatch. Expected ₹${totalAmount}, got ₹${order.amount / 100}`, 400));
       }
 
       // Generate booking ID
