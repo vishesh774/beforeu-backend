@@ -2,7 +2,8 @@ import { Response } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
-import Razorpay from 'razorpay';
+// @ts-ignore - Razorpay doesn't have proper TypeScript definitions
+const Razorpay = require('razorpay');
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Booking from '../models/Booking';
@@ -16,9 +17,9 @@ import UserCredits from '../models/UserCredits';
 import User from '../models/User';
 
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
-let razorpay: Razorpay | null = null;
+let razorpay: any = null;
 
-const getRazorpayInstance = (): Razorpay => {
+const getRazorpayInstance = (): any => {
   if (!razorpay) {
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_API_SECRET;
@@ -35,6 +36,27 @@ const getRazorpayInstance = (): Razorpay => {
   return razorpay;
 };
 
+// @desc    Test Razorpay configuration (for debugging)
+// @route   GET /api/payments/test-config
+// @access  Private
+export const testRazorpayConfig = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_API_SECRET;
+  
+  try {
+    const instance = getRazorpayInstance();
+    res.status(200).json({
+      success: true,
+      message: 'Razorpay configured correctly',
+      hasKeyId: !!keyId,
+      hasSecret: !!keySecret,
+      keyIdPrefix: keyId?.substring(0, 10) || 'none',
+    });
+  } catch (error: any) {
+    return next(new AppError(error.message || 'Razorpay not configured', 500));
+  }
+});
+
 // @desc    Create Razorpay order
 // @route   POST /api/payments/create-order
 // @access  Private
@@ -43,6 +65,38 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
   if (!userId) {
     return next(new AppError('User not authenticated', 401));
   }
+
+  // Log request for debugging
+  console.log('[PaymentController] createOrder called:', {
+    userId,
+    body: {
+      amount: req.body.amount,
+      currency: req.body.currency,
+      hasBookingData: !!req.body.bookingData,
+      hasPlanData: !!req.body.planData,
+    },
+  });
+
+  // Check Razorpay credentials upfront
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_API_SECRET;
+  
+  if (!keyId || !keySecret) {
+    console.error('[PaymentController] Razorpay credentials missing:', {
+      hasKeyId: !!keyId,
+      hasSecret: !!keySecret,
+      keyIdLength: keyId?.length || 0,
+      keySecretLength: keySecret?.length || 0,
+      envKeys: Object.keys(process.env).filter(k => k.includes('RAZORPAY')),
+    });
+    return next(new AppError('Payment gateway not configured. Please contact support.', 500));
+  }
+  
+  console.log('[PaymentController] Razorpay credentials found:', {
+    hasKeyId: !!keyId,
+    hasSecret: !!keySecret,
+    keyIdPrefix: keyId?.substring(0, 10) || 'none',
+  });
 
   const { amount, currency = 'INR', bookingData, planData } = req.body;
 
@@ -98,11 +152,25 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
   }
 
   try {
+    // Get Razorpay instance (will throw if credentials not configured)
+    let razorpayInstance;
+    try {
+      razorpayInstance = getRazorpayInstance();
+    } catch (razorpayError: any) {
+      console.error('[PaymentController] Razorpay initialization error:', razorpayError);
+      return next(new AppError('Payment gateway not configured. Please contact support.', 500));
+    }
+
     // Create Razorpay order
+    // Receipt must be max 40 characters - use short format
+    const timestamp = Date.now().toString(36); // Base36 for shorter string
+    const userIdShort = userId.toString().slice(-6); // Last 6 chars of userId
+    const receipt = `${timestamp}_${userIdShort}`.substring(0, 40); // Ensure max 40 chars
+    
     const options = {
       amount: Math.round(amount), // Amount in paise
       currency: currency.toUpperCase(),
-      receipt: `receipt_${Date.now()}_${userId}`,
+      receipt: receipt,
       notes: {
         userId,
         type: planData ? 'plan' : 'booking',
@@ -111,8 +179,45 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       },
     };
 
-    const razorpayInstance = getRazorpayInstance();
-    const order = await razorpayInstance.orders.create(options);
+    console.log('[PaymentController] Creating Razorpay order with options:', {
+      amount: options.amount,
+      currency: options.currency,
+      receipt: options.receipt,
+      type: options.notes.type,
+    });
+
+    let order;
+    try {
+      order = await razorpayInstance.orders.create(options);
+      console.log('[PaymentController] Razorpay order created:', order.id);
+    } catch (razorpayError: any) {
+      // Razorpay errors have a specific structure
+      console.error('[PaymentController] Razorpay API error:', razorpayError);
+      console.error('[PaymentController] Razorpay error details:', {
+        message: razorpayError.message,
+        description: razorpayError.description,
+        code: razorpayError.code,
+        field: razorpayError.field,
+        source: razorpayError.source,
+        step: razorpayError.step,
+        reason: razorpayError.reason,
+        statusCode: razorpayError.statusCode,
+        error: razorpayError.error,
+        status: razorpayError.status,
+      });
+      
+      // Extract error message from Razorpay error structure
+      let errorMessage = 'Failed to create payment order';
+      if (razorpayError.error?.description) {
+        errorMessage = razorpayError.error.description;
+      } else if (razorpayError.description) {
+        errorMessage = razorpayError.description;
+      } else if (razorpayError.message) {
+        errorMessage = razorpayError.message;
+      }
+      
+      return next(new AppError(errorMessage, 500));
+    }
 
     res.status(200).json({
       success: true,
@@ -124,8 +229,32 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       },
     });
   } catch (error: any) {
-    console.error('[PaymentController] Error creating Razorpay order:', error);
-    return next(new AppError(error.message || 'Failed to create payment order', 500));
+    console.error('[PaymentController] Unexpected error creating Razorpay order:', error);
+    console.error('[PaymentController] Error stack:', error.stack);
+    console.error('[PaymentController] Error details:', {
+      message: error.message,
+      code: error.code,
+      description: error.description,
+      field: error.field,
+      source: error.source,
+      step: error.step,
+      reason: error.reason,
+      metadata: error.metadata,
+      statusCode: error.statusCode,
+      error: error.error,
+    });
+    
+    // Provide more specific error messages
+    let errorMessage = 'Failed to create payment order';
+    if (error.message) {
+      errorMessage = error.message;
+    } else if (error.description) {
+      errorMessage = error.description;
+    } else if (error.error?.description) {
+      errorMessage = error.error.description;
+    }
+    
+    return next(new AppError(errorMessage, 500));
   }
 });
 
