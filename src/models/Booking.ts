@@ -21,6 +21,8 @@ export interface IBooking extends Document {
   creditsUsed: number;
   status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated'
   paymentStatus: 'pending' | 'paid' | 'refunded';
+  paymentId?: string; // Razorpay payment ID
+  orderId?: string; // Razorpay order ID
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -105,6 +107,14 @@ const BookingSchema = new Schema<IBooking>(
       enum: ['pending', 'paid', 'refunded'],
       default: 'pending',
       required: true
+    },
+    paymentId: {
+      type: String,
+      trim: true
+    },
+    orderId: {
+      type: String,
+      trim: true
     },
     notes: {
       type: String,

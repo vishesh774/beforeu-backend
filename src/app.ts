@@ -7,6 +7,7 @@ import connectDB from './config/database';
 import authRoutes from './routes/authRoutes';
 import adminRoutes from './routes/adminRoutes';
 import bookingRoutes from './routes/bookingRoutes';
+import paymentRoutes from './routes/paymentRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
 // Load environment variables
@@ -15,6 +16,14 @@ dotenv.config();
 console.log('🚀 Starting BeforeU Backend Server...');
 console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`);
 console.log(`🔌 Port: ${process.env.PORT || 5000}`);
+
+// Validate Razorpay environment variables (warn only, don't fail startup)
+if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_API_SECRET) {
+  console.warn('⚠️  WARNING: Razorpay credentials not configured. Payment features will not work.');
+  console.warn('   Please set RAZORPAY_KEY_ID and RAZORPAY_API_SECRET environment variables.');
+} else {
+  console.log('✅ Razorpay credentials configured');
+}
 
 const app: Application = express();
 
@@ -95,6 +104,7 @@ app.get('/health', (_req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', bookingRoutes);
+app.use('/api', paymentRoutes);
 console.log('✅ Routes registered successfully');
 
 // 404 handler

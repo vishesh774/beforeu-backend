@@ -1,0 +1,411 @@
+import { Response } from 'express';
+import { asyncHandler } from '../middleware/asyncHandler';
+import { AppError } from '../middleware/errorHandler';
+import { AuthRequest } from '../middleware/auth';
+import Razorpay from 'razorpay';
+import crypto from 'crypto';
+import mongoose from 'mongoose';
+import Booking from '../models/Booking';
+import OrderItem from '../models/OrderItem';
+import Address from '../models/Address';
+import Service from '../models/Service';
+import ServiceVariant from '../models/ServiceVariant';
+import Plan from '../models/Plan';
+import UserPlan from '../models/UserPlan';
+import UserCredits from '../models/UserCredits';
+import User from '../models/User';
+
+// Initialize Razorpay - Lazy initialization to ensure env vars are loaded
+let razorpay: Razorpay | null = null;
+
+const getRazorpayInstance = (): Razorpay => {
+  if (!razorpay) {
+    const keyId = process.env.RAZORPAY_KEY_ID;
+    const keySecret = process.env.RAZORPAY_API_SECRET;
+    
+    if (!keyId || !keySecret) {
+      throw new Error('Razorpay credentials not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_API_SECRET environment variables.');
+    }
+    
+    razorpay = new Razorpay({
+      key_id: keyId,
+      key_secret: keySecret,
+    });
+  }
+  return razorpay;
+};
+
+// @desc    Create Razorpay order
+// @route   POST /api/payments/create-order
+// @access  Private
+export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  const { amount, currency = 'INR', bookingData, planData } = req.body;
+
+  // Validation
+  if (!amount || amount <= 0) {
+    return next(new AppError('Valid amount is required', 400));
+  }
+
+  if (amount < 100) {
+    return next(new AppError('Minimum amount is ₹1 (100 paise)', 400));
+  }
+
+  // Validate that either bookingData or planData is provided, but not both
+  if (!bookingData && !planData) {
+    return next(new AppError('Either bookingData or planData is required', 400));
+  }
+
+  if (bookingData && planData) {
+    return next(new AppError('Cannot process both booking and plan purchase in one order', 400));
+  }
+
+  // Validate booking data if provided
+  if (bookingData) {
+    if (!bookingData.addressId || !bookingData.items || !Array.isArray(bookingData.items) || bookingData.items.length === 0) {
+      return next(new AppError('Valid booking data is required', 400));
+    }
+
+    if (!bookingData.bookingType || !['ASAP', 'SCHEDULED'].includes(bookingData.bookingType)) {
+      return next(new AppError('Valid booking type is required', 400));
+    }
+
+    if (bookingData.bookingType === 'SCHEDULED' && (!bookingData.scheduledDate || !bookingData.scheduledTime)) {
+      return next(new AppError('Scheduled date and time are required for scheduled bookings', 400));
+    }
+  }
+
+  // Validate plan data if provided
+  if (planData) {
+    if (!planData.planId) {
+      return next(new AppError('Plan ID is required', 400));
+    }
+
+    const plan = await Plan.findById(planData.planId);
+    if (!plan) {
+      return next(new AppError('Plan not found', 404));
+    }
+
+    // Verify amount matches plan price
+    const planAmountInPaise = Math.round(plan.finalPrice * 100);
+    if (amount !== planAmountInPaise) {
+      return next(new AppError(`Amount mismatch. Expected ₹${plan.finalPrice}, got ₹${amount / 100}`, 400));
+    }
+  }
+
+  try {
+    // Create Razorpay order
+    const options = {
+      amount: Math.round(amount), // Amount in paise
+      currency: currency.toUpperCase(),
+      receipt: `receipt_${Date.now()}_${userId}`,
+      notes: {
+        userId,
+        type: planData ? 'plan' : 'booking',
+        ...(bookingData && { bookingData: JSON.stringify(bookingData) }),
+        ...(planData && { planData: JSON.stringify(planData) }),
+      },
+    };
+
+    const razorpayInstance = getRazorpayInstance();
+    const order = await razorpayInstance.orders.create(options);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        orderId: order.id,
+        amount: order.amount,
+        currency: order.currency,
+        keyId: process.env.RAZORPAY_KEY_ID,
+      },
+    });
+  } catch (error: any) {
+    console.error('[PaymentController] Error creating Razorpay order:', error);
+    return next(new AppError(error.message || 'Failed to create payment order', 500));
+  }
+});
+
+// @desc    Verify payment and create booking/plan purchase
+// @route   POST /api/payments/verify
+// @access  Private
+export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+  // Validation
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return next(new AppError('Payment verification data is required', 400));
+  }
+
+  try {
+    // Fetch order from Razorpay to get notes
+    const razorpayInstance = getRazorpayInstance();
+    const order = await razorpayInstance.orders.fetch(razorpay_order_id);
+
+    if (!order || order.status !== 'paid') {
+      return next(new AppError('Order not found or not paid', 400));
+    }
+
+    // Verify signature
+    const text = `${razorpay_order_id}|${razorpay_payment_id}`;
+    const generatedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_API_SECRET || '')
+      .update(text)
+      .digest('hex');
+
+    if (generatedSignature !== razorpay_signature) {
+      return next(new AppError('Invalid payment signature', 400));
+    }
+
+    // Extract metadata from order notes
+    const notes = order.notes || {};
+    const orderUserId = notes.userId;
+    const orderType = notes.type;
+
+    // Verify user matches
+    if (orderUserId !== userId) {
+      return next(new AppError('Order does not belong to this user', 403));
+    }
+
+    const userIdObj = new mongoose.Types.ObjectId(userId);
+
+    // Process based on order type
+    if (orderType === 'plan') {
+      // Handle plan purchase
+      const planData = notes.planData ? JSON.parse(String(notes.planData)) : null;
+      if (!planData || !planData.planId) {
+        return next(new AppError('Plan data not found in order', 400));
+      }
+
+      const plan = await Plan.findById(planData.planId);
+      if (!plan) {
+        return next(new AppError('Plan not found', 404));
+      }
+
+      // Get plan ID as string
+      const planIdString = plan._id.toString();
+
+      // Update or create UserPlan record
+      let userPlan = await UserPlan.findOne({ userId: userIdObj });
+      if (!userPlan) {
+        userPlan = await UserPlan.create({
+          userId: userIdObj,
+          activePlanId: planIdString,
+        });
+      } else {
+        userPlan.activePlanId = planIdString;
+        await userPlan.save();
+      }
+
+      // Add credits to user
+      let userCredits = await UserCredits.findOne({ userId: userIdObj });
+      if (!userCredits) {
+        userCredits = await UserCredits.create({
+          userId: userIdObj,
+          credits: plan.totalCredits,
+        });
+      } else {
+        userCredits.credits += plan.totalCredits;
+        await userCredits.save();
+      }
+
+      // Fetch updated user
+      const user = await User.findById(userIdObj).select('-password');
+
+      res.status(200).json({
+        success: true,
+        data: {
+          plan: {
+            id: plan._id.toString(),
+            planName: plan.planName,
+            planTitle: plan.planTitle,
+            planSubTitle: plan.planSubTitle,
+            totalCredits: plan.totalCredits,
+            finalPrice: plan.finalPrice,
+          },
+          user: user?.toObject(),
+        },
+      });
+    } else if (orderType === 'booking') {
+      // Handle booking creation
+      const bookingData = notes.bookingData ? JSON.parse(String(notes.bookingData)) : null;
+      if (!bookingData) {
+        return next(new AppError('Booking data not found in order', 400));
+      }
+
+      // Get user's address
+      const address = await Address.findOne({ userId: userIdObj, id: bookingData.addressId });
+      if (!address) {
+        return next(new AppError('Address not found', 404));
+      }
+
+      // Calculate totals and validate items
+      let totalAmount = 0;
+      let totalOriginalAmount = 0;
+      let creditsUsed = 0;
+
+      const orderItems = [];
+      for (const item of bookingData.items) {
+        const variant = await ServiceVariant.findOne({ id: item.variantId }).populate('serviceId');
+        if (!variant) {
+          return next(new AppError(`Service variant ${item.variantId} not found`, 404));
+        }
+
+        const service = await Service.findById(variant.serviceId);
+        if (!service || !service.isActive) {
+          return next(new AppError(`Service ${item.serviceId} is not available`, 400));
+        }
+
+        if (!variant.isActive) {
+          return next(new AppError(`Service variant ${item.variantId} is not available`, 400));
+        }
+
+        const quantity = parseInt(item.quantity) || 1;
+        const itemTotal = variant.finalPrice * quantity;
+        const itemOriginalTotal = variant.originalPrice * quantity;
+        const itemCredits = variant.includedInSubscription ? variant.creditValue * quantity : 0;
+
+        totalAmount += itemTotal;
+        totalOriginalAmount += itemOriginalTotal;
+        creditsUsed += itemCredits;
+
+        orderItems.push({
+          serviceId: service._id,
+          serviceVariantId: variant._id,
+          serviceName: service.name,
+          variantName: variant.name,
+          quantity,
+          originalPrice: variant.originalPrice,
+          finalPrice: variant.finalPrice,
+          creditValue: variant.creditValue,
+          estimatedTimeMinutes: variant.estimatedTimeMinutes,
+        });
+      }
+
+      // Verify amount matches
+      const calculatedAmountInPaise = Math.round(totalAmount * 100);
+      if (order.amount !== calculatedAmountInPaise) {
+        return next(new AppError('Amount mismatch', 400));
+      }
+
+      // Generate booking ID
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const endOfDay = new Date(now);
+      endOfDay.setHours(23, 59, 59, 999);
+
+      const count = await Booking.countDocuments({
+        $or: [
+          {
+            createdAt: {
+              $gte: startOfDay,
+              $lt: endOfDay,
+            },
+          },
+          {
+            bookingId: {
+              $regex: new RegExp(`^BOOK-${dateStr}-`),
+            },
+          },
+        ],
+      });
+      const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+
+      // Create booking
+      const booking = await Booking.create({
+        userId: userIdObj,
+        bookingId,
+        addressId: address.id,
+        address: {
+          label: address.label,
+          fullAddress: address.fullAddress,
+          area: address.area,
+          coordinates: address.coordinates,
+        },
+        bookingType: bookingData.bookingType,
+        scheduledDate: bookingData.bookingType === 'SCHEDULED' ? new Date(bookingData.scheduledDate) : undefined,
+        scheduledTime: bookingData.bookingType === 'SCHEDULED' ? bookingData.scheduledTime : undefined,
+        totalAmount,
+        totalOriginalAmount,
+        creditsUsed,
+        status: 'pending',
+        paymentStatus: 'paid',
+        paymentId: razorpay_payment_id,
+        orderId: razorpay_order_id,
+        notes: bookingData.notes || undefined,
+      });
+
+      // Create order items
+      await OrderItem.insertMany(
+        orderItems.map((item) => ({
+          bookingId: booking._id,
+          ...item,
+        }))
+      );
+
+      // Deduct credits if used
+      if (creditsUsed > 0) {
+        const userCredits = await UserCredits.findOne({ userId: userIdObj });
+        if (userCredits) {
+          userCredits.credits -= creditsUsed;
+          if (userCredits.credits < 0) {
+            userCredits.credits = 0;
+          }
+          await userCredits.save();
+        }
+      }
+
+      // Transform booking for response
+      const transformedBooking = {
+        id: booking._id.toString(),
+        bookingId: booking.bookingId,
+        items: orderItems.map((item) => ({
+          serviceId: item.serviceId.toString(),
+          variantId: item.serviceVariantId.toString(),
+          variantName: item.variantName,
+          serviceName: item.serviceName,
+          price: item.finalPrice,
+          originalPrice: item.originalPrice,
+          creditCost: item.creditValue,
+          quantity: item.quantity,
+        })),
+        totalAmount: booking.totalAmount,
+        status: booking.status === 'pending' ? 'Upcoming' : booking.status,
+        date: booking.scheduledDate?.toISOString() || new Date().toISOString(),
+        time: booking.scheduledTime || '',
+        address: {
+          id: address.id,
+          label: address.label,
+          fullAddress: address.fullAddress,
+          area: address.area,
+          coordinates: address.coordinates,
+          isDefault: address.isDefault || false,
+        },
+        type: booking.bookingType === 'ASAP' ? 'ASAP' : 'SCHEDULED',
+      };
+
+      res.status(200).json({
+        success: true,
+        data: {
+          booking: transformedBooking,
+        },
+      });
+    } else {
+      return next(new AppError('Invalid order type', 400));
+    }
+  } catch (error: any) {
+    console.error('[PaymentController] Error verifying payment:', error);
+    return next(new AppError(error.message || 'Payment verification failed', 500));
+  }
+});
+
