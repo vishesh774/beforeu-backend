@@ -113,7 +113,22 @@ app.use(notFound);
 // Error handler
 app.use(errorHandler);
 
-const PORT = parseInt(process.env.PORT || '5000', 10)
+// Read PORT from environment - fly.io sets this automatically
+// Must match internal_port in fly.toml (5000)
+// If PORT is set incorrectly (e.g., 5001), force it to 5000 for fly.io compatibility
+let PORT = parseInt(process.env.PORT || '5000', 10);
+
+// Log port configuration for debugging
+console.log(`🔌 Environment PORT: ${process.env.PORT || 'not set'}`);
+console.log(`🔌 Initial PORT: ${PORT}`);
+
+// Force PORT to 5000 if it's not 5000 (fly.io expects 5000 based on internal_port)
+if (PORT !== 5000) {
+  console.warn(`⚠️  WARNING: PORT is ${PORT}, but fly.io expects 5000. Overriding to 5000.`);
+  PORT = 5000;
+}
+
+console.log(`🔌 Using PORT: ${PORT}`);
 
 // Verify routes are registered before starting server
 console.log('🔍 Verifying route registration...');
@@ -127,12 +142,21 @@ const startServer = async () => {
     await connectDB();
     console.log('✅ Database connection established');
     
-    app.listen(PORT, '0.0.0.0', () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      const address = server.address();
+      const actualPort = address && typeof address === 'object' ? address.port : PORT;
+      
       console.log(`\n✅ ==========================================`);
       console.log(`🚀 Server SUCCESSFULLY started!`);
-      console.log(`📍 Listening on 0.0.0.0:${PORT}`);
+      console.log(`📍 Listening on 0.0.0.0:${actualPort}`);
+      console.log(`📍 Expected PORT: ${PORT}`);
+      console.log(`📍 Actual PORT: ${actualPort}`);
       console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📍 Database: Connected`);
+      
+      if (actualPort !== PORT) {
+        console.warn(`⚠️  WARNING: Port mismatch! Expected ${PORT}, but listening on ${actualPort}`);
+      }
     }).on('error', (err: any) => {
       console.error('❌ Server failed to start:', err);
       if (err.code === 'EADDRINUSE') {
