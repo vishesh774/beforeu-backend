@@ -39,12 +39,11 @@ const getRazorpayInstance = (): any => {
 // @desc    Test Razorpay configuration (for debugging)
 // @route   GET /api/payments/test-config
 // @access  Private
-export const testRazorpayConfig = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
+export const testRazorpayConfig = asyncHandler(async (_req: AuthRequest, res: Response, next: any) => {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_API_SECRET;
   
   try {
-    const instance = getRazorpayInstance();
     res.status(200).json({
       success: true,
       message: 'Razorpay configured correctly',
