@@ -8,7 +8,7 @@ import authRoutes from './routes/authRoutes';
 import adminRoutes from './routes/adminRoutes';
 import bookingRoutes from './routes/bookingRoutes';
 import paymentRoutes from './routes/paymentRoutes';
-import { getCheckoutConfig } from './controllers/configController';
+import configRoutes from './routes/configRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
 // Load environment variables
@@ -106,8 +106,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', bookingRoutes);
 app.use('/api', paymentRoutes);
-// Public config endpoint
-app.get('/api/config', getCheckoutConfig);
+app.use('/api', configRoutes);
 console.log('✅ Routes registered successfully');
 
 // 404 handler
