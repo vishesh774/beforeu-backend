@@ -591,6 +591,12 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
       quantity: item.quantity
     })),
     totalAmount: booking.totalAmount,
+    itemTotal: booking.itemTotal || booking.totalAmount, // Fallback for old bookings
+    paymentBreakdown: booking.paymentBreakdown || [],
+    paymentId: booking.paymentId,
+    orderId: booking.orderId,
+    paymentDetails: booking.paymentDetails || null,
+    paymentStatus: booking.paymentStatus,
     status: statusMap[booking.status] || 'Upcoming',
     date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
     time: booking.scheduledTime || '',
