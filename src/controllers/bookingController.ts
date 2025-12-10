@@ -246,7 +246,6 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   // Calculate totals and validate items
   let totalAmount = 0;
   let totalOriginalAmount = 0;
-  let creditsUsed = 0;
 
   // TODO: Re-enable after testing
   // Get user credits
@@ -273,7 +272,6 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     const quantity = parseInt(item.quantity) || 1;
     const itemTotal = variant.finalPrice * quantity;
     const itemOriginalTotal = variant.originalPrice * quantity;
-    const itemCredits = variant.includedInSubscription ? variant.creditValue * quantity : 0;
 
     // TODO: Re-enable credit check after testing
     // Check if user has enough credits for subscription items
@@ -283,7 +281,6 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
 
     totalAmount += itemTotal;
     totalOriginalAmount += itemOriginalTotal;
-    creditsUsed += itemCredits;
 
     orderItems.push({
       serviceId: service._id,
@@ -291,9 +288,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
       serviceName: service.name,
       variantName: variant.name,
       quantity,
-      originalPrice: variant.originalPrice,
       finalPrice: variant.finalPrice,
-      creditValue: variant.creditValue,
       estimatedTimeMinutes: variant.estimatedTimeMinutes
     });
   }
@@ -339,7 +334,6 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     scheduledTime: bookingType === 'SCHEDULED' ? scheduledTime : undefined,
     totalAmount,
     totalOriginalAmount,
-    creditsUsed,
     status: 'pending',
     paymentStatus: 'pending',
     notes: notes || undefined
@@ -459,8 +453,8 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
           quantity: item.quantity
         })),
         totalAmount: booking.totalAmount,
-        taxAmount: booking.totalAmount - (booking.totalOriginalAmount - booking.creditsUsed), // Approximate tax
-        itemTotal: booking.totalOriginalAmount - booking.creditsUsed,
+        taxAmount: booking.totalAmount,
+        itemTotal: booking.totalOriginalAmount,
         status: booking.status === 'pending' ? 'Upcoming' : 
                 booking.status === 'completed' ? 'Completed' : 
                 booking.status === 'cancelled' ? 'Cancelled' : 
@@ -862,7 +856,6 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
         totalAmount: booking.totalAmount,
         itemTotal: booking.itemTotal || booking.totalAmount, // Fallback for old bookings
         totalOriginalAmount: booking.totalOriginalAmount,
-        creditsUsed: booking.creditsUsed,
         paymentBreakdown: booking.paymentBreakdown || [],
         paymentId: booking.paymentId,
         orderId: booking.orderId,
@@ -947,7 +940,6 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     totalAmount: booking.totalAmount,
     itemTotal: booking.itemTotal || booking.totalAmount, // Fallback for old bookings
     totalOriginalAmount: booking.totalOriginalAmount,
-    creditsUsed: booking.creditsUsed,
     paymentBreakdown: booking.paymentBreakdown || [],
     paymentId: booking.paymentId,
     orderId: booking.orderId,
