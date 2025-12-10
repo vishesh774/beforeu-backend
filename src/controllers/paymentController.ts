@@ -300,6 +300,38 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       return next(new AppError('Invalid payment signature', 400));
     }
 
+    // Fetch payment details from Razorpay
+    let paymentDetails: any = null;
+    try {
+      const payment = await razorpayInstance.payments.fetch(razorpay_payment_id);
+      paymentDetails = {
+        method: payment.method || null,
+        bank: payment.bank || null,
+        wallet: payment.wallet || null,
+        vpa: payment.vpa || null,
+        card: payment.card ? {
+          id: payment.card.id || null,
+          last4: payment.card.last4 || null,
+          network: payment.card.network || null,
+          type: payment.card.type || null,
+          issuer: payment.card.issuer || null,
+        } : null,
+        contact: payment.contact || null,
+        email: payment.email || null,
+        fee: payment.fee ? payment.fee / 100 : null, // Convert from paise to rupees
+        tax: payment.tax ? payment.tax / 100 : null, // Convert from paise to rupees
+        international: payment.international || false,
+        captured: payment.captured || false,
+        description: payment.description || null,
+        refundStatus: payment.refund_status || null,
+        amountRefunded: payment.amount_refunded ? payment.amount_refunded / 100 : null, // Convert from paise to rupees
+        createdAt: payment.created_at ? new Date(payment.created_at * 1000) : null, // Convert Unix timestamp to Date
+      };
+    } catch (paymentError: any) {
+      console.error('[PaymentController] Error fetching payment details:', paymentError);
+      // Continue without payment details if fetch fails
+    }
+
     // Extract metadata from order notes
     const notes = order.notes || {};
     const orderUserId = notes.userId;
@@ -449,6 +481,18 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${order.amount / 100}`, 400));
       }
 
+      // Prepare payment breakdown for storage
+      const paymentBreakdown = calculationResult.breakdown.map(item => {
+        const field = checkoutFields.find(f => f.fieldName === item.fieldName);
+        return {
+          fieldName: item.fieldName,
+          fieldDisplayName: item.fieldDisplayName,
+          chargeType: field?.chargeType || 'fixed',
+          value: field?.value || 0,
+          amount: item.amount
+        };
+      });
+
       // Generate booking ID
       const now = new Date();
       const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
@@ -488,13 +532,16 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         bookingType: bookingData.bookingType,
         scheduledDate: bookingData.bookingType === 'SCHEDULED' ? new Date(bookingData.scheduledDate) : undefined,
         scheduledTime: bookingData.bookingType === 'SCHEDULED' ? bookingData.scheduledTime : undefined,
-        totalAmount,
+        totalAmount: calculationResult.total, // Final amount including all checkout fields
+        itemTotal: totalAmount, // Item total before checkout fields
         totalOriginalAmount,
         creditsUsed,
+        paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
         status: 'pending',
         paymentStatus: 'paid',
         paymentId: razorpay_payment_id,
         orderId: razorpay_order_id,
+        paymentDetails: paymentDetails || undefined,
         notes: bookingData.notes || undefined,
       });
 
@@ -533,6 +580,8 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           quantity: item.quantity,
         })),
         totalAmount: booking.totalAmount,
+        itemTotal: booking.itemTotal || totalAmount, // Fallback for old bookings
+        paymentBreakdown: booking.paymentBreakdown || [],
         status: booking.status === 'pending' ? 'Upcoming' : booking.status,
         date: booking.scheduledDate?.toISOString() || new Date().toISOString(),
         time: booking.scheduledTime || '',
