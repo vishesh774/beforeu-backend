@@ -15,6 +15,7 @@ import Plan from '../models/Plan';
 import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import User from '../models/User';
+import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
 let razorpay: any = null;
@@ -143,12 +144,16 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       return next(new AppError('Plan not found', 404));
     }
 
-    // Verify amount matches plan price (with tolerance of 5 Rs = 500 paise)
-    const planAmountInPaise = Math.round(plan.finalPrice * 100);
+    // Calculate expected amount using checkout config fields
+    const checkoutFields = await getActiveCheckoutFields();
+    const calculationResult = await calculateCheckoutTotal(plan.finalPrice, checkoutFields);
+    const expectedAmountInPaise = Math.round(calculationResult.total * 100);
+    
+    // Verify amount matches calculated price (with tolerance of 5 Rs = 500 paise)
     const tolerance = 500; // 5 Rs tolerance
-    const amountDifference = Math.abs(amount - planAmountInPaise);
+    const amountDifference = Math.abs(amount - expectedAmountInPaise);
     if (amountDifference > tolerance) {
-      return next(new AppError(`Amount mismatch. Expected ₹${plan.finalPrice}, got ₹${amount / 100}`, 400));
+      return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${amount / 100}`, 400));
     }
   }
 
@@ -320,12 +325,16 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         return next(new AppError('Plan not found', 404));
       }
 
-      // Verify amount matches plan price (with tolerance of 5 Rs = 500 paise)
-      const planAmountInPaise = Math.round(plan.finalPrice * 100);
+      // Calculate expected amount using checkout config fields
+      const checkoutFields = await getActiveCheckoutFields();
+      const calculationResult = await calculateCheckoutTotal(plan.finalPrice, checkoutFields);
+      const expectedAmountInPaise = Math.round(calculationResult.total * 100);
+      
+      // Verify amount matches calculated price (with tolerance of 5 Rs = 500 paise)
       const tolerance = 500; // 5 Rs tolerance
-      const amountDifference = Math.abs(order.amount - planAmountInPaise);
+      const amountDifference = Math.abs(order.amount - expectedAmountInPaise);
       if (amountDifference > tolerance) {
-        return next(new AppError(`Amount mismatch. Expected ₹${plan.finalPrice}, got ₹${order.amount / 100}`, 400));
+        return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${order.amount / 100}`, 400));
       }
 
       // Get plan ID as string
@@ -428,12 +437,16 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         });
       }
 
-      // Verify amount matches (with tolerance of 5 Rs = 500 paise)
-      const calculatedAmountInPaise = Math.round(totalAmount * 100);
+      // Calculate expected amount using checkout config fields
+      const checkoutFields = await getActiveCheckoutFields();
+      const calculationResult = await calculateCheckoutTotal(totalAmount, checkoutFields);
+      const expectedAmountInPaise = Math.round(calculationResult.total * 100);
+      
+      // Verify amount matches calculated total (with tolerance of 5 Rs = 500 paise)
       const tolerance = 500; // 5 Rs tolerance
-      const amountDifference = Math.abs(order.amount - calculatedAmountInPaise);
+      const amountDifference = Math.abs(order.amount - expectedAmountInPaise);
       if (amountDifference > tolerance) {
-        return next(new AppError(`Amount mismatch. Expected ₹${totalAmount}, got ₹${order.amount / 100}`, 400));
+        return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${order.amount / 100}`, 400));
       }
 
       // Generate booking ID

@@ -70,6 +70,14 @@ import {
   updatePlan,
   deletePlan
 } from '../controllers/planController';
+import {
+  getAllCheckoutFields,
+  getCheckoutField,
+  createCheckoutField,
+  updateCheckoutField,
+  deleteCheckoutField,
+  toggleCheckoutFieldStatus
+} from '../controllers/checkoutConfigController';
 import { requireAdmin } from '../middleware/adminAuth';
 
 const router = express.Router();
@@ -153,6 +161,14 @@ router.get('/plans/:id', getPlan);
 router.post('/plans', createPlan);
 router.put('/plans/:id', updatePlan);
 router.delete('/plans/:id', deletePlan);
+
+// Checkout Config routes
+router.get('/checkout-config', getAllCheckoutFields);
+router.get('/checkout-config/:id', getCheckoutField);
+router.post('/checkout-config', createCheckoutField);
+router.put('/checkout-config/:id', updateCheckoutField);
+router.delete('/checkout-config/:id', deleteCheckoutField);
+router.patch('/checkout-config/:id/toggle-status', toggleCheckoutFieldStatus);
 
 export default router;
 
