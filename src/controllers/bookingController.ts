@@ -446,53 +446,63 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
         .populate('serviceId', 'name icon')
         .populate('serviceVariantId', 'name icon');
 
-      return {
-        id: booking.bookingId,
-        bookingId: booking.bookingId,
-        items: items.map(item => ({
-          serviceId: (item.serviceId as any)?.id || (item.serviceId as any)?._id?.toString() || item.serviceId.toString(),
-          serviceVariantId: (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
-          variantId: (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
-          variantName: item.variantName,
-          serviceName: item.serviceName,
-          icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
-          price: item.finalPrice,
-          originalPrice: item.originalPrice,
-          creditCost: item.creditValue || 0,
-          quantity: item.quantity
-        })),
-        totalAmount: booking.totalAmount,
-        taxAmount: booking.totalAmount,
-        itemTotal: booking.totalOriginalAmount,
-        status: booking.status === 'pending' ? 'Upcoming' :
-          booking.status === 'completed' ? 'Completed' :
-            booking.status === 'cancelled' ? 'Cancelled' :
-              booking.status === 'confirmed' ? 'Upcoming' :
-                booking.status === 'in_progress' ? 'Upcoming' : 'Upcoming',
-        date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
-        time: booking.scheduledTime || '',
-        address: {
-          id: booking.addressId || '',
-          label: booking.address?.label || 'Address',
-          fullAddress: booking.address?.fullAddress || '',
-          area: booking.address?.area,
-          coordinates: booking.address?.coordinates,
-          isDefault: false // Address from booking doesn't track default status
-        },
-        type: booking.bookingType === 'ASAP' ? 'ASAP' : 'SCHEDULED',
-        paymentStatus: booking.paymentStatus,
-        createdAt: booking.createdAt.toISOString(),
-        updatedAt: booking.updatedAt.toISOString()
-      };
+      // Split multi-item bookings into individual booking entries
+      if (items.length > 0) {
+        return items.map((item, index) => ({
+          id: `${booking.bookingId}-${index + 1}`, // Unique ID for frontend list
+          bookingId: booking.bookingId,
+          // Only include the specific item for this "split" booking
+          items: [{
+            serviceId: (item.serviceId as any)?.id || (item.serviceId as any)?._id?.toString() || item.serviceId.toString(),
+            serviceVariantId: (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
+            variantId: (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
+            variantName: item.variantName,
+            serviceName: item.serviceName,
+            icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
+            price: item.finalPrice,
+            originalPrice: item.originalPrice,
+            creditCost: item.creditValue || 0,
+            quantity: item.quantity
+          }],
+          // Show per-item price as the total amount for this card
+          totalAmount: item.finalPrice,
+          taxAmount: 0, // Not calculated per item in this view
+          itemTotal: item.originalPrice,
+          status: booking.status === 'pending' ? 'Upcoming' :
+            booking.status === 'completed' ? 'Completed' :
+              booking.status === 'cancelled' ? 'Cancelled' :
+                booking.status === 'confirmed' ? 'Upcoming' :
+                  booking.status === 'in_progress' ? 'Upcoming' : 'Upcoming',
+          date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
+          time: booking.scheduledTime || '',
+          address: {
+            id: booking.addressId || '',
+            label: booking.address?.label || 'Address',
+            fullAddress: booking.address?.fullAddress || '',
+            area: booking.address?.area,
+            coordinates: booking.address?.coordinates,
+            isDefault: false
+          },
+          type: booking.bookingType === 'ASAP' ? 'ASAP' : 'SCHEDULED',
+          paymentStatus: booking.paymentStatus,
+          createdAt: booking.createdAt.toISOString(),
+          updatedAt: booking.updatedAt.toISOString()
+        }));
+      }
+
+      return []; // Return empty array if no items found
     })
   );
+
+  // Flatten the array of arrays
+  const flatBookings = bookingsWithItems.flat();
 
   const totalPages = Math.ceil(total / limit);
 
   res.status(200).json({
     success: true,
     data: {
-      bookings: bookingsWithItems,
+      bookings: flatBookings,
       pagination: {
         total,
         page,
