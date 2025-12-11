@@ -144,7 +144,7 @@ export const getSubServicesByServiceId = asyncHandler(async (req: Request, res: 
 
   // Find the service by ID (custom id field, not MongoDB _id)
   const service = await Service.findOne({ id: serviceId, isActive: true });
-  
+
   if (!service) {
     return next(new AppError('Service not found or inactive', 404));
   }
@@ -287,7 +287,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   startOfDay.setHours(0, 0, 0, 0);
   const endOfDay = new Date(now);
   endOfDay.setHours(23, 59, 59, 999);
-  
+
   const count = await Booking.countDocuments({
     $or: [
       {
@@ -396,10 +396,14 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
   const skip = (page - 1) * limit;
 
   // Status filter - map frontend status to backend status
-  const statusFilter = req.query.status as string | undefined;
+  const statusFilter = req.query.status;
   const filter: any = { userId: new mongoose.Types.ObjectId(userId) };
 
   if (statusFilter) {
+    // Handle array of statuses (when multiple status query params are provided)
+    const statusArray = Array.isArray(statusFilter) ? statusFilter : [statusFilter];
+    const statusValues: string[] = [];
+
     // Map frontend status values to backend status values
     const statusMap: Record<string, string[]> = {
       'Upcoming': ['pending', 'confirmed', 'in_progress'],
@@ -407,14 +411,23 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
       'Cancelled': ['cancelled']
     };
 
-    if (statusMap[statusFilter]) {
-      filter.status = { $in: statusMap[statusFilter] };
-    } else {
-      // Also support direct backend status values
-      const backendStatuses = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled'];
-      if (backendStatuses.includes(statusFilter)) {
-        filter.status = statusFilter;
+    statusArray.forEach((status) => {
+      const statusStr = typeof status === 'string' ? status : String(status);
+      if (statusMap[statusStr]) {
+        statusValues.push(...statusMap[statusStr]);
+      } else {
+        // Also support direct backend status values
+        const backendStatuses = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'inprogress'];
+        if (backendStatuses.includes(statusStr)) {
+          statusValues.push(statusStr === 'inprogress' ? 'in_progress' : statusStr);
+        }
       }
+    });
+
+    if (statusValues.length > 0) {
+      // Remove duplicates
+      const uniqueStatusValues = [...new Set(statusValues)];
+      filter.status = { $in: uniqueStatusValues };
     }
   }
 
@@ -431,7 +444,7 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
     bookings.map(async (booking) => {
       const items = await OrderItem.find({ bookingId: booking._id })
         .populate('serviceId', 'name icon')
-        .populate('serviceVariantId', 'name');
+        .populate('serviceVariantId', 'name icon');
 
       return {
         id: booking.bookingId,
@@ -442,6 +455,7 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
           variantId: (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
           variantName: item.variantName,
           serviceName: item.serviceName,
+          icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
           price: item.finalPrice,
           originalPrice: item.originalPrice,
           creditCost: item.creditValue || 0,
@@ -450,10 +464,10 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
         totalAmount: booking.totalAmount,
         taxAmount: booking.totalAmount,
         itemTotal: booking.totalOriginalAmount,
-        status: booking.status === 'pending' ? 'Upcoming' : 
-                booking.status === 'completed' ? 'Completed' : 
-                booking.status === 'cancelled' ? 'Cancelled' : 
-                booking.status === 'confirmed' ? 'Upcoming' :
+        status: booking.status === 'pending' ? 'Upcoming' :
+          booking.status === 'completed' ? 'Completed' :
+            booking.status === 'cancelled' ? 'Cancelled' :
+              booking.status === 'confirmed' ? 'Upcoming' :
                 booking.status === 'in_progress' ? 'Upcoming' : 'Upcoming',
         date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
         time: booking.scheduledTime || '',
@@ -527,9 +541,9 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   const userIdObj = new mongoose.Types.ObjectId(userId);
 
   // Find booking and ensure it belongs to the user
-  const booking = await Booking.findOne({ 
+  const booking = await Booking.findOne({
     bookingId,
-    userId: userIdObj 
+    userId: userIdObj
   });
 
   if (!booking) {
@@ -539,7 +553,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   // Get order items
   const items = await OrderItem.find({ bookingId: booking._id })
     .populate('serviceId', 'name icon')
-    .populate('serviceVariantId', 'name description');
+    .populate('serviceVariantId', 'name description icon');
 
   // Generate booking OTP (4-digit, deterministic)
   const bookingOTP = generateBookingOTP(booking.bookingId);
@@ -548,7 +562,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   let assignedProfessional = null;
   const itemsWithPartner = await OrderItem.find({ bookingId: booking._id })
     .populate('assignedPartnerId', 'name phone email rating jobsCompleted');
-  
+
   // Check if any item has an assigned partner
   const itemWithPartner = itemsWithPartner.find(item => item.assignedPartnerId);
   if (itemWithPartner && itemWithPartner.assignedPartnerId) {
@@ -583,6 +597,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
       price: item.finalPrice,
       originalPrice: item.originalPrice,
       creditCost: item.creditValue,
+      icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
       quantity: item.quantity
     })),
     totalAmount: booking.totalAmount,
@@ -676,13 +691,13 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
       end.setHours(23, 59, 59, 999);
       dateFilter.$lte = end;
     }
-    
+
     // Filter by scheduledDate if available, otherwise by createdAt
     // Use $or to match either scheduledDate or createdAt (for ASAP bookings)
     const dateConditions: any[] = [
       { scheduledDate: dateFilter }
     ];
-    
+
     // For bookings without scheduledDate (ASAP), use createdAt
     dateConditions.push({
       $and: [
@@ -690,7 +705,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
         { createdAt: dateFilter }
       ]
     });
-    
+
     // Combine date filter with existing filters using $and
     if (Object.keys(filter).length > 0) {
       filter.$and = [
@@ -705,7 +720,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
   // Customer filters - combine all customer criteria into one query
   if (customerName || customerPhone || customerEmail) {
     const customerQuery: any = {};
-    
+
     if (customerName && customerName.trim()) {
       customerQuery.name = { $regex: customerName.trim(), $options: 'i' };
     }
@@ -715,10 +730,10 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
     if (customerEmail && customerEmail.trim()) {
       customerQuery.email = { $regex: customerEmail.trim(), $options: 'i' };
     }
-    
+
     const matchingUsers = await User.find(customerQuery).select('_id');
     const userIds = matchingUsers.map(u => u._id);
-    
+
     if (userIds.length === 0) {
       // No matching users, return empty result
       filter.userId = { $in: [] };
@@ -731,11 +746,11 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
   let bookingIdsByPartner: mongoose.Types.ObjectId[] | null = null;
   if (assignedPartner && assignedPartner.trim()) {
     const partnerRegex = { $regex: assignedPartner.trim(), $options: 'i' };
-    
+
     // Find service partners matching the name
     const matchingPartners = await ServicePartner.find({ name: partnerRegex }).select('_id');
     const partnerIds = matchingPartners.map(p => p._id);
-    
+
     if (partnerIds.length > 0) {
       // Find order items with these partner IDs
       const orderItems = await OrderItem.find({ assignedPartnerId: { $in: partnerIds } }).select('bookingId');
@@ -750,7 +765,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
   if (searchQuery && searchQuery.trim()) {
     const escapedQuery = searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const searchRegex = { $regex: escapedQuery, $options: 'i' };
-    
+
     // Find users matching search
     const matchingUsers = await User.find({
       $or: [
@@ -760,7 +775,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
       ]
     }).select('_id');
     const userIds = matchingUsers.map(u => u._id);
-    
+
     // Find bookings matching booking ID or user IDs
     const searchFilter: any[] = [
       { bookingId: searchRegex }
@@ -768,7 +783,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
     if (userIds.length > 0) {
       searchFilter.push({ userId: { $in: userIds } });
     }
-    
+
     // Combine with existing $or conditions
     if (filter.$or) {
       // If we already have $or from date filter, combine with $and
@@ -793,14 +808,14 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
       filter._id = { $in: [] };
     } else {
       // Convert bookingIds to ObjectIds for comparison
-      const bookingObjectIds = bookingIdsByPartner.map(id => 
+      const bookingObjectIds = bookingIdsByPartner.map(id =>
         typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id
       );
-      
+
       if (filter._id) {
         // Intersect with existing filter
         const existingIds = Array.isArray(filter._id.$in) ? filter._id.$in : [];
-        filter._id.$in = bookingObjectIds.filter(id => 
+        filter._id.$in = bookingObjectIds.filter(id =>
           existingIds.some((existing: any) => existing.toString() === id.toString())
         );
       } else {
@@ -985,7 +1000,7 @@ function isPartnerAvailableAtTime(
   // Parse scheduled time (format: "HH:mm" or "HH:mm AM/PM")
   let scheduledHour = 0;
   let scheduledMinute = 0;
-  
+
   if (scheduledTime.includes('AM') || scheduledTime.includes('PM')) {
     // Format: "HH:mm AM/PM"
     const timeMatch = scheduledTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
@@ -993,10 +1008,10 @@ function isPartnerAvailableAtTime(
       let hours = parseInt(timeMatch[1]);
       const minutes = parseInt(timeMatch[2]);
       const period = timeMatch[3].toUpperCase();
-      
+
       if (period === 'PM' && hours !== 12) hours += 12;
       if (period === 'AM' && hours === 12) hours = 0;
-      
+
       scheduledHour = hours;
       scheduledMinute = minutes;
     }
@@ -1031,11 +1046,11 @@ async function autoAssignServicePartner(booking: any, orderItems: any[]): Promis
   // Get service IDs from order items (serviceId is an ObjectId reference)
   // We need to get the actual service ID string from the Service model
   const serviceObjectIds = orderItems.map(item => item.serviceId);
-  
+
   // Fetch services to get their ID strings (ServicePartner.services stores service.id strings)
   const services = await Service.find({ _id: { $in: serviceObjectIds } });
   const uniqueServiceIds = [...new Set(services.map(service => service.id).filter(Boolean))];
-  
+
   if (uniqueServiceIds.length === 0) {
     console.log('[autoAssignServicePartner] No valid service IDs found, skipping assignment');
     return;
@@ -1105,7 +1120,7 @@ async function autoAssignServicePartner(booking: any, orderItems: any[]): Promis
 
   if (assignedPartner) {
     // Assign partner to all order items in the booking
-    const updatePromises = orderItems.map(item => 
+    const updatePromises = orderItems.map(item =>
       OrderItem.findByIdAndUpdate(item._id, {
         assignedPartnerId: assignedPartner._id,
         status: item.status === 'pending' ? 'assigned' : item.status
