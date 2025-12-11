@@ -542,8 +542,25 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     return next(new AppError('User not authenticated', 401));
   }
 
-  const { bookingId } = req.params;
-  console.log('[getUserBookingById] Booking ID:', bookingId, 'User ID:', userId);
+  let { bookingId } = req.params;
+  const requestedId = bookingId; // Store original requested ID
+  let itemIndex = -1;
+
+  console.log('[getUserBookingById] Original Booking ID:', bookingId, 'User ID:', userId);
+
+  // Check for split booking ID format (BOOK-DATE-SEQ-IDX)
+  // Standard: BOOK-20251211-001 (3 parts)
+  // Split: BOOK-20251211-001-1 (4 parts)
+  const parts = bookingId.split('-');
+  if (parts.length === 4) {
+    const rawIndex = parseInt(parts[3]);
+    if (!isNaN(rawIndex)) {
+      itemIndex = rawIndex - 1; // Convert 1-based to 0-based
+      bookingId = parts.slice(0, 3).join('-'); // Reconstruct real booking ID
+      console.log('[getUserBookingById] Parsed Split ID. Real ID:', bookingId, 'Index:', itemIndex);
+    }
+  }
+
   if (!bookingId) {
     return next(new AppError('Booking ID is required', 400));
   }
@@ -564,6 +581,20 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   const items = await OrderItem.find({ bookingId: booking._id })
     .populate('serviceId', 'name icon')
     .populate('serviceVariantId', 'name description icon');
+
+  // Filter for specific item if requested
+  let displayItems = items;
+  let specificItem = null;
+
+  if (itemIndex >= 0) {
+    if (itemIndex < items.length) {
+      displayItems = [items[itemIndex]];
+      specificItem = items[itemIndex];
+    } else {
+      // Index out of bounds - safeguard
+      console.warn(`[getUserBookingById] Item index ${itemIndex} out of bounds for booking ${bookingId}`);
+    }
+  }
 
   // Generate booking OTP (4-digit, deterministic)
   const bookingOTP = generateBookingOTP(booking.bookingId);
@@ -597,9 +628,9 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   };
 
   const bookingData = {
-    id: booking.bookingId,
-    bookingId: booking.bookingId,
-    items: items.map(item => ({
+    id: requestedId, // Return the requested ID (virtual or real)
+    bookingId: booking.bookingId, // The real database ID
+    items: displayItems.map(item => ({
       serviceId: (item.serviceId as any).id || item.serviceId.toString(),
       variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
       variantName: item.variantName,
@@ -610,8 +641,9 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
       icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
       quantity: item.quantity
     })),
-    totalAmount: booking.totalAmount,
-    itemTotal: booking.itemTotal || booking.totalAmount, // Fallback for old bookings
+    // If specific item, show its price. Otherwise show total.
+    totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
+    itemTotal: specificItem ? specificItem.originalPrice : (booking.itemTotal || booking.totalAmount),
     paymentBreakdown: booking.paymentBreakdown || [],
     paymentId: booking.paymentId,
     orderId: booking.orderId,
