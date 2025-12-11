@@ -466,6 +466,7 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           finalPrice: variant.finalPrice,
           creditValue: variant.creditValue,
           estimatedTimeMinutes: variant.estimatedTimeMinutes,
+          customerVisitRequired: variant.customerVisitRequired !== undefined ? variant.customerVisitRequired : false,
         });
       }
 

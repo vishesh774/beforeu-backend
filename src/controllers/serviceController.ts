@@ -285,6 +285,7 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
         extraTimeSlabs: variantData.extraTimeSlabs !== undefined ? variantData.extraTimeSlabs : 0,
         extraCharges: variantData.extraCharges !== undefined ? variantData.extraCharges : 0,
         tags: variantData.tags || [],
+        customerVisitRequired: variantData.customerVisitRequired !== undefined ? variantData.customerVisitRequired : false,
         isActive: variantData.isActive !== undefined ? variantData.isActive : true
       };
       
@@ -454,6 +455,7 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
         extraTimeSlabs: variantData.extraTimeSlabs !== undefined ? variantData.extraTimeSlabs : 0,
         extraCharges: variantData.extraCharges !== undefined ? variantData.extraCharges : 0,
         tags: variantData.tags || [],
+        customerVisitRequired: variantData.customerVisitRequired !== undefined ? variantData.customerVisitRequired : false,
         isActive: variantData.isActive
       };
       

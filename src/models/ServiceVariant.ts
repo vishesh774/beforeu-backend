@@ -18,6 +18,7 @@ export interface IServiceVariant extends Document {
   extraTimeSlabs: number; // Extra time slabs in minutes (15 min increments)
   extraCharges: number; // Extra charges for additional time
   tags: string[]; // Array of tags
+  customerVisitRequired: boolean; // Whether customer visit is required for this service
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -140,6 +141,11 @@ const ServiceVariantSchema = new Schema<IServiceVariant>(
         },
         message: 'All tags must be non-empty strings'
       }
+    },
+    customerVisitRequired: {
+      type: Boolean,
+      default: false,
+      required: true
     },
     isActive: {
       type: Boolean,

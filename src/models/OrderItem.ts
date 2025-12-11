@@ -11,6 +11,7 @@ export interface IOrderItem extends Document {
   finalPrice: number;
   creditValue: number;
   estimatedTimeMinutes: number;
+  customerVisitRequired: boolean; // Whether customer visit is required for this service variant
   assignedPartnerId?: mongoose.Types.ObjectId; // Service partner assigned to this item
   status: 'pending' | 'assigned' | 'in_progress' | 'completed' | 'cancelled';
   createdAt: Date;
@@ -70,6 +71,11 @@ const OrderItemSchema = new Schema<IOrderItem>(
       type: Number,
       required: true,
       min: 1
+    },
+    customerVisitRequired: {
+      type: Boolean,
+      default: false,
+      required: true
     },
     assignedPartnerId: {
       type: Schema.Types.ObjectId,

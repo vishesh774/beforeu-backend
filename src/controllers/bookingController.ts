@@ -272,6 +272,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     const quantity = parseInt(item.quantity) || 1;
     const itemTotal = variant.finalPrice * quantity;
     const itemOriginalTotal = variant.originalPrice * quantity;
+    // const itemCredits = variant.includedInSubscription ? variant.creditValue * quantity : 0;
 
     // TODO: Re-enable credit check after testing
     // Check if user has enough credits for subscription items
@@ -289,7 +290,8 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
       variantName: variant.name,
       quantity,
       finalPrice: variant.finalPrice,
-      estimatedTimeMinutes: variant.estimatedTimeMinutes
+      estimatedTimeMinutes: variant.estimatedTimeMinutes,
+      customerVisitRequired: variant.customerVisitRequired !== undefined ? variant.customerVisitRequired : false
     });
   }
 
