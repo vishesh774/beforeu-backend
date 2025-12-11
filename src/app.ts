@@ -8,6 +8,7 @@ import authRoutes from './routes/authRoutes';
 import adminRoutes from './routes/adminRoutes';
 import bookingRoutes from './routes/bookingRoutes';
 import paymentRoutes from './routes/paymentRoutes';
+import partnerRoutes from './routes/partnerRoutes';
 import configRoutes from './routes/configRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
@@ -32,7 +33,7 @@ const app: Application = express();
 app.use(helmet());
 
 // CORS configuration - Allow both customer platform and admin panel
-const allowedOrigins = process.env.CORS_ORIGIN 
+const allowedOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
   : ['https://beforeu-customer-platform.vercel.app', 'https://beforeu-admin-dashboard.vercel.app']; // Customer platform and admin panel
 
@@ -47,7 +48,7 @@ const corsOptions = {
     if (!origin) {
       return callback(null, true);
     }
-    
+
     // Check if origin is in allowed list
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
@@ -106,6 +107,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', bookingRoutes);
 app.use('/api', paymentRoutes);
+app.use('/api/partners', partnerRoutes);
 app.use('/api', configRoutes);
 console.log('✅ Routes registered successfully');
 
@@ -143,11 +145,11 @@ const startServer = async () => {
     console.log('🔄 Connecting to database...');
     await connectDB();
     console.log('✅ Database connection established');
-    
+
     const server = app.listen(PORT, '0.0.0.0', () => {
       const address = server.address();
       const actualPort = address && typeof address === 'object' ? address.port : PORT;
-      
+
       console.log(`\n✅ ==========================================`);
       console.log(`🚀 Server SUCCESSFULLY started!`);
       console.log(`📍 Listening on 0.0.0.0:${actualPort}`);
@@ -155,7 +157,7 @@ const startServer = async () => {
       console.log(`📍 Actual PORT: ${actualPort}`);
       console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📍 Database: Connected`);
-      
+
       if (actualPort !== PORT) {
         console.warn(`⚠️  WARNING: Port mismatch! Expected ${PORT}, but listening on ${actualPort}`);
       }

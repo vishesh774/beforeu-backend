@@ -13,7 +13,9 @@ export interface IOrderItem extends Document {
   estimatedTimeMinutes: number;
   customerVisitRequired: boolean; // Whether customer visit is required for this service variant
   assignedPartnerId?: mongoose.Types.ObjectId; // Service partner assigned to this item
-  status: 'pending' | 'assigned' | 'in_progress' | 'completed' | 'cancelled';
+  startJobOtp?: string;
+  endJobOtp?: string;
+  status: 'pending' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,9 +84,17 @@ const OrderItemSchema = new Schema<IOrderItem>(
       ref: 'ServicePartner',
       default: null
     },
+    startJobOtp: {
+      type: String,
+      default: null
+    },
+    endJobOtp: {
+      type: String,
+      default: null
+    },
     status: {
       type: String,
-      enum: ['pending', 'assigned', 'in_progress', 'completed', 'cancelled'],
+      enum: ['pending', 'assigned', 'en_route', 'reached', 'in_progress', 'completed', 'cancelled'],
       default: 'pending',
       required: true
     }
