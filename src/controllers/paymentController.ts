@@ -16,6 +16,7 @@ import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import User from '../models/User';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
+import { autoAssignServicePartner } from '../services/bookingService';
 
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
 let razorpay: any = null;
@@ -24,11 +25,11 @@ const getRazorpayInstance = (): any => {
   if (!razorpay) {
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_API_SECRET;
-    
+
     if (!keyId || !keySecret) {
       throw new Error('Razorpay credentials not configured. Please set RAZORPAY_KEY_ID and RAZORPAY_API_SECRET environment variables.');
     }
-    
+
     razorpay = new Razorpay({
       key_id: keyId,
       key_secret: keySecret,
@@ -43,7 +44,7 @@ const getRazorpayInstance = (): any => {
 export const testRazorpayConfig = asyncHandler(async (_req: AuthRequest, res: Response, next: any) => {
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_API_SECRET;
-  
+
   try {
     res.status(200).json({
       success: true,
@@ -80,7 +81,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
   // Check Razorpay credentials upfront
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_API_SECRET;
-  
+
   if (!keyId || !keySecret) {
     console.error('[PaymentController] Razorpay credentials missing:', {
       hasKeyId: !!keyId,
@@ -91,7 +92,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
     });
     return next(new AppError('Payment gateway not configured. Please contact support.', 500));
   }
-  
+
   console.log('[PaymentController] Razorpay credentials found:', {
     hasKeyId: !!keyId,
     hasSecret: !!keySecret,
@@ -148,7 +149,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
     const checkoutFields = await getActiveCheckoutFields();
     const calculationResult = await calculateCheckoutTotal(plan.finalPrice, checkoutFields);
     const expectedAmountInPaise = Math.round(calculationResult.total * 100);
-    
+
     // Verify amount matches calculated price (with tolerance of 5 Rs = 500 paise)
     const tolerance = 500; // 5 Rs tolerance
     const amountDifference = Math.abs(amount - expectedAmountInPaise);
@@ -172,7 +173,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
     const timestamp = Date.now().toString(36); // Base36 for shorter string
     const userIdShort = userId.toString().slice(-6); // Last 6 chars of userId
     const receipt = `${timestamp}_${userIdShort}`.substring(0, 40); // Ensure max 40 chars
-    
+
     const options = {
       amount: Math.round(amount), // Amount in paise
       currency: currency.toUpperCase(),
@@ -211,7 +212,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         error: razorpayError.error,
         status: razorpayError.status,
       });
-      
+
       // Extract error message from Razorpay error structure
       let errorMessage = 'Failed to create payment order';
       if (razorpayError.error?.description) {
@@ -221,7 +222,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       } else if (razorpayError.message) {
         errorMessage = razorpayError.message;
       }
-      
+
       return next(new AppError(errorMessage, 500));
     }
 
@@ -249,7 +250,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       statusCode: error.statusCode,
       error: error.error,
     });
-    
+
     // Provide more specific error messages
     let errorMessage = 'Failed to create payment order';
     if (error.message) {
@@ -259,7 +260,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
     } else if (error.error?.description) {
       errorMessage = error.error.description;
     }
-    
+
     return next(new AppError(errorMessage, 500));
   }
 });
@@ -361,7 +362,7 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       const checkoutFields = await getActiveCheckoutFields();
       const calculationResult = await calculateCheckoutTotal(plan.finalPrice, checkoutFields);
       const expectedAmountInPaise = Math.round(calculationResult.total * 100);
-      
+
       // Verify amount matches calculated price (with tolerance of 5 Rs = 500 paise)
       const tolerance = 500; // 5 Rs tolerance
       const amountDifference = Math.abs(order.amount - expectedAmountInPaise);
@@ -474,7 +475,7 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       const checkoutFields = await getActiveCheckoutFields();
       const calculationResult = await calculateCheckoutTotal(totalAmount, checkoutFields);
       const expectedAmountInPaise = Math.round(calculationResult.total * 100);
-      
+
       // Verify amount matches calculated total (with tolerance of 5 Rs = 500 paise)
       const tolerance = 500; // 5 Rs tolerance
       const amountDifference = Math.abs(order.amount - expectedAmountInPaise);
@@ -547,12 +548,20 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       });
 
       // Create order items
-      await OrderItem.insertMany(
+      // Create order items
+      const createdOrderItems = await OrderItem.insertMany(
         orderItems.map((item) => ({
           bookingId: booking._id,
           ...item,
         }))
       );
+
+      // Auto-assign service partner
+      try {
+        await autoAssignServicePartner(booking, createdOrderItems);
+      } catch (error) {
+        console.error('[PaymentController] Error auto-assigning partner:', error);
+      }
 
       // Deduct credits if used
       if (creditsUsed > 0) {
