@@ -1191,7 +1191,10 @@ async function autoAssignServicePartner(booking: any, orderItems: any[]): Promis
         ];
       }
 
+      console.log(`[autoAssignServicePartner] Processing item ${item._id}. Service: ${service.name} (${serviceIdString})`);
+
       const eligiblePartners = await ServicePartner.find(partnerFilter);
+      console.log(`[autoAssignServicePartner] Found ${eligiblePartners.length} eligible partners for service ${serviceIdString}`);
 
       if (eligiblePartners.length === 0) {
         console.log(`[autoAssignServicePartner] No eligible partners found for item ${item._id} (${service.name})`);
@@ -1208,6 +1211,7 @@ async function autoAssignServicePartner(booking: any, orderItems: any[]): Promis
 
       for (const partner of eligiblePartners) {
         const isAvailable = isPartnerAvailableAtTime(partner, scheduledDate, scheduledTime);
+        console.log(`[autoAssignServicePartner] Partner ${partner.name} available? ${isAvailable}`);
         if (isAvailable) {
           assignedPartner = partner;
           break; // Found one!
