@@ -29,7 +29,9 @@ import {
 } from '../controllers/customerController';
 import {
   getAllBookings,
-  getBookingById
+  getBookingById,
+  getEligibleServicePartners,
+  assignServicePartner
 } from '../controllers/bookingController';
 import {
   getAllPolicies,
@@ -122,6 +124,8 @@ router.patch('/customers/:id/toggle-status', toggleCustomerStatus);
 // Booking management routes
 router.get('/bookings', getAllBookings);
 router.get('/bookings/:id', getBookingById);
+router.get('/bookings/:id/eligible-partners', getEligibleServicePartners);
+router.post('/bookings/:id/assign-partner', assignServicePartner);
 
 // Refund & Cancellation Policy routes
 router.get('/refund-cancellation-policies', getAllPolicies);

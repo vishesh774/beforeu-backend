@@ -12,22 +12,7 @@ import Address from '../models/Address';
 // import UserCredits from '../models/UserCredits';
 import User from '../models/User';
 import ServicePartner from '../models/ServicePartner';
-
-// Helper function to check if a point is inside a polygon
-function isPointInPolygon(point: { lat: number; lng: number }, polygon: { lat: number; lng: number }[]): boolean {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].lng;
-    const yi = polygon[i].lat;
-    const xj = polygon[j].lng;
-    const yj = polygon[j].lat;
-    
-    const intersect = ((yi > point.lat) !== (yj > point.lat)) &&
-      (point.lng < (xj - xi) * (point.lat - yi) / (yj - yi) + xi);
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
+import { isPointInPolygon } from '../utils/pointInPolygon';
 
 // @desc    Get all active services (without location requirement)
 // @route   GET /api/services/all
@@ -342,12 +327,20 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   });
 
   // Create order items
-  await OrderItem.insertMany(
+  const createdOrderItems = await OrderItem.insertMany(
     orderItems.map(item => ({
       ...item,
       bookingId: booking._id
     }))
   );
+
+  // Auto-assign service partner if available
+  try {
+    await autoAssignServicePartner(booking, createdOrderItems);
+  } catch (error) {
+    // Log error but don't fail the booking
+    console.error('[createBooking] Error auto-assigning partner:', error);
+  }
 
   // TODO: Re-enable credit deduction after testing
   // Deduct credits if used
@@ -963,6 +956,332 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     success: true,
     data: {
       booking: bookingData
+    }
+  });
+});
+
+// Helper function to check if a service partner is available at a given time
+function isPartnerAvailableAtTime(
+  partner: any,
+  scheduledDate: Date | undefined,
+  scheduledTime: string | undefined
+): boolean {
+  if (!scheduledDate || !scheduledTime) {
+    // For ASAP bookings, consider all partners as potentially available
+    return true;
+  }
+
+  // Get day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
+  const dayOfWeek = scheduledDate.getDay();
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  const dayName = dayNames[dayOfWeek];
+
+  // Find availability for this day
+  const dayAvailability = partner.availability.find((avail: any) => avail.day === dayName);
+  if (!dayAvailability || !dayAvailability.isAvailable) {
+    return false;
+  }
+
+  // Parse scheduled time (format: "HH:mm" or "HH:mm AM/PM")
+  let scheduledHour = 0;
+  let scheduledMinute = 0;
+  
+  if (scheduledTime.includes('AM') || scheduledTime.includes('PM')) {
+    // Format: "HH:mm AM/PM"
+    const timeMatch = scheduledTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+    if (timeMatch) {
+      let hours = parseInt(timeMatch[1]);
+      const minutes = parseInt(timeMatch[2]);
+      const period = timeMatch[3].toUpperCase();
+      
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+      
+      scheduledHour = hours;
+      scheduledMinute = minutes;
+    }
+  } else {
+    // Format: "HH:mm"
+    const timeMatch = scheduledTime.match(/(\d{1,2}):(\d{2})/);
+    if (timeMatch) {
+      scheduledHour = parseInt(timeMatch[1]);
+      scheduledMinute = parseInt(timeMatch[2]);
+    }
+  }
+
+  // Parse availability times (format: "HH:mm")
+  const [startHour, startMinute] = dayAvailability.startTime.split(':').map(Number);
+  const [endHour, endMinute] = dayAvailability.endTime.split(':').map(Number);
+
+  // Convert to minutes for easier comparison
+  const scheduledMinutes = scheduledHour * 60 + scheduledMinute;
+  const startMinutes = startHour * 60 + startMinute;
+  const endMinutes = endHour * 60 + endMinute;
+
+  // Check if scheduled time is within availability window
+  return scheduledMinutes >= startMinutes && scheduledMinutes <= endMinutes;
+}
+
+/**
+ * Auto-assign the best matching service partner to a booking
+ * This function finds eligible partners and assigns the first available one
+ * If no partner is available, the booking proceeds without assignment
+ */
+async function autoAssignServicePartner(booking: any, orderItems: any[]): Promise<void> {
+  // Get service IDs from order items (serviceId is an ObjectId reference)
+  // We need to get the actual service ID string from the Service model
+  const serviceObjectIds = orderItems.map(item => item.serviceId);
+  
+  // Fetch services to get their ID strings (ServicePartner.services stores service.id strings)
+  const services = await Service.find({ _id: { $in: serviceObjectIds } });
+  const uniqueServiceIds = [...new Set(services.map(service => service.id).filter(Boolean))];
+  
+  if (uniqueServiceIds.length === 0) {
+    console.log('[autoAssignServicePartner] No valid service IDs found, skipping assignment');
+    return;
+  }
+
+  // Get booking location
+  const bookingLocation = booking.address?.coordinates;
+  if (!bookingLocation) {
+    console.log('[autoAssignServicePartner] No booking location found, skipping assignment');
+    return;
+  }
+
+  // Find service regions that contain the booking location
+  const activeRegions = await ServiceRegion.find({ isActive: true });
+  const matchingRegionIds: string[] = [];
+
+  for (const region of activeRegions) {
+    if (isPointInPolygon(bookingLocation, region.polygon)) {
+      matchingRegionIds.push(region._id.toString());
+    }
+  }
+
+  // Find service partners who:
+  // 1. Are active
+  // 2. Have at least one matching service
+  // 3. Have at least one matching service region (or no region restrictions)
+  const partnerFilter: any = {
+    isActive: true,
+    services: { $in: uniqueServiceIds }
+  };
+
+  // If we found matching regions, filter by regions (or partners with no region restrictions)
+  if (matchingRegionIds.length > 0) {
+    partnerFilter.$or = [
+      { serviceRegions: { $in: matchingRegionIds } },
+      { serviceRegions: { $size: 0 } } // Partners available in all regions
+    ];
+  }
+
+  const eligiblePartners = await ServicePartner.find(partnerFilter);
+
+  if (eligiblePartners.length === 0) {
+    console.log('[autoAssignServicePartner] No eligible partners found for booking', booking.bookingId);
+    return;
+  }
+
+  // Check availability based on schedule
+  const scheduledDate = booking.scheduledDate;
+  const scheduledTime = booking.scheduledTime;
+
+  // Find the first available partner
+  let assignedPartner = null;
+  for (const partner of eligiblePartners) {
+    const isAvailable = isPartnerAvailableAtTime(partner, scheduledDate, scheduledTime);
+    if (isAvailable) {
+      assignedPartner = partner;
+      break;
+    }
+  }
+
+  // Only assign if we found an available partner
+  // If no available partner found, don't assign (booking still succeeds)
+  if (!assignedPartner) {
+    console.log('[autoAssignServicePartner] No available partner found for booking', booking.bookingId, '- booking will proceed without assignment');
+    return;
+  }
+
+  if (assignedPartner) {
+    // Assign partner to all order items in the booking
+    const updatePromises = orderItems.map(item => 
+      OrderItem.findByIdAndUpdate(item._id, {
+        assignedPartnerId: assignedPartner._id,
+        status: item.status === 'pending' ? 'assigned' : item.status
+      })
+    );
+    await Promise.all(updatePromises);
+    console.log('[autoAssignServicePartner] Assigned partner', assignedPartner.name, 'to booking', booking.bookingId, 'for', orderItems.length, 'item(s)');
+  }
+}
+
+// @desc    Get eligible service partners for a booking
+// @route   GET /api/admin/bookings/:id/eligible-partners
+// @access  Private/Admin
+export const getEligibleServicePartners = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { id } = req.params; // bookingId
+
+  const booking = await Booking.findOne({ bookingId: id });
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // Get order items for this booking
+  const orderItems = await OrderItem.find({ bookingId: booking._id })
+    .populate('serviceId', 'id')
+    .populate('serviceVariantId', 'id');
+
+  if (orderItems.length === 0) {
+    return next(new AppError('No order items found for this booking', 404));
+  }
+
+  // Get service IDs from order items
+  const serviceIds = orderItems.map(item => (item.serviceId as any).id);
+  const uniqueServiceIds = [...new Set(serviceIds)];
+
+  // Get booking location
+  const bookingLocation = booking.address.coordinates;
+  if (!bookingLocation) {
+    return next(new AppError('Booking location not found', 400));
+  }
+
+  // Find service regions that contain the booking location
+  const activeRegions = await ServiceRegion.find({ isActive: true });
+  const matchingRegionIds: string[] = [];
+
+  for (const region of activeRegions) {
+    if (isPointInPolygon(bookingLocation, region.polygon)) {
+      matchingRegionIds.push(region._id.toString());
+    }
+  }
+
+  // Find service partners who:
+  // 1. Are active
+  // 2. Have at least one matching service
+  // 3. Have at least one matching service region (or no region restrictions)
+  const partnerFilter: any = {
+    isActive: true,
+    services: { $in: uniqueServiceIds }
+  };
+
+  // If we found matching regions, filter by regions (or partners with no region restrictions)
+  if (matchingRegionIds.length > 0) {
+    partnerFilter.$or = [
+      { serviceRegions: { $in: matchingRegionIds } },
+      { serviceRegions: { $size: 0 } } // Partners available in all regions
+    ];
+  }
+
+  const eligiblePartners = await ServicePartner.find(partnerFilter);
+
+  // Check availability based on schedule
+  const scheduledDate = booking.scheduledDate;
+  const scheduledTime = booking.scheduledTime;
+
+  // Separate partners into available and unavailable
+  const availablePartners: any[] = [];
+  const unavailablePartners: any[] = [];
+
+  for (const partner of eligiblePartners) {
+    const isAvailable = isPartnerAvailableAtTime(partner, scheduledDate, scheduledTime);
+    const partnerData = {
+      id: partner._id.toString(),
+      name: partner.name,
+      phone: partner.phone,
+      email: partner.email,
+      services: partner.services,
+      serviceRegions: partner.serviceRegions,
+      availability: partner.availability,
+      isAvailable
+    };
+
+    if (isAvailable) {
+      availablePartners.push(partnerData);
+    } else {
+      unavailablePartners.push(partnerData);
+    }
+  }
+
+  // Sort available partners by name
+  availablePartners.sort((a, b) => a.name.localeCompare(b.name));
+  unavailablePartners.sort((a, b) => a.name.localeCompare(b.name));
+
+  // Combine: available first, then unavailable
+  const allPartners = [...availablePartners, ...unavailablePartners];
+
+  res.status(200).json({
+    success: true,
+    data: {
+      partners: allPartners,
+      availableCount: availablePartners.length,
+      unavailableCount: unavailablePartners.length
+    }
+  });
+});
+
+// @desc    Assign a service partner to a booking order item
+// @route   POST /api/admin/bookings/:id/assign-partner
+// @access  Private/Admin
+export const assignServicePartner = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { id } = req.params; // bookingId
+  const { orderItemId, partnerId } = req.body;
+
+  if (!orderItemId || !partnerId) {
+    return next(new AppError('Order item ID and partner ID are required', 400));
+  }
+
+  // Verify booking exists
+  const booking = await Booking.findOne({ bookingId: id });
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // Verify order item belongs to this booking
+  const orderItem = await OrderItem.findOne({
+    _id: orderItemId,
+    bookingId: booking._id
+  });
+
+  if (!orderItem) {
+    return next(new AppError('Order item not found or does not belong to this booking', 404));
+  }
+
+  // Verify partner exists
+  const partner = await ServicePartner.findById(partnerId);
+  if (!partner) {
+    return next(new AppError('Service partner not found', 404));
+  }
+
+  if (!partner.isActive) {
+    return next(new AppError('Service partner is not active', 400));
+  }
+
+  // Update order item with assigned partner
+  orderItem.assignedPartnerId = new mongoose.Types.ObjectId(partnerId);
+  if (orderItem.status === 'pending') {
+    orderItem.status = 'assigned';
+  }
+  await orderItem.save();
+
+  // Get updated order item with populated partner
+  const updatedOrderItem = await OrderItem.findById(orderItem._id)
+    .populate('assignedPartnerId', 'name phone email');
+
+  res.status(200).json({
+    success: true,
+    message: 'Service partner assigned successfully',
+    data: {
+      orderItem: {
+        id: updatedOrderItem!._id.toString(),
+        assignedPartner: updatedOrderItem!.assignedPartnerId ? {
+          id: (updatedOrderItem!.assignedPartnerId as any)._id.toString(),
+          name: (updatedOrderItem!.assignedPartnerId as any).name,
+          phone: (updatedOrderItem!.assignedPartnerId as any).phone,
+          email: (updatedOrderItem!.assignedPartnerId as any).email
+        } : null,
+        status: updatedOrderItem!.status
+      }
     }
   });
 });
