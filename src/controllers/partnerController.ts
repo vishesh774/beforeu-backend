@@ -18,7 +18,9 @@ export const loginPartner = async (req: Request, res: Response, next: NextFuncti
         }
 
         // Check if partner exists
-        const partner = await ServicePartner.findOne({ phone, isActive: true });
+        // Normalize phone: add +91 if missing
+        const normalizedPhone = phone.startsWith('+') ? phone : `+91${phone}`;
+        const partner = await ServicePartner.findOne({ phone: normalizedPhone, isActive: true });
 
         if (!partner) {
             return next(new AppError('Partner not found or inactive', 404));
