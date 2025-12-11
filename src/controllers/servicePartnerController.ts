@@ -1,9 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
+import mongoose from 'mongoose';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import ServicePartner from '../models/ServicePartner';
 import User from '../models/User';
-import { initializeUserRecords } from '../utils/userHelpers';
+import UserCredits from '../models/UserCredits';
+import UserPlan from '../models/UserPlan';
 
 // @desc    Get all service partners with pagination and filters
 // @route   GET /api/admin/service-partners
@@ -134,6 +136,15 @@ export const createServicePartner = asyncHandler(async (req: Request, res: Respo
     return next(new AppError('User with this phone number already exists', 400));
   }
 
+  // Check if email is provided and if it already exists (before creating anything)
+  if (email && email.trim()) {
+    const trimmedEmail = email.trim().toLowerCase();
+    const existingEmailUser = await User.findOne({ email: trimmedEmail });
+    if (existingEmailUser) {
+      return next(new AppError('User with this email already exists', 400));
+    }
+  }
+
   // Validate availability if provided
   if (availability && Array.isArray(availability)) {
     const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
@@ -150,50 +161,90 @@ export const createServicePartner = asyncHandler(async (req: Request, res: Respo
     }
   }
 
-  // Create service partner
-  const servicePartner = await ServicePartner.create({
-    name,
-    phone,
-    email,
-    services,
-    serviceRegions: serviceRegions || [],
-    availability: availability || [],
-    isActive: isActive !== undefined ? isActive : true
-  });
+  // Use MongoDB transaction to ensure atomicity - all or nothing
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  // Create user account for the service partner
-  // Generate a default password (phone number as password for now, can be changed later)
-  const defaultPassword = phone.slice(-6); // Last 6 digits of phone as default password
-  const partnerUser = await User.create({
-    name,
-    phone,
-    email: email || '',
-    password: defaultPassword,
-    role: 'ServicePartner',
-    isActive: isActive !== undefined ? isActive : true
-  });
+  try {
+    // Create service partner within transaction
+    const servicePartner = await ServicePartner.create([{
+      name,
+      phone,
+      email,
+      services,
+      serviceRegions: serviceRegions || [],
+      availability: availability || [],
+      isActive: isActive !== undefined ? isActive : true
+    }], { session });
 
-  // Initialize user-related records (credits and plan)
-  await initializeUserRecords(partnerUser._id);
+    // Create user account for the service partner within transaction
+    // Generate a default password (phone number as password for now, can be changed later)
+    const defaultPassword = phone.slice(-6); // Last 6 digits of phone as default password
+    const partnerUser = await User.create([{
+      name,
+      phone,
+      email: email && email.trim() ? email.trim().toLowerCase() : undefined, // Use undefined instead of empty string for sparse unique index
+      password: defaultPassword,
+      role: 'ServicePartner',
+      isActive: isActive !== undefined ? isActive : true
+    }], { session });
 
-  res.status(201).json({
-    success: true,
-    message: 'Service partner created successfully',
-    data: {
-      servicePartner: {
-        id: servicePartner._id,
-        name: servicePartner.name,
-        phone: servicePartner.phone,
-        email: servicePartner.email,
-        services: servicePartner.services,
-        serviceRegions: servicePartner.serviceRegions,
-        availability: servicePartner.availability,
-        isActive: servicePartner.isActive,
-        createdAt: servicePartner.createdAt,
-        updatedAt: servicePartner.updatedAt
+    // Initialize user-related records (credits and plan) within transaction
+    const userId = partnerUser[0]._id;
+    await Promise.all([
+      UserCredits.findOneAndUpdate(
+        { userId },
+        { credits: 0 },
+        { upsert: true, new: true, session }
+      ),
+      UserPlan.findOneAndUpdate(
+        { userId },
+        { activePlanId: null },
+        { upsert: true, new: true, session }
+      )
+    ]);
+
+    // Commit transaction if everything succeeds
+    await session.commitTransaction();
+    
+    // Extract the created documents (create returns array when using session)
+    const createdServicePartner = servicePartner[0];
+
+    res.status(201).json({
+      success: true,
+      message: 'Service partner created successfully',
+      data: {
+        servicePartner: {
+          id: createdServicePartner._id,
+          name: createdServicePartner.name,
+          phone: createdServicePartner.phone,
+          email: createdServicePartner.email,
+          services: createdServicePartner.services,
+          serviceRegions: createdServicePartner.serviceRegions,
+          availability: createdServicePartner.availability,
+          isActive: createdServicePartner.isActive,
+          createdAt: createdServicePartner.createdAt,
+          updatedAt: createdServicePartner.updatedAt
+        }
       }
+    });
+  } catch (error: any) {
+    // Abort transaction on any error - this will rollback all changes
+    await session.abortTransaction();
+    
+    // Handle specific error types
+    if (error.code === 11000) {
+      // Duplicate key error
+      const field = Object.keys(error.keyPattern || {})[0] || 'field';
+      return next(new AppError(`${field.charAt(0).toUpperCase() + field.slice(1)} already exists`, 400));
     }
-  });
+    
+    // Re-throw other errors to be handled by error handler
+    throw error;
+  } finally {
+    // End session
+    await session.endSession();
+  }
 });
 
 // @desc    Update service partner
@@ -233,6 +284,20 @@ export const updateServicePartner = asyncHandler(async (req: Request, res: Respo
     }
     servicePartner.phone = phone;
   }
+  // Validate email if being changed (before starting transaction)
+  if (email !== undefined && email && email.trim()) {
+    const trimmedEmail = email.trim().toLowerCase();
+    const partnerUser = await User.findOne({ phone: servicePartner.phone, role: 'ServicePartner' });
+    // Check if email is already taken by another user (excluding current partner's user)
+    const existingEmailUser = await User.findOne({ 
+      email: trimmedEmail,
+      _id: partnerUser ? { $ne: partnerUser._id } : { $exists: true }
+    });
+    if (existingEmailUser) {
+      return next(new AppError('User with this email already exists', 400));
+    }
+  }
+
   if (email !== undefined) servicePartner.email = email;
   if (services) {
     if (!Array.isArray(services) || services.length === 0) {
@@ -261,18 +326,44 @@ export const updateServicePartner = asyncHandler(async (req: Request, res: Respo
   }
   if (typeof isActive === 'boolean') servicePartner.isActive = isActive;
 
-  await servicePartner.save();
+  // Use MongoDB transaction to ensure atomicity
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  // Update user account for the service partner
-  const partnerUser = await User.findOne({ phone: servicePartner.phone, role: 'ServicePartner' });
-  if (partnerUser) {
-    if (name) partnerUser.name = name;
-    if (phone) partnerUser.phone = phone;
-    if (email !== undefined) partnerUser.email = email || '';
-    if (typeof isActive === 'boolean') partnerUser.isActive = isActive;
-    await partnerUser.save();
+  try {
+    await servicePartner.save({ session });
+
+    // Update user account for the service partner within transaction
+    const partnerUser = await User.findOne({ phone: servicePartner.phone, role: 'ServicePartner' });
+    if (partnerUser) {
+      if (name) partnerUser.name = name;
+      if (phone) partnerUser.phone = phone;
+      if (email !== undefined) partnerUser.email = email && email.trim() ? email.trim().toLowerCase() : undefined; // Use undefined instead of empty string for sparse unique index
+      if (typeof isActive === 'boolean') partnerUser.isActive = isActive;
+      await partnerUser.save({ session });
+    }
+
+    // Commit transaction if everything succeeds
+    await session.commitTransaction();
+  } catch (error: any) {
+    // Abort transaction on any error - this will rollback all changes
+    await session.abortTransaction();
+    
+    // Handle specific error types
+    if (error.code === 11000) {
+      // Duplicate key error
+      const field = Object.keys(error.keyPattern || {})[0] || 'field';
+      return next(new AppError(`${field.charAt(0).toUpperCase() + field.slice(1)} already exists`, 400));
+    }
+    
+    // Re-throw other errors to be handled by error handler
+    throw error;
+  } finally {
+    // End session
+    await session.endSession();
   }
 
+  // Send response after successful transaction
   res.status(200).json({
     success: true,
     message: 'Service partner updated successfully',
