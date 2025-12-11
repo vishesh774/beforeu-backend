@@ -599,23 +599,41 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   // Generate booking OTP (4-digit, deterministic)
   const bookingOTP = generateBookingOTP(booking.bookingId);
 
+
   // Get assigned professional if any (from order items)
   let assignedProfessional = null;
   const itemsWithPartner = await OrderItem.find({ bookingId: booking._id })
     .populate('assignedPartnerId', 'name phone email rating jobsCompleted');
 
-  // Check if any item has an assigned partner
-  const itemWithPartner = itemsWithPartner.find(item => item.assignedPartnerId);
-  if (itemWithPartner && itemWithPartner.assignedPartnerId) {
-    const partner = itemWithPartner.assignedPartnerId as any;
-    assignedProfessional = {
-      id: partner._id.toString(),
-      name: partner.name || 'Professional',
-      phone: partner.phone,
-      email: partner.email,
-      rating: partner.rating || 4.5,
-      jobsCompleted: partner.jobsCompleted || 0
-    };
+  if (specificItem) {
+    // If viewing a specific item, only show the professional assigned to THIS item
+    const currentItemWithPartner = itemsWithPartner.find(item => item._id.toString() === specificItem._id.toString());
+    if (currentItemWithPartner && currentItemWithPartner.assignedPartnerId) {
+      const partner = currentItemWithPartner.assignedPartnerId as any;
+      assignedProfessional = {
+        id: partner._id.toString(),
+        name: partner.name || '',
+        phone: partner.phone,
+        email: partner.email,
+        rating: partner.rating || 4.5,
+        jobsCompleted: partner.jobsCompleted || 0
+      };
+    }
+  } else {
+    // Fallback for full booking view: show the first assigned professional found
+    // (Or logic could be adjusted to show multiple if UI supported it)
+    const itemWithPartner = itemsWithPartner.find(item => item.assignedPartnerId);
+    if (itemWithPartner && itemWithPartner.assignedPartnerId) {
+      const partner = itemWithPartner.assignedPartnerId as any;
+      assignedProfessional = {
+        id: partner._id.toString(),
+        name: partner.name || 'Professional',
+        phone: partner.phone,
+        email: partner.email,
+        rating: partner.rating || 4.5,
+        jobsCompleted: partner.jobsCompleted || 0
+      };
+    }
   }
 
   // Transform status to match frontend expectations
@@ -877,60 +895,70 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
     bookings.map(async (booking) => {
       const items = await OrderItem.find({ bookingId: booking._id })
         .populate('serviceId', 'name icon')
-        .populate('serviceVariantId', 'name')
+        .populate('serviceVariantId', 'name icon')
         .populate('assignedPartnerId', 'name phone');
 
-      return {
-        id: booking.bookingId,
-        bookingId: booking.bookingId,
-        customer: {
-          id: (booking.userId as any)._id.toString(),
-          name: (booking.userId as any).name,
-          email: (booking.userId as any).email,
-          phone: (booking.userId as any).phone
-        },
-        items: items.map(item => ({
-          id: item._id.toString(),
-          serviceId: (item.serviceId as any).id || item.serviceId.toString(),
-          serviceName: item.serviceName,
-          variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
-          variantName: item.variantName,
-          quantity: item.quantity,
-          originalPrice: item.originalPrice,
-          finalPrice: item.finalPrice,
-          creditValue: item.creditValue,
-          estimatedTimeMinutes: item.estimatedTimeMinutes,
-          assignedPartner: item.assignedPartnerId ? {
-            id: (item.assignedPartnerId as any)._id.toString(),
-            name: (item.assignedPartnerId as any).name,
-            phone: (item.assignedPartnerId as any).phone
-          } : null,
-          status: item.status
-        })),
-        address: booking.address,
-        bookingType: booking.bookingType,
-        scheduledDate: booking.scheduledDate,
-        scheduledTime: booking.scheduledTime,
-        totalAmount: booking.totalAmount,
-        itemTotal: booking.itemTotal || booking.totalAmount, // Fallback for old bookings
-        totalOriginalAmount: booking.totalOriginalAmount,
-        paymentBreakdown: booking.paymentBreakdown || [],
-        paymentId: booking.paymentId,
-        orderId: booking.orderId,
-        paymentDetails: booking.paymentDetails || null,
-        status: booking.status,
-        paymentStatus: booking.paymentStatus,
-        notes: booking.notes,
-        createdAt: booking.createdAt,
-        updatedAt: booking.updatedAt
-      };
+      if (items.length > 0) {
+        return items.map((item, index) => ({
+          id: `${booking.bookingId}-${index + 1}`,
+          bookingId: booking.bookingId,
+          customer: {
+            id: (booking.userId as any)._id.toString(),
+            name: (booking.userId as any).name,
+            email: (booking.userId as any).email,
+            phone: (booking.userId as any).phone
+          },
+          items: [{
+            id: item._id.toString(),
+            serviceId: (item.serviceId as any).id || (item.serviceId as any)?._id?.toString() || item.serviceId.toString(),
+            serviceName: item.serviceName,
+            variantId: (item.serviceVariantId as any).id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
+            variantName: item.variantName,
+            // Populate icon for admin panel as well
+            icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
+            quantity: item.quantity,
+            originalPrice: item.originalPrice,
+            finalPrice: item.finalPrice,
+            creditValue: item.creditValue,
+            estimatedTimeMinutes: item.estimatedTimeMinutes,
+            assignedPartner: item.assignedPartnerId ? {
+              id: (item.assignedPartnerId as any)._id.toString(),
+              name: (item.assignedPartnerId as any).name,
+              phone: (item.assignedPartnerId as any).phone
+            } : null,
+            status: item.status
+          }],
+          address: booking.address,
+          bookingType: booking.bookingType,
+          scheduledDate: booking.scheduledDate,
+          scheduledTime: booking.scheduledTime,
+          // Show per-item price as total for this row
+          totalAmount: item.finalPrice,
+          itemTotal: item.originalPrice,
+          totalOriginalAmount: booking.totalOriginalAmount, // Keep original total for reference if needed
+          paymentBreakdown: booking.paymentBreakdown || [],
+          paymentId: booking.paymentId,
+          orderId: booking.orderId,
+          paymentDetails: booking.paymentDetails || null,
+          status: booking.status,
+          paymentStatus: booking.paymentStatus,
+          notes: booking.notes,
+          createdAt: booking.createdAt,
+          updatedAt: booking.updatedAt
+        }));
+      }
+
+      return [];
     })
   );
+
+  // Flatten the array of arrays
+  const flatBookings = bookingsWithItems.flat();
 
   res.status(200).json({
     success: true,
     data: {
-      bookings: bookingsWithItems,
+      bookings: flatBookings,
       pagination: {
         page,
         limit,
@@ -947,7 +975,22 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
 export const getBookingById = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
 
-  const booking = await Booking.findOne({ bookingId: id })
+  // Parse the ID to see if it's a composite ID (e.g. BOOK-20231211-001-1)
+  // Format: BOOK-DATE-SEQ-INDEX
+  const parts = id.split('-');
+  let bookingId = id;
+  let itemIndex = -1; // -1 means return all items
+  let requestedId = id;
+
+  if (parts.length === 4) {
+    const rawIndex = parseInt(parts[3]);
+    if (!isNaN(rawIndex)) {
+      itemIndex = rawIndex - 1; // Convert 1-based to 0-based
+      bookingId = parts.slice(0, 3).join('-'); // Reconstruct real booking ID
+    }
+  }
+
+  const booking = await Booking.findOne({ bookingId: bookingId })
     .populate('userId', 'name email phone');
 
   if (!booking) {
@@ -956,11 +999,22 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
 
   const items = await OrderItem.find({ bookingId: booking._id })
     .populate('serviceId', 'name icon')
-    .populate('serviceVariantId', 'name description inclusions exclusions tags')
+    .populate('serviceVariantId', 'name description inclusions exclusions tags icon')
     .populate('assignedPartnerId', 'name phone email');
 
+  // Filter for specific item if requested
+  let displayItems = items;
+  let specificItem = null;
+
+  if (itemIndex >= 0) {
+    if (itemIndex < items.length) {
+      displayItems = [items[itemIndex]];
+      specificItem = items[itemIndex];
+    }
+  }
+
   const bookingData = {
-    id: booking.bookingId,
+    id: requestedId,
     bookingId: booking.bookingId,
     customer: {
       id: (booking.userId as any)._id.toString(),
@@ -968,13 +1022,15 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
       email: (booking.userId as any).email,
       phone: (booking.userId as any).phone
     },
-    items: items.map(item => ({
+    items: displayItems.map(item => ({
       id: item._id.toString(),
       serviceId: (item.serviceId as any).id || item.serviceId.toString(),
       serviceName: item.serviceName,
       variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
       variantName: item.variantName,
       description: (item.serviceVariantId as any).description,
+      // Add icon to admin details response too
+      icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
       inclusions: (item.serviceVariantId as any).inclusions || [],
       exclusions: (item.serviceVariantId as any).exclusions || [],
       tags: (item.serviceVariantId as any).tags || [],
@@ -995,14 +1051,15 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     bookingType: booking.bookingType,
     scheduledDate: booking.scheduledDate,
     scheduledTime: booking.scheduledTime,
-    totalAmount: booking.totalAmount,
-    itemTotal: booking.itemTotal || booking.totalAmount, // Fallback for old bookings
+    // If specific item, show its price. Otherwise show total.
+    totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
+    itemTotal: specificItem ? specificItem.originalPrice : (booking.itemTotal || booking.totalAmount),
     totalOriginalAmount: booking.totalOriginalAmount,
     paymentBreakdown: booking.paymentBreakdown || [],
     paymentId: booking.paymentId,
     orderId: booking.orderId,
     paymentDetails: booking.paymentDetails || null,
-    status: booking.status,
+    status: specificItem ? specificItem.status : booking.status,
     paymentStatus: booking.paymentStatus,
     notes: booking.notes,
     createdAt: booking.createdAt,
@@ -1081,23 +1138,10 @@ function isPartnerAvailableAtTime(
 
 /**
  * Auto-assign the best matching service partner to a booking
- * This function finds eligible partners and assigns the first available one
- * If no partner is available, the booking proceeds without assignment
+ * This function finds eligible partners and assigns the first available one PER ITEM
+ * If no partner is available for an item, that item proceeds without assignment
  */
 async function autoAssignServicePartner(booking: any, orderItems: any[]): Promise<void> {
-  // Get service IDs from order items (serviceId is an ObjectId reference)
-  // We need to get the actual service ID string from the Service model
-  const serviceObjectIds = orderItems.map(item => item.serviceId);
-
-  // Fetch services to get their ID strings (ServicePartner.services stores service.id strings)
-  const services = await Service.find({ _id: { $in: serviceObjectIds } });
-  const uniqueServiceIds = [...new Set(services.map(service => service.id).filter(Boolean))];
-
-  if (uniqueServiceIds.length === 0) {
-    console.log('[autoAssignServicePartner] No valid service IDs found, skipping assignment');
-    return;
-  }
-
   // Get booking location
   const bookingLocation = booking.address?.coordinates;
   if (!bookingLocation) {
@@ -1106,6 +1150,7 @@ async function autoAssignServicePartner(booking: any, orderItems: any[]): Promis
   }
 
   // Find service regions that contain the booking location
+  // We do this once for the booking since location is constant
   const activeRegions = await ServiceRegion.find({ isActive: true });
   const matchingRegionIds: string[] = [];
 
@@ -1115,61 +1160,75 @@ async function autoAssignServicePartner(booking: any, orderItems: any[]): Promis
     }
   }
 
-  // Find service partners who:
-  // 1. Are active
-  // 2. Have at least one matching service
-  // 3. Have at least one matching service region (or no region restrictions)
-  const partnerFilter: any = {
-    isActive: true,
-    services: { $in: uniqueServiceIds }
-  };
+  console.log('[autoAssignServicePartner] Matching regions:', matchingRegionIds);
 
-  // If we found matching regions, filter by regions (or partners with no region restrictions)
-  if (matchingRegionIds.length > 0) {
-    partnerFilter.$or = [
-      { serviceRegions: { $in: matchingRegionIds } },
-      { serviceRegions: { $size: 0 } } // Partners available in all regions
-    ];
-  }
+  // Iterate through each order item and try to assign a partner
+  for (const item of orderItems) {
+    try {
+      // Get the actual service from the item
+      const service = await Service.findById(item.serviceId);
+      if (!service) {
+        console.log(`[autoAssignServicePartner] Service not found for item ${item._id}, skipping`);
+        continue;
+      }
 
-  const eligiblePartners = await ServicePartner.find(partnerFilter);
+      const serviceIdString = service.id; // The string ID used in ServicePartner services array
 
-  if (eligiblePartners.length === 0) {
-    console.log('[autoAssignServicePartner] No eligible partners found for booking', booking.bookingId);
-    return;
-  }
+      // Find service partners who:
+      // 1. Are active
+      // 2. Have THIS service
+      // 3. Have at least one matching service region (or no region restrictions)
+      const partnerFilter: any = {
+        isActive: true,
+        services: { $in: [serviceIdString] }
+      };
 
-  // Check availability based on schedule
-  const scheduledDate = booking.scheduledDate;
-  const scheduledTime = booking.scheduledTime;
+      // If we found matching regions, filter by regions (or partners with no region restrictions)
+      if (matchingRegionIds.length > 0) {
+        partnerFilter.$or = [
+          { serviceRegions: { $in: matchingRegionIds } },
+          { serviceRegions: { $size: 0 } } // Partners available in all regions
+        ];
+      }
 
-  // Find the first available partner
-  let assignedPartner = null;
-  for (const partner of eligiblePartners) {
-    const isAvailable = isPartnerAvailableAtTime(partner, scheduledDate, scheduledTime);
-    if (isAvailable) {
-      assignedPartner = partner;
-      break;
+      const eligiblePartners = await ServicePartner.find(partnerFilter);
+
+      if (eligiblePartners.length === 0) {
+        console.log(`[autoAssignServicePartner] No eligible partners found for item ${item._id} (${service.name})`);
+        continue;
+      }
+
+      // Check availability based on schedule
+      const scheduledDate = booking.scheduledDate;
+      const scheduledTime = booking.scheduledTime;
+
+      // Shuffle partners to distribute load randomly among available ones
+      // or simplistic: just pick the first one that is available
+      let assignedPartner: any = null;
+
+      for (const partner of eligiblePartners) {
+        const isAvailable = isPartnerAvailableAtTime(partner, scheduledDate, scheduledTime);
+        if (isAvailable) {
+          assignedPartner = partner;
+          break; // Found one!
+        }
+      }
+
+      if (assignedPartner) {
+        // Assign partner to this specific order item
+        await OrderItem.findByIdAndUpdate(item._id, {
+          assignedPartnerId: assignedPartner._id,
+          status: item.status === 'pending' ? 'assigned' : item.status
+        });
+        console.log(`[autoAssignServicePartner] Assigned partner ${assignedPartner.name} to item ${item._id} (${service.name})`);
+      } else {
+        console.log(`[autoAssignServicePartner] No available partners for item ${item._id} at requested time`);
+      }
+
+    } catch (error) {
+      console.error(`[autoAssignServicePartner] Error assigning partner for item ${item._id}:`, error);
+      // Continue to next item
     }
-  }
-
-  // Only assign if we found an available partner
-  // If no available partner found, don't assign (booking still succeeds)
-  if (!assignedPartner) {
-    console.log('[autoAssignServicePartner] No available partner found for booking', booking.bookingId, '- booking will proceed without assignment');
-    return;
-  }
-
-  if (assignedPartner) {
-    // Assign partner to all order items in the booking
-    const updatePromises = orderItems.map(item =>
-      OrderItem.findByIdAndUpdate(item._id, {
-        assignedPartnerId: assignedPartner._id,
-        status: item.status === 'pending' ? 'assigned' : item.status
-      })
-    );
-    await Promise.all(updatePromises);
-    console.log('[autoAssignServicePartner] Assigned partner', assignedPartner.name, 'to booking', booking.bookingId, 'for', orderItems.length, 'item(s)');
   }
 }
 
