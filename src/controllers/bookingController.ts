@@ -598,8 +598,9 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   // Get order items
   const items = await OrderItem.find({ bookingId: booking._id })
     .populate('serviceId', 'name icon')
+
     .populate('serviceVariantId', 'name description icon')
-    .populate('assignedServiceLocationId', 'name address contactNumber');
+    .populate('assignedServiceLocationId', 'name address contactNumber contactPerson');
 
   // Filter for specific item if requested
   let displayItems = items;
