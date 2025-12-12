@@ -30,6 +30,7 @@ import {
 import {
   getAllBookings,
   getBookingById,
+  updateOrderItemStatus,
   getEligibleServicePartners,
   assignServicePartner
 } from '../controllers/bookingController';
@@ -126,6 +127,7 @@ router.get('/bookings', getAllBookings);
 router.get('/bookings/:id', getBookingById);
 router.get('/bookings/:id/eligible-partners', getEligibleServicePartners);
 router.post('/bookings/:id/assign-partner', assignServicePartner);
+router.patch('/bookings/:bookingId/items/:itemId/status', updateOrderItemStatus);
 
 // Refund & Cancellation Policy routes
 router.get('/refund-cancellation-policies', getAllPolicies);

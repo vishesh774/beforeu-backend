@@ -11,9 +11,11 @@ import OrderItem from '../models/OrderItem';
 import Address from '../models/Address';
 // import UserCredits from '../models/UserCredits';
 import User from '../models/User';
+import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import ServicePartner from '../models/ServicePartner';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus } from '../services/bookingService';
+import { BookingStatus } from '../constants/bookingStatus';
 
 // @desc    Get all active services (without location requirement)
 // @route   GET /api/services/all
@@ -230,7 +232,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   }
 
   // Calculate totals and validate items
-  let totalAmount = 0;
+  let itemTotal = 0;
   let totalOriginalAmount = 0;
 
   // TODO: Re-enable after testing
@@ -256,8 +258,8 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     }
 
     const quantity = parseInt(item.quantity) || 1;
-    const itemTotal = variant.finalPrice * quantity;
-    const itemOriginalTotal = variant.originalPrice * quantity;
+    const variantTotal = variant.finalPrice * quantity;
+    const variantOriginalTotal = variant.originalPrice * quantity;
     // const itemCredits = variant.includedInSubscription ? variant.creditValue * quantity : 0;
 
     // TODO: Re-enable credit check after testing
@@ -266,8 +268,8 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     //   return next(new AppError('Insufficient credits for this booking', 400));
     // }
 
-    totalAmount += itemTotal;
-    totalOriginalAmount += itemOriginalTotal;
+    itemTotal += variantTotal;
+    totalOriginalAmount += variantOriginalTotal;
 
     orderItems.push({
       serviceId: service._id,
@@ -280,6 +282,22 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
       customerVisitRequired: variant.customerVisitRequired !== undefined ? variant.customerVisitRequired : false
     });
   }
+
+  // Calculate taxes and fees using active checkout fields
+  const checkoutFields = await getActiveCheckoutFields();
+  const calculationResult = await calculateCheckoutTotal(itemTotal, checkoutFields);
+
+  // Format breakdown for storage
+  const paymentBreakdown = calculationResult.breakdown.map(item => {
+    const field = checkoutFields.find(f => f.fieldName === item.fieldName);
+    return {
+      fieldName: item.fieldName,
+      fieldDisplayName: item.fieldDisplayName,
+      chargeType: field?.chargeType || 'fixed',
+      value: field?.value || 0,
+      amount: item.amount
+    };
+  });
 
   // Generate booking ID
   const now = new Date();
@@ -320,8 +338,10 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     bookingType,
     scheduledDate: bookingType === 'SCHEDULED' ? new Date(scheduledDate) : undefined,
     scheduledTime: bookingType === 'SCHEDULED' ? scheduledTime : undefined,
-    totalAmount,
+    itemTotal,
+    totalAmount: calculationResult.total,
     totalOriginalAmount,
+    paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
     status: 'pending',
     paymentStatus: 'pending',
     notes: notes || undefined
@@ -933,6 +953,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
           paymentDetails: booking.paymentDetails || null,
 
           paymentStatus: booking.paymentStatus,
+          status: item.status,
           notes: booking.notes,
           createdAt: booking.createdAt,
           updatedAt: booking.updatedAt
@@ -971,7 +992,6 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
   const parts = id.split('-');
   let bookingId = id;
   let itemIndex = -1; // -1 means return all items
-  let requestedId = id;
 
   if (parts.length === 4) {
     const rawIndex = parseInt(parts[3]);
@@ -981,8 +1001,7 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     }
   }
 
-  const booking = await Booking.findOne({ bookingId: bookingId })
-    .populate('userId', 'name email phone');
+  const booking = await Booking.findOne({ bookingId }).populate('userId', 'name email phone');
 
   if (!booking) {
     return next(new AppError('Booking not found', 404));
@@ -990,53 +1009,42 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
 
   const items = await OrderItem.find({ bookingId: booking._id })
     .populate('serviceId', 'name icon')
-    .populate('serviceVariantId', 'name description inclusions exclusions tags icon')
+    .populate('serviceVariantId', 'name icon')
     .populate('assignedPartnerId', 'name phone email');
 
-  // Filter for specific item if requested
+  // If a specific item index was requested, filter for it
   let displayItems = items;
   let specificItem = null;
-
-  if (itemIndex >= 0) {
-    if (itemIndex < items.length) {
-      displayItems = [items[itemIndex]];
-      specificItem = items[itemIndex];
-    }
+  if (itemIndex >= 0 && itemIndex < items.length) {
+    displayItems = [items[itemIndex]];
+    specificItem = items[itemIndex];
   }
 
   const bookingData = {
-    id: requestedId,
+    id: booking._id,
     bookingId: booking.bookingId,
     customer: {
-      id: (booking.userId as any)._id.toString(),
+      id: (booking.userId as any)._id,
       name: (booking.userId as any).name,
       email: (booking.userId as any).email,
       phone: (booking.userId as any).phone
     },
     items: displayItems.map(item => ({
-      id: item._id.toString(),
-      serviceId: (item.serviceId as any).id || item.serviceId.toString(),
+      id: item._id,
+      serviceId: (item.serviceId as any)._id || item.serviceId,
       serviceName: item.serviceName,
-      variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
       variantName: item.variantName,
-      description: (item.serviceVariantId as any).description,
-      // Add icon to admin details response too
-      icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
-      inclusions: (item.serviceVariantId as any).inclusions || [],
-      exclusions: (item.serviceVariantId as any).exclusions || [],
-      tags: (item.serviceVariantId as any).tags || [],
       quantity: item.quantity,
-      originalPrice: item.originalPrice,
       finalPrice: item.finalPrice,
-      creditValue: item.creditValue,
+      originalPrice: item.originalPrice,
       estimatedTimeMinutes: item.estimatedTimeMinutes,
+      status: item.status,
       assignedPartner: item.assignedPartnerId ? {
-        id: (item.assignedPartnerId as any)._id.toString(),
+        id: (item.assignedPartnerId as any)._id,
         name: (item.assignedPartnerId as any).name,
         phone: (item.assignedPartnerId as any).phone,
         email: (item.assignedPartnerId as any).email
-      } : null,
-      status: item.status
+      } : null
     })),
     address: booking.address,
     bookingType: booking.bookingType,
@@ -1233,6 +1241,97 @@ export const assignServicePartner = asyncHandler(async (req: Request, res: Respo
         } : null,
         status: updatedOrderItem!.status
       }
+    }
+  });
+});
+
+// @desc    Update order item status
+// @route   PATCH /api/admin/bookings/:bookingId/items/:itemId/status
+// @access  Private/Admin
+export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { bookingId, itemId } = req.params;
+  const { status } = req.body;
+
+  if (!status) {
+    return next(new AppError('Status is required', 400));
+  }
+
+  // Define status order for validation
+  // Status flow: PENDING -> CONFIRMED -> ASSIGNED -> EN_ROUTE -> REACHED -> IN_PROGRESS -> COMPLETED
+  // CANCELLED/REFUNDED are terminal states
+  const statusOrder = [
+    BookingStatus.PENDING,
+    BookingStatus.CONFIRMED,
+    BookingStatus.ASSIGNED,
+    BookingStatus.EN_ROUTE,
+    BookingStatus.REACHED,
+    BookingStatus.IN_PROGRESS,
+    BookingStatus.COMPLETED
+  ];
+
+  // Verify booking exists
+  const booking = await Booking.findOne({ bookingId });
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // Verify order item and get current status
+  const orderItem = await OrderItem.findOne({
+    _id: itemId,
+    bookingId: booking._id
+  });
+
+  if (!orderItem) {
+    return next(new AppError('Order item not found or does not belong to this booking', 404));
+  }
+
+  const currentStatus = orderItem.status as BookingStatus;
+  const newStatus = status as BookingStatus;
+
+  // Validation Logic
+  // 1. Prevent updates if current status is terminal
+  if ([BookingStatus.COMPLETED, BookingStatus.CANCELLED, BookingStatus.REFUNDED].includes(currentStatus)) {
+    return next(new AppError(`Cannot update item in ${currentStatus} state`, 400));
+  }
+
+  // 2. Prevent backward transitions in the active flow (simplistic check)
+  const currentIndex = statusOrder.indexOf(currentStatus);
+  const newIndex = statusOrder.indexOf(newStatus);
+
+  if (currentIndex !== -1 && newIndex !== -1) {
+    if (newIndex < currentIndex) {
+      return next(new AppError('Cannot revert to a previous status', 400));
+    }
+  }
+
+  // 3. Special checks for specific transitions if needed
+  // e.g., cannot go to CANCELLED if already customized/started? (Business rule dependent)
+  if ([BookingStatus.CANCELLED, BookingStatus.REFUND_INITIATED, BookingStatus.REFUNDED].includes(newStatus)) {
+    if (currentStatus === BookingStatus.IN_PROGRESS || currentStatus === BookingStatus.COMPLETED) {
+      return next(new AppError('Cannot cancel/refund item that is already in progress or completed', 400));
+    }
+  }
+
+  // Update status
+  orderItem.status = newStatus;
+
+  // Add to transparent status history if we had it (TODO)
+  // if (!orderItem.statusHistory) orderItem.statusHistory = [];
+  // orderItem.statusHistory.push({ status: newStatus, timestamp: new Date(), updatedBy: req.user.id });
+
+  await orderItem.save();
+
+  // Sync parent booking status
+  await syncBookingStatus(booking._id);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      orderItem: {
+        id: orderItem._id,
+        status: orderItem.status
+      },
+      message: 'Item status updated successfully'
     }
   });
 });
