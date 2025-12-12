@@ -677,7 +677,8 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
         id: (item.assignedServiceLocationId as any)._id,
         name: (item.assignedServiceLocationId as any).name,
         address: (item.assignedServiceLocationId as any).address,
-        contactNumber: (item.assignedServiceLocationId as any).contactNumber
+        contactNumber: (item.assignedServiceLocationId as any).contactNumber,
+        contactPerson: (item.assignedServiceLocationId as any).contactPerson
       } : null
     })),
     // If specific item, show its price. Otherwise show total.
