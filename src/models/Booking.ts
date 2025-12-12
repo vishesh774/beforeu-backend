@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import { BookingStatus } from '../constants/bookingStatus';
 
 export interface IBooking extends Document {
   userId: mongoose.Types.ObjectId;
@@ -27,7 +28,7 @@ export interface IBooking extends Document {
     value: number;
     amount: number;
   }>; // Breakdown of checkout fields applied
-  status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated'
+  status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
   paymentStatus: 'pending' | 'paid' | 'refunded';
   paymentId?: string; // Razorpay payment ID
   orderId?: string; // Razorpay order ID
@@ -102,13 +103,13 @@ const BookingSchema = new Schema<IBooking>(
     },
     scheduledDate: {
       type: Date,
-      required: function(this: IBooking) {
+      required: function (this: IBooking) {
         return this.bookingType === 'SCHEDULED';
       }
     },
     scheduledTime: {
       type: String,
-      required: function(this: IBooking) {
+      required: function (this: IBooking) {
         return this.bookingType === 'SCHEDULED';
       }
     },
@@ -142,10 +143,14 @@ const BookingSchema = new Schema<IBooking>(
       }],
       default: undefined
     },
+
+
+    // ...
+
     status: {
       type: String,
-      enum: ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'refund_initiated'],
-      default: 'pending',
+      enum: Object.values(BookingStatus),
+      default: BookingStatus.PENDING,
       required: true
     },
     paymentStatus: {
@@ -204,11 +209,11 @@ BookingSchema.index({ createdAt: -1 });
 BookingSchema.index({ userId: 1, status: 1 });
 
 // Generate booking ID before saving
-BookingSchema.pre('save', async function() {
+BookingSchema.pre('save', async function () {
   if (!this.bookingId) {
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
-    
+
     // Count bookings with today's date pattern in bookingId
     // This works even for new documents since we're querying by bookingId pattern
     const count = await mongoose.model('Booking').countDocuments({

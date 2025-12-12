@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import { BookingStatus } from '../constants/bookingStatus';
 
 export interface IOrderItem extends Document {
   bookingId: mongoose.Types.ObjectId;
@@ -15,7 +16,7 @@ export interface IOrderItem extends Document {
   assignedPartnerId?: mongoose.Types.ObjectId; // Service partner assigned to this item
   startJobOtp?: string;
   endJobOtp?: string;
-  status: 'pending' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -92,10 +93,14 @@ const OrderItemSchema = new Schema<IOrderItem>(
       type: String,
       default: null
     },
+
+
+    // ...
+
     status: {
       type: String,
-      enum: ['pending', 'assigned', 'en_route', 'reached', 'in_progress', 'completed', 'cancelled'],
-      default: 'pending',
+      enum: Object.values(BookingStatus),
+      default: BookingStatus.PENDING,
       required: true
     }
   },

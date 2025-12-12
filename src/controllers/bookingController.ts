@@ -13,7 +13,7 @@ import Address from '../models/Address';
 import User from '../models/User';
 import ServicePartner from '../models/ServicePartner';
 import { isPointInPolygon } from '../utils/pointInPolygon';
-import { autoAssignServicePartner, isPartnerAvailableAtTime } from '../services/bookingService';
+import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus } from '../services/bookingService';
 
 // @desc    Get all active services (without location requirement)
 // @route   GET /api/services/all
@@ -469,11 +469,7 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
           totalAmount: item.finalPrice,
           taxAmount: 0, // Not calculated per item in this view
           itemTotal: item.originalPrice,
-          status: booking.status === 'pending' ? 'Upcoming' :
-            booking.status === 'completed' ? 'Completed' :
-              booking.status === 'cancelled' ? 'Cancelled' :
-                booking.status === 'confirmed' ? 'Upcoming' :
-                  booking.status === 'in_progress' ? 'Upcoming' : 'Upcoming',
+          status: item.status,
           date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
           time: booking.scheduledTime || '',
           address: {
@@ -637,14 +633,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     }
   }
 
-  // Transform status to match frontend expectations
-  const statusMap: Record<string, string> = {
-    'pending': 'Upcoming',
-    'confirmed': 'Upcoming',
-    'in_progress': 'Upcoming',
-    'completed': 'Completed',
-    'cancelled': 'Cancelled'
-  };
+
 
   const bookingData = {
     id: requestedId, // Return the requested ID (virtual or real)
@@ -658,7 +647,8 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
       originalPrice: item.originalPrice,
       creditCost: item.creditValue,
       icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
-      quantity: item.quantity
+      quantity: item.quantity,
+      status: item.status // Include item-level status
     })),
     // If specific item, show its price. Otherwise show total.
     totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
@@ -668,7 +658,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     orderId: booking.orderId,
     paymentDetails: booking.paymentDetails || null,
     paymentStatus: booking.paymentStatus,
-    status: statusMap[booking.status] || 'Upcoming',
+    status: booking.status,
     date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
     time: booking.scheduledTime || '',
     address: {
@@ -941,7 +931,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
           paymentId: booking.paymentId,
           orderId: booking.orderId,
           paymentDetails: booking.paymentDetails || null,
-          status: booking.status,
+
           paymentStatus: booking.paymentStatus,
           notes: booking.notes,
           createdAt: booking.createdAt,
@@ -1223,6 +1213,7 @@ export const assignServicePartner = asyncHandler(async (req: Request, res: Respo
     orderItem.status = 'assigned';
   }
   await orderItem.save();
+  await syncBookingStatus(booking._id);
 
   // Get updated order item with populated partner
   const updatedOrderItem = await OrderItem.findById(orderItem._id)

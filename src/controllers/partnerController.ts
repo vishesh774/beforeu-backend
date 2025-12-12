@@ -5,6 +5,8 @@ import OrderItem from '../models/OrderItem';
 import Booking from '../models/Booking';
 import { AppError } from '../middleware/errorHandler';
 import { generateToken } from '../utils/generateToken';
+import { syncBookingStatus } from '../services/bookingService';
+import { BookingStatus } from '../constants/bookingStatus';
 
 // @desc    Login partner
 // @route   POST /api/partners/auth/login
@@ -140,9 +142,10 @@ export const updateBookingStatus = async (req: Request, res: Response, next: Nex
 
         // Validate transition
         // Simply updating status for EnRoute / Reached
-        if (['en_route', 'reached'].includes(status)) {
+        if ([BookingStatus.EN_ROUTE, BookingStatus.REACHED].includes(status)) {
             item.status = status as any;
             await item.save();
+            await syncBookingStatus(item.bookingId);
         } else {
             return next(new AppError('Invalid status update via this endpoint. Use OTP endpoints for Start/Complete.', 400));
         }
@@ -174,7 +177,7 @@ export const verifyStartJobOtp = async (req: Request, res: Response, next: NextF
             return next(new AppError('Item not found', 404));
         }
 
-        if (item.status !== 'reached') {
+        if (item.status !== BookingStatus.REACHED) {
             return next(new AppError('Must be at location (Reached) to start job', 400));
         }
 
@@ -183,12 +186,13 @@ export const verifyStartJobOtp = async (req: Request, res: Response, next: NextF
             return next(new AppError('Invalid Start OTP', 400));
         }
 
-        item.status = 'in_progress';
+        item.status = BookingStatus.IN_PROGRESS;
         await item.save();
+        await syncBookingStatus(item.bookingId);
 
         res.status(200).json({
             success: true,
-            data: { status: 'in_progress' }
+            data: { status: BookingStatus.IN_PROGRESS }
         });
 
     } catch (error) {
@@ -211,7 +215,7 @@ export const verifyEndJobOtp = async (req: Request, res: Response, next: NextFun
             return next(new AppError('Item not found', 404));
         }
 
-        if (item.status !== 'in_progress') {
+        if (item.status !== BookingStatus.IN_PROGRESS) {
             return next(new AppError('Job must be in progress to complete it', 400));
         }
 
@@ -220,12 +224,13 @@ export const verifyEndJobOtp = async (req: Request, res: Response, next: NextFun
             return next(new AppError('Invalid End OTP', 400));
         }
 
-        item.status = 'completed';
+        item.status = BookingStatus.COMPLETED;
         await item.save();
+        await syncBookingStatus(item.bookingId);
 
         res.status(200).json({
             success: true,
-            data: { status: 'completed' }
+            data: { status: BookingStatus.COMPLETED }
         });
 
     } catch (error) {

@@ -2,7 +2,9 @@ import Service from '../models/Service';
 import ServicePartner from '../models/ServicePartner';
 import ServiceRegion from '../models/ServiceRegion';
 import OrderItem from '../models/OrderItem';
+import Booking from '../models/Booking';
 import { isPointInPolygon } from '../utils/pointInPolygon';
+import { BookingStatus } from '../constants/bookingStatus';
 
 /**
  * Helper function to check if a service partner is available at a given time
@@ -66,6 +68,60 @@ export function isPartnerAvailableAtTime(
 
     // Check if scheduled time is within availability window
     return scheduledMinutes >= startMinutes && scheduledMinutes <= endMinutes;
+}
+
+/**
+ * Helper function to synchronize Booking status based on OrderItems
+ */
+export async function syncBookingStatus(bookingId: string | any): Promise<void> {
+    try {
+        const items = await OrderItem.find({ bookingId });
+
+        if (items.length === 0) return;
+
+        let newStatus = BookingStatus.PENDING;
+        const statuses = items.map(i => i.status);
+
+        // Check priorities for active states
+        if (statuses.some(s => s === BookingStatus.IN_PROGRESS)) {
+            newStatus = BookingStatus.IN_PROGRESS;
+        } else if (statuses.some(s => s === BookingStatus.REACHED)) {
+            newStatus = BookingStatus.REACHED;
+        } else if (statuses.some(s => s === BookingStatus.EN_ROUTE)) {
+            newStatus = BookingStatus.EN_ROUTE;
+        } else if (statuses.some(s => s === BookingStatus.ASSIGNED)) {
+            newStatus = BookingStatus.ASSIGNED;
+        } else if (statuses.some(s => s === BookingStatus.CONFIRMED)) {
+            newStatus = BookingStatus.CONFIRMED;
+        } else {
+            // Check for termination states
+            const allTerminated = items.every(i =>
+                [BookingStatus.COMPLETED, BookingStatus.CANCELLED, BookingStatus.REFUNDED, BookingStatus.REFUND_INITIATED].includes(i.status as any)
+            );
+
+            if (allTerminated) {
+                if (statuses.every(s => s === BookingStatus.CANCELLED)) {
+                    newStatus = BookingStatus.CANCELLED;
+                } else if (statuses.every(s => s === BookingStatus.REFUNDED)) {
+                    newStatus = BookingStatus.REFUNDED;
+                } else if (statuses.every(s => s === BookingStatus.REFUND_INITIATED)) {
+                    newStatus = BookingStatus.REFUND_INITIATED;
+                } else {
+                    // Mixed termination or all completed
+                    newStatus = BookingStatus.COMPLETED;
+                }
+            } else {
+                // Default fallback
+                newStatus = BookingStatus.PENDING;
+            }
+        }
+
+        await Booking.findByIdAndUpdate(bookingId, { status: newStatus });
+        console.log(`[syncBookingStatus] Updated Booking ${bookingId} status to ${newStatus}`);
+
+    } catch (error) {
+        console.error('[syncBookingStatus] Error syncing status:', error);
+    }
 }
 
 /**
@@ -154,7 +210,7 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                 // Assign partner to this specific order item
                 await OrderItem.findByIdAndUpdate(item._id, {
                     assignedPartnerId: assignedPartner._id,
-                    status: item.status === 'pending' ? 'assigned' : item.status
+                    status: item.status === BookingStatus.PENDING ? BookingStatus.ASSIGNED : item.status
                 });
                 console.log(`[autoAssignServicePartner] Assigned partner ${assignedPartner.name} to item ${item._id} (${service.name})`);
             } else {
@@ -166,4 +222,7 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
             // Continue to next item
         }
     }
+
+    // Sync booking status after assignments
+    await syncBookingStatus(booking._id);
 }
