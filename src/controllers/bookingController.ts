@@ -13,6 +13,7 @@ import Address from '../models/Address';
 import User from '../models/User';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import ServicePartner from '../models/ServicePartner';
+import ServiceLocation from '../models/ServiceLocation';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus } from '../services/bookingService';
 import { BookingStatus } from '../constants/bookingStatus';
@@ -597,7 +598,8 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   // Get order items
   const items = await OrderItem.find({ bookingId: booking._id })
     .populate('serviceId', 'name icon')
-    .populate('serviceVariantId', 'name description icon');
+    .populate('serviceVariantId', 'name description icon')
+    .populate('assignedServiceLocationId', 'name address contactNumber');
 
   // Filter for specific item if requested
   let displayItems = items;
@@ -668,7 +670,14 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
       creditCost: item.creditValue,
       icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
       quantity: item.quantity,
-      status: item.status // Include item-level status
+      status: item.status, // Include item-level status
+      customerVisitRequired: item.customerVisitRequired,
+      assignedServiceLocation: item.assignedServiceLocationId ? {
+        id: (item.assignedServiceLocationId as any)._id,
+        name: (item.assignedServiceLocationId as any).name,
+        address: (item.assignedServiceLocationId as any).address,
+        contactNumber: (item.assignedServiceLocationId as any).contactNumber
+      } : null
     })),
     // If specific item, show its price. Otherwise show total.
     totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
@@ -1010,7 +1019,8 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
   const items = await OrderItem.find({ bookingId: booking._id })
     .populate('serviceId', 'name icon')
     .populate('serviceVariantId', 'name icon')
-    .populate('assignedPartnerId', 'name phone email');
+    .populate('assignedPartnerId', 'name phone email')
+    .populate('assignedServiceLocationId', 'name address contactNumber');
 
   // If a specific item index was requested, filter for it
   let displayItems = items;
@@ -1044,6 +1054,13 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
         name: (item.assignedPartnerId as any).name,
         phone: (item.assignedPartnerId as any).phone,
         email: (item.assignedPartnerId as any).email
+      } : null,
+      customerVisitRequired: item.customerVisitRequired,
+      assignedServiceLocation: item.assignedServiceLocationId ? {
+        id: (item.assignedServiceLocationId as any)._id,
+        name: (item.assignedServiceLocationId as any).name,
+        address: (item.assignedServiceLocationId as any).address,
+        contactNumber: (item.assignedServiceLocationId as any).contactNumber
       } : null
     })),
     address: booking.address,
@@ -1458,5 +1475,65 @@ export const cancelBooking = asyncHandler(async (req: AuthRequest, res: Response
   res.status(200).json({
     success: true,
     data: { booking }
+  });
+});
+
+// @desc    Assign a service location to a booking item
+// @route   POST /api/admin/bookings/:bookingId/items/:itemId/assign-location
+// @access  Private/Admin
+export const assignServiceLocation = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { bookingId, itemId } = req.params;
+  const { locationId } = req.body;
+  const currentUserName = (req.user as any)?.name || 'Admin';
+
+  if (!locationId) {
+    return next(new AppError('Location ID is required', 400));
+  }
+
+  // 1. Verify Booking
+  const booking = await Booking.findOne({ bookingId });
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // 2. Verify Order Item
+  const orderItem = await OrderItem.findOne({
+    _id: itemId,
+    bookingId: booking._id
+  });
+
+  if (!orderItem) {
+    return next(new AppError('Order item not found for this booking', 404));
+  }
+
+  // 3. Verify Customer Visit Required
+  if (!orderItem.customerVisitRequired) {
+    return next(new AppError('This service does not require a customer visit', 400));
+  }
+
+  // 4. Verify Service Location exists
+  const location = await ServiceLocation.findById(locationId);
+  if (!location) {
+    return next(new AppError('Service location not found', 404));
+  }
+
+  // 5. Assign Location & Log
+  orderItem.assignedServiceLocationId = new mongoose.Types.ObjectId(locationId);
+  await orderItem.save();
+
+  booking.actionLog.push({
+    action: 'ASSIGN_LOCATION',
+    performedBy: currentUserName,
+    timestamp: new Date(),
+    details: `Assigned location: ${location.name} to item: ${orderItem.variantName}`
+  });
+  await booking.save();
+
+  res.status(200).json({
+    success: true,
+    data: {
+      orderItem,
+      message: 'Service location assigned successfully'
+    }
   });
 });

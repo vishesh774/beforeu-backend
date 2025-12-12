@@ -14,6 +14,7 @@ export interface IOrderItem extends Document {
   estimatedTimeMinutes: number;
   customerVisitRequired: boolean; // Whether customer visit is required for this service variant
   assignedPartnerId?: mongoose.Types.ObjectId; // Service partner assigned to this item
+  assignedServiceLocationId?: mongoose.Types.ObjectId; // Service location assigned to this item
   startJobOtp?: string;
   endJobOtp?: string;
   status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
@@ -83,6 +84,11 @@ const OrderItemSchema = new Schema<IOrderItem>(
     assignedPartnerId: {
       type: Schema.Types.ObjectId,
       ref: 'ServicePartner',
+      default: null
+    },
+    assignedServiceLocationId: {
+      type: Schema.Types.ObjectId,
+      ref: 'ServiceLocation',
       default: null
     },
     startJobOtp: {

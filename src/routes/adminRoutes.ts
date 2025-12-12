@@ -34,7 +34,8 @@ import {
   getEligibleServicePartners,
   assignServicePartner,
   rescheduleBooking,
-  cancelBooking
+  cancelBooking,
+  assignServiceLocation
 } from '../controllers/bookingController';
 import {
   getAllPolicies,
@@ -146,6 +147,7 @@ router.get('/bookings/:id/eligible-partners', getEligibleServicePartners);
 router.post('/bookings/:id/assign-partner', assignServicePartner);
 router.post('/bookings/:id/reschedule', rescheduleBooking);
 router.post('/bookings/:id/cancel', cancelBooking);
+router.post('/bookings/:bookingId/items/:itemId/assign-location', assignServiceLocation);
 router.patch('/bookings/:bookingId/items/:itemId/status', updateOrderItemStatus);
 
 // Refund & Cancellation Policy routes
