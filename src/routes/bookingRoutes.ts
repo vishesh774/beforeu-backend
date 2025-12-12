@@ -1,5 +1,5 @@
 import express from 'express';
-import { getAllServices, getServicesByLocation, getSubServicesByServiceId, createBooking, getUserBookings, getUserBookingById } from '../controllers/bookingController';
+import { getAllServices, getServicesByLocation, getSubServicesByServiceId, createBooking, getUserBookings, getUserBookingById, rescheduleBooking, cancelBooking } from '../controllers/bookingController';
 import { protect } from '../middleware/auth';
 
 const router = express.Router();
@@ -14,6 +14,8 @@ router.get('/services/:serviceId/sub-services', getSubServicesByServiceId);
 router.get('/bookings/:bookingId', protect, getUserBookingById);
 router.post('/bookings', protect, createBooking);
 router.get('/bookings', protect, getUserBookings);
+router.post('/bookings/:id/reschedule', protect, rescheduleBooking); // Using :id to match controller param
+router.post('/bookings/:id/cancel', protect, cancelBooking); // Using :id to match controller param
 
 export default router;
 
