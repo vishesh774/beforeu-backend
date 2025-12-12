@@ -32,7 +32,9 @@ import {
   getBookingById,
   updateOrderItemStatus,
   getEligibleServicePartners,
-  assignServicePartner
+  assignServicePartner,
+  rescheduleBooking,
+  cancelBooking
 } from '../controllers/bookingController';
 import {
   getAllPolicies,
@@ -117,6 +119,21 @@ router.post('/service-partners', createServicePartner);
 router.put('/service-partners/:id', updateServicePartner);
 router.patch('/service-partners/:id/toggle-status', toggleServicePartnerStatus);
 
+// Service Location routes
+import {
+  createServiceLocation,
+  getAllServiceLocations,
+  getServiceLocationById,
+  updateServiceLocation,
+  toggleServiceLocationStatus
+} from '../controllers/serviceLocationController';
+
+router.post('/service-locations', createServiceLocation);
+router.get('/service-locations', getAllServiceLocations);
+router.get('/service-locations/:id', getServiceLocationById);
+router.put('/service-locations/:id', updateServiceLocation);
+router.patch('/service-locations/:id/toggle-status', toggleServiceLocationStatus);
+
 // Customer management routes
 router.get('/customers', getAllCustomers);
 router.get('/customers/:id', getCustomer);
@@ -127,6 +144,8 @@ router.get('/bookings', getAllBookings);
 router.get('/bookings/:id', getBookingById);
 router.get('/bookings/:id/eligible-partners', getEligibleServicePartners);
 router.post('/bookings/:id/assign-partner', assignServicePartner);
+router.post('/bookings/:id/reschedule', rescheduleBooking);
+router.post('/bookings/:id/cancel', cancelBooking);
 router.patch('/bookings/:bookingId/items/:itemId/status', updateOrderItemStatus);
 
 // Refund & Cancellation Policy routes

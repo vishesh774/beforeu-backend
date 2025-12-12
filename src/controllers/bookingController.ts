@@ -1062,7 +1062,11 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     paymentStatus: booking.paymentStatus,
     notes: booking.notes,
     createdAt: booking.createdAt,
-    updatedAt: booking.updatedAt
+    updatedAt: booking.updatedAt,
+    actionLog: booking.actionLog,
+    cancellationReason: booking.cancellationReason,
+    refundAmount: booking.refundAmount,
+    rescheduleCount: booking.rescheduleCount
   };
 
   res.status(200).json({
@@ -1336,3 +1340,123 @@ export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Resp
   });
 });
 
+// @desc    Reschedule a booking
+// @route   POST /api/admin/bookings/:id/reschedule
+// @access  Private/Admin
+export const rescheduleBooking = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { id } = req.params; // bookingId
+  // performedBy from body or fallback to current user
+  const { scheduledDate, scheduledTime, performedBy } = req.body;
+  const currentUserName = (req.user as any)?.name || 'Admin';
+
+  const booking = await Booking.findOne({ bookingId: id });
+
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // Check status - can only reschedule if not IN_PROGRESS or beyond
+  // Logic: Can reschedule if PENDING or CONFIRMED or ASSIGNED or EN_ROUTE or REACHED?
+  // User req: "before the status is marked as InProgress"
+  const restrictedStatuses = [
+    BookingStatus.IN_PROGRESS,
+    BookingStatus.COMPLETED,
+    BookingStatus.CANCELLED,
+    BookingStatus.REFUNDED,
+    BookingStatus.REFUND_INITIATED
+  ];
+
+  if (restrictedStatuses.includes(booking.status as BookingStatus)) {
+    return next(new AppError(`Cannot reschedule booking in ${booking.status} status`, 400));
+  }
+
+  const oldDate = booking.scheduledDate ? new Date(booking.scheduledDate).toLocaleDateString() : 'ASAP';
+  const oldTime = booking.scheduledTime || 'ASAP';
+
+  booking.scheduledDate = new Date(scheduledDate);
+  booking.scheduledTime = scheduledTime;
+  // If it was ASAP, switch to SCHEDULED
+  booking.bookingType = 'SCHEDULED';
+  booking.rescheduleCount = (booking.rescheduleCount || 0) + 1;
+
+  booking.actionLog.push({
+    action: 'RESCHEDULE',
+    performedBy: performedBy || currentUserName,
+    timestamp: new Date(),
+    details: `Rescheduled from ${oldDate} ${oldTime} to ${new Date(scheduledDate).toLocaleDateString()} ${scheduledTime}`
+  });
+
+  await booking.save();
+
+  res.status(200).json({
+    success: true,
+    data: { booking }
+  });
+});
+
+// @desc    Cancel a booking
+// @route   POST /api/admin/bookings/:id/cancel
+// @access  Private/Admin
+export const cancelBooking = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { id } = req.params; // bookingId
+  const { reason, performedBy } = req.body;
+  const currentUserName = (req.user as any)?.name || 'Admin';
+
+  const booking = await Booking.findOne({ bookingId: id });
+
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // Check status - "only until status is marked as Arrived"
+  // Assuming 'REACHED' means Arrived.
+  // Allowed: PENDING, CONFIRMED, ASSIGNED, EN_ROUTE
+  // Not Allowed: REACHED, IN_PROGRESS, COMPLETED, CANCELLED, REFUNDED
+
+  const restrictedStatuses = [
+    BookingStatus.REACHED,
+    BookingStatus.IN_PROGRESS,
+    BookingStatus.COMPLETED,
+    BookingStatus.CANCELLED,
+    BookingStatus.REFUNDED,
+    BookingStatus.REFUND_INITIATED
+  ];
+
+  if (restrictedStatuses.includes(booking.status as BookingStatus)) {
+    return next(new AppError(`Cannot cancel booking in ${booking.status} status`, 400));
+  }
+
+  booking.status = BookingStatus.CANCELLED;
+  booking.cancellationReason = reason;
+  booking.refundAmount = booking.totalAmount; // Full refund
+
+  // If paid, mark as refund initiated or refunded depending on flow. 
+  // For now, let's mark logic:
+  // If paid, we DO NOT automatically mark as refunded. Refund is a separate action.
+  // The user explicitly requested: "Order Item cancellation and payment refund are 2 different functions."
+  /* 
+  if (booking.paymentStatus === 'paid') {
+     // Removed automatic refund status update
+  } 
+  */
+
+  booking.actionLog.push({
+    action: 'CANCEL',
+    performedBy: performedBy || currentUserName,
+    timestamp: new Date(),
+    details: `Cancelled. Reason: ${reason}`
+  });
+
+  await booking.save();
+
+  // Also cancel related OrderItems
+  await OrderItem.updateMany(
+    { bookingId: booking._id },
+    { $set: { status: BookingStatus.CANCELLED } }
+  );
+
+  res.status(200).json({
+    success: true,
+    data: { booking }
+  });
+});

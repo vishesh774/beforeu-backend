@@ -28,6 +28,15 @@ export interface IBooking extends Document {
     value: number;
     amount: number;
   }>; // Breakdown of checkout fields applied
+  rescheduleCount: number;
+  refundAmount: number;
+  cancellationReason?: string;
+  actionLog: Array<{
+    action: string;
+    performedBy: string;
+    timestamp: Date;
+    details?: string;
+  }>;
   status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
   paymentStatus: 'pending' | 'paid' | 'refunded';
   paymentId?: string; // Razorpay payment ID
@@ -142,6 +151,27 @@ const BookingSchema = new Schema<IBooking>(
         amount: { type: Number, required: true }
       }],
       default: undefined
+    },
+    rescheduleCount: {
+      type: Number,
+      default: 0
+    },
+    refundAmount: {
+      type: Number,
+      default: 0
+    },
+    cancellationReason: {
+      type: String,
+      trim: true
+    },
+    actionLog: {
+      type: [{
+        action: { type: String, required: true },
+        performedBy: { type: String, required: true }, // Username or 'System' or 'User'
+        timestamp: { type: Date, default: Date.now },
+        details: { type: String }
+      }],
+      default: []
     },
 
 
