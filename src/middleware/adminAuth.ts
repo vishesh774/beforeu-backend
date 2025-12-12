@@ -21,10 +21,12 @@ export const requireAdmin = async (
   next: NextFunction
 ): Promise<void> => {
   // First check authentication
-  await protect(req as AuthRequest, res, async () => {
+  await protect(req as AuthRequest, res, async (err?: any) => {
+    if (err) return next(err);
+
     try {
       const authReq = req as AuthRequest;
-      
+
       if (!authReq.user) {
         return next(new AppError('Not authorized to access this route', 401));
       }

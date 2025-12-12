@@ -9,6 +9,7 @@ import adminRoutes from './routes/adminRoutes';
 import bookingRoutes from './routes/bookingRoutes';
 import paymentRoutes from './routes/paymentRoutes';
 import partnerRoutes from './routes/partnerRoutes';
+import sosRoutes from './routes/sosRoutes';
 import configRoutes from './routes/configRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
@@ -108,6 +109,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api', bookingRoutes);
 app.use('/api', paymentRoutes);
 app.use('/api/partners', partnerRoutes);
+app.use('/api/sos', sosRoutes);
 app.use('/api', configRoutes);
 console.log('✅ Routes registered successfully');
 
@@ -139,6 +141,9 @@ console.log('🔍 Verifying route registration...');
 const routes = app._router?.stack || [];
 console.log(`✅ Found ${routes.length} middleware/routes registered`);
 
+import http from 'http';
+import { socketService } from './services/socketService';
+
 // Connect to database and then start server
 const startServer = async () => {
   try {
@@ -146,7 +151,15 @@ const startServer = async () => {
     await connectDB();
     console.log('✅ Database connection established');
 
-    const server = app.listen(PORT, '0.0.0.0', () => {
+    // Create HTTP server wrapping the Express app
+    const server = http.createServer(app);
+
+    // Initialize Socket Service
+    console.log('🔄 Initializing Socket Service...');
+    socketService.initialize(server, allowedOrigins);
+
+    server.listen(PORT, '0.0.0.0', () => {
+      // Get the bound address info
       const address = server.address();
       const actualPort = address && typeof address === 'object' ? address.port : PORT;
 
@@ -157,17 +170,22 @@ const startServer = async () => {
       console.log(`📍 Actual PORT: ${actualPort}`);
       console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
       console.log(`📍 Database: Connected`);
+      console.log(`📍 Socket.io: Active (Room: 'admin_room')`);
 
       if (actualPort !== PORT) {
         console.warn(`⚠️  WARNING: Port mismatch! Expected ${PORT}, but listening on ${actualPort}`);
       }
-    }).on('error', (err: any) => {
+    });
+
+    // Handle server errors related to starting (like EADDRINUSE)
+    server.on('error', (err: any) => {
       console.error('❌ Server failed to start:', err);
       if (err.code === 'EADDRINUSE') {
         console.error(`❌ Port ${PORT} is already in use. Kill the process or use a different port.`);
       }
       process.exit(1);
     });
+
   } catch (error) {
     console.error('❌ Failed to connect to database:', error);
     console.error('❌ Server cannot start without database connection');
