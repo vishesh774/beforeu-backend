@@ -10,7 +10,7 @@ import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
 // @route   POST /api/auth/send-otp
 // @access  Public
 export const sendOTP = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { phone } = req.body;
+  const { phone, role } = req.body;
 
   if (!phone) {
     return next(new AppError('Phone number is required', 400));
@@ -20,6 +20,20 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response, next: Ne
   const phoneRegex = /^\+?[1-9]\d{1,14}$/;
   if (!phoneRegex.test(phone)) {
     return next(new AppError('Invalid phone number format', 400));
+  }
+
+  // If role is specified (e.g., 'ServicePartner'), enforce that user must exist and have that role
+  if (role) {
+    const user = await User.findOne({ phone });
+
+    if (!user) {
+      // If enforcing role, user MUST exist. 
+      return next(new AppError('User is not registered', 404));
+    }
+
+    if (user.role !== role) {
+      return next(new AppError('User is not authorized to access this application', 403));
+    }
   }
 
   const result = await createAndSendOTP(phone);
@@ -41,7 +55,7 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response, next: Ne
 // @route   POST /api/auth/verify-otp
 // @access  Public
 export const verifyOTPController = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { phone, otp } = req.body;
+  const { phone, otp, role } = req.body;
 
   if (!phone || !otp) {
     return next(new AppError('Phone number and OTP are required', 400));
@@ -68,6 +82,11 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
       }
     });
     return;
+  }
+
+  // Enforce role check if provided
+  if (role && user.role !== role) {
+    return next(new AppError('User is not authorized to access this application', 403));
   }
 
   // User exists - aggregate user data
@@ -145,19 +164,19 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
       password: 'temp-password-' + Date.now(), // Temporary password, user can set later
       role: 'customer' // Default role for OTP-based signups
     };
-    
+
     // Only add email if provided and not empty
     if (email && email.trim()) {
       userData.email = email.trim().toLowerCase();
     }
     // Don't set email at all if not provided (undefined) - this allows sparse unique index to work
-    
+
     const newUser = await User.create(userData);
     if (!newUser) {
       return next(new AppError('Failed to create user', 500));
     }
     user = newUser;
-    
+
     // Initialize user-related records
     await initializeUserRecords(user._id);
   }

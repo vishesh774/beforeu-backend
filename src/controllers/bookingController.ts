@@ -9,7 +9,8 @@ import ServiceRegion from '../models/ServiceRegion';
 import Booking from '../models/Booking';
 import OrderItem from '../models/OrderItem';
 import Address from '../models/Address';
-// import UserCredits from '../models/UserCredits';
+import UserCredits from '../models/UserCredits';
+import UserPlan from '../models/UserPlan';
 import User from '../models/User';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import ServicePartner from '../models/ServicePartner';
@@ -236,10 +237,16 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   let itemTotal = 0;
   let totalOriginalAmount = 0;
 
-  // TODO: Re-enable after testing
+  // Implement credit logic
   // Get user credits
-  // const userCredits = await UserCredits.findOne({ userId: userIdObj });
-  // const availableCredits = userCredits?.credits || 0;
+  const userCredits = await UserCredits.findOne({ userId: userIdObj });
+  let availableCredits = userCredits?.credits || 0;
+
+  // Check if user has an active plan
+  const userPlan = await UserPlan.findOne({ userId: userIdObj, activePlanId: { $ne: null } });
+  const hasActivePlan = !!userPlan;
+
+  let creditsUsed = 0;
 
   // Validate and process each item
   const orderItems = [];
@@ -259,15 +266,28 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     }
 
     const quantity = parseInt(item.quantity) || 1;
-    const variantTotal = variant.finalPrice * quantity;
+    let variantTotal = variant.finalPrice * quantity;
     const variantOriginalTotal = variant.originalPrice * quantity;
-    // const itemCredits = variant.includedInSubscription ? variant.creditValue * quantity : 0;
+    const itemCreditCost = variant.creditValue * quantity;
+    let paidWithCredits = false;
 
-    // TODO: Re-enable credit check after testing
-    // Check if user has enough credits for subscription items
-    // if (variant.includedInSubscription && creditsUsed + itemCredits > availableCredits) {
-    //   return next(new AppError('Insufficient credits for this booking', 400));
-    // }
+    // Check if user has enough credits and item is included in subscription/plan capable
+    // Assuming 'includedInSubscription' flag or just creditValue presence + active plan implies eligibility
+    // The requirement says: "If we have a subscription plan available for a customer... need to show the credit value... amount for this should be calculated as 0"
+    if (hasActivePlan && variant.creditValue > 0) {
+      if (availableCredits >= itemCreditCost) {
+        // Use Credits
+        creditsUsed += itemCreditCost;
+        availableCredits -= itemCreditCost; // Deduct from local tracking
+        variantTotal = 0; // Price becomes 0
+        paidWithCredits = true;
+      } else {
+        // Not enough credits, charge full price? Or partial? 
+        // Usually full price if not enough credits for the whole item or quantity.
+        // Requirement says "credit value must be reduced... show remaining".
+        // If not enough credits, we just fall back to regular price.
+      }
+    }
 
     itemTotal += variantTotal;
     totalOriginalAmount += variantOriginalTotal;
@@ -278,9 +298,12 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
       serviceName: service.name,
       variantName: variant.name,
       quantity,
-      finalPrice: variant.finalPrice,
+      finalPrice: paidWithCredits ? 0 : variant.finalPrice, // If paid with credits, price is 0
+      originalPrice: variant.originalPrice, // Keep original price for record
+      creditValue: variant.creditValue, // Store single unit credit value
       estimatedTimeMinutes: variant.estimatedTimeMinutes,
-      customerVisitRequired: variant.customerVisitRequired !== undefined ? variant.customerVisitRequired : false
+      customerVisitRequired: variant.customerVisitRequired !== undefined ? variant.customerVisitRequired : false,
+      paidWithCredits
     });
   }
 
@@ -325,6 +348,16 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   });
   const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
+  // Determine status based on total amount
+  let initialStatus: any = 'pending';
+  let initialPaymentStatus = 'pending';
+
+  // If total is 0 (fully paid by credits or free), auto-confirm
+  if (calculationResult.total === 0) {
+    initialStatus = 'confirmed';
+    initialPaymentStatus = 'paid';
+  }
+
   // Create booking
   const booking = await Booking.create({
     userId: userIdObj,
@@ -342,9 +375,10 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     itemTotal,
     totalAmount: calculationResult.total,
     totalOriginalAmount,
+    creditsUsed, // Add creditsUsed to booking document
     paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
-    status: 'pending',
-    paymentStatus: 'pending',
+    status: initialStatus,
+    paymentStatus: initialPaymentStatus,
     notes: notes || undefined
   });
 
@@ -358,18 +392,20 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
 
   // Auto-assign service partner if available
   try {
-    await autoAssignServicePartner(booking, createdOrderItems);
+    // Only auto-assign if confirmed (which it is if total is 0, otherwise it waits for payment webhook)
+    if (initialStatus === 'confirmed') {
+      await autoAssignServicePartner(booking, createdOrderItems);
+    }
   } catch (error) {
     // Log error but don't fail the booking
     console.error('[createBooking] Error auto-assigning partner:', error);
   }
 
-  // TODO: Re-enable credit deduction after testing
   // Deduct credits if used
-  // if (creditsUsed > 0 && userCredits) {
-  //   userCredits.credits = Math.max(0, userCredits.credits - creditsUsed);
-  //   await userCredits.save();
-  // }
+  if (creditsUsed > 0 && userCredits) {
+    userCredits.credits = Math.max(0, userCredits.credits - creditsUsed);
+    await userCredits.save();
+  }
 
   // Get order items with details
   const orderItemsWithDetails = await OrderItem.find({ bookingId: booking._id })
@@ -390,14 +426,16 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
           price: item.finalPrice,
           originalPrice: item.originalPrice,
           creditCost: item.creditValue,
-          quantity: item.quantity
+          quantity: item.quantity,
+          paidWithCredits: item.paidWithCredits
         })),
         totalAmount: booking.totalAmount,
         status: booking.status,
         date: booking.scheduledDate || booking.createdAt.toISOString(),
         time: booking.scheduledTime || '',
         address: booking.address,
-        type: booking.bookingType
+        type: booking.bookingType,
+        paymentStatus: booking.paymentStatus
       }
     }
   });
@@ -504,7 +542,8 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
           type: booking.bookingType === 'ASAP' ? 'ASAP' : 'SCHEDULED',
           paymentStatus: booking.paymentStatus,
           createdAt: booking.createdAt.toISOString(),
-          updatedAt: booking.updatedAt.toISOString()
+          updatedAt: booking.updatedAt.toISOString(),
+          creditsUsed: booking.creditsUsed || 0 // Include creditsUsed in list view
         }));
       }
 
@@ -705,6 +744,14 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     // If specific item, show its price. Otherwise show total.
     totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
     itemTotal: specificItem ? specificItem.originalPrice : (booking.itemTotal || booking.totalAmount),
+    creditsUsed: specificItem ? 0 : (booking.creditsUsed || 0), // Include creditsUsed (only for full booking, assume item split doesn't track per-item credits used easily yet for display, or just show global if logical)
+    // Actually specificItem.creditValue * quantity is what was used for that item.
+    // But let's just expose booking level creditsUsed for now or mapped if possible.
+    // For specific item view, if paidWithCredits is true, we know creditValue * quantity was used.
+    // detailed logic:
+    // creditsUsed: specificItem ? (specificItem.paidWithCredits ? specificItem.creditValue * specificItem.quantity : 0) : (booking.creditsUsed || 0),
+    // simpler:
+    // creditsUsed: booking.creditsUsed || 0,
     paymentBreakdown: booking.paymentBreakdown || [],
     paymentId: booking.paymentId,
     orderId: booking.orderId,

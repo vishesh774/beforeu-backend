@@ -6,6 +6,7 @@ import Plan from '../models/Plan';
 import User from '../models/User';
 import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
+import PlanTransaction from '../models/PlanTransaction';
 import mongoose from 'mongoose';
 
 // @desc    Get all plans
@@ -13,7 +14,7 @@ import mongoose from 'mongoose';
 // @access  Private/Admin (for admin) or Public (for customers - only active plans)
 export const getAllPlans = asyncHandler(async (req: Request, res: Response) => {
   const { planStatus } = req.query;
-  
+
   const filter: any = {};
   // If accessed via /api/auth/plans (customer route), only show active plans
   const isCustomerRoute = req.path.includes('/auth/plans');
@@ -36,6 +37,113 @@ export const getAllPlans = asyncHandler(async (req: Request, res: Response) => {
     success: true,
     data: {
       plans: transformedPlans
+    }
+  });
+});
+
+
+// @desc    Get all user plans (users who purchased plans)
+// @route   GET /api/admin/user-plans
+// @access  Private/Admin
+export const getUserPlans = asyncHandler(async (_: Request, res: Response) => {
+  // Aggregate to get user plan details with user and plan info
+  const userPlans = await UserPlan.aggregate([
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'user'
+      }
+    },
+    { $unwind: '$user' },
+    {
+      $lookup: {
+        from: 'plans',
+        let: { planId: { $toObjectId: '$activePlanId' } }, // Convert string ID to ObjectId for lookup if needed, or if stored as string in UserPlan and ObjectId in Plans, need conversion
+        // UserPlan.activePlanId is defined as String in schema in step 3122. Plan._id is ObjectId.
+        // So we need to convert activePlanId string to ObjectId for matching.
+        pipeline: [
+          { $match: { $expr: { $eq: ['$_id', '$$planId'] } } }
+        ],
+        as: 'plan'
+      }
+    },
+    { $unwind: { path: '$plan', preserveNullAndEmptyArrays: true } },
+    {
+      $lookup: {
+        from: 'usercredits',
+        localField: 'userId',
+        foreignField: 'userId',
+        as: 'credits'
+      }
+    },
+    { $unwind: { path: '$credits', preserveNullAndEmptyArrays: true } },
+    {
+      $project: {
+        _id: 1,
+        userId: '$user._id',
+        userName: '$user.name',
+        userEmail: '$user.email',
+        userPhone: '$user.phone',
+        planName: { $ifNull: ['$plan.planName', 'Unknown Plan'] },
+        planId: '$activePlanId',
+        status: {
+          $cond: { if: { $ifNull: ['$plan', false] }, then: 'Active', else: 'Expired/Unknown' }
+        }, // Simplistic status logic for now
+        totalCredits: { $ifNull: ['$plan.totalCredits', 0] },
+        remainingCredits: { $ifNull: ['$credits.credits', 0] },
+        purchaseDate: '$updatedAt', // UserPlan updatedAt is essentially the last purchase/activation time
+        createdAt: '$createdAt'
+      }
+    },
+    { $sort: { purchaseDate: -1 } }
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      userPlans
+    }
+  });
+});
+
+// @desc    Get all plan transactions
+// @route   GET /api/admin/plan-transactions
+// @access  Private/Admin
+export const getPlanTransactions = asyncHandler(async (_: Request, res: Response) => {
+  const transactions = await PlanTransaction.aggregate([
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'user'
+      }
+    },
+    { $unwind: '$user' },
+    {
+      $project: {
+        _id: 1,
+        userId: '$user._id',
+        userName: '$user.name',
+        userEmail: '$user.email',
+        userPhone: '$user.phone',
+        planName: '$planSnapshot.name',
+        amount: '$amount',
+        credits: '$credits',
+        status: '$status',
+        orderId: '$orderId',
+        purchaseDate: '$createdAt'
+      }
+    },
+    { $sort: { purchaseDate: -1 } }
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      transactions
     }
   });
 });
@@ -102,8 +210,8 @@ export const createPlan = asyncHandler(async (req: Request, res: Response, next:
   }
 
   // Validate services array
-  const validServices = services.filter((service: any) => 
-    service.serviceId && 
+  const validServices = services.filter((service: any) =>
+    service.serviceId &&
     service.subServiceId &&
     service.subServiceName &&
     (service.totalCountLimit === undefined || (typeof service.totalCountLimit === 'number' && service.totalCountLimit >= 0))
@@ -230,8 +338,8 @@ export const updatePlan = asyncHandler(async (req: Request, res: Response, next:
     }
 
     // Validate services array
-    const validServices = services.filter((service: any) => 
-      service.serviceId && 
+    const validServices = services.filter((service: any) =>
+      service.serviceId &&
       service.subServiceId &&
       service.subServiceName &&
       (service.totalCountLimit === undefined || (typeof service.totalCountLimit === 'number' && service.totalCountLimit >= 0))
@@ -332,7 +440,7 @@ export const purchasePlan = asyncHandler(async (req: AuthRequest, res: Response,
   let userCredits = await UserCredits.findOne({ userId });
   const currentCredits = userCredits?.credits || 0;
   const newCredits = currentCredits + plan.totalCredits;
-  
+
   if (!userCredits) {
     userCredits = await UserCredits.create({
       userId,
@@ -345,6 +453,22 @@ export const purchasePlan = asyncHandler(async (req: AuthRequest, res: Response,
 
   // Generate order ID (simple format: ORDER-{timestamp}-{userId})
   const orderId = `ORDER-${Date.now()}-${userIdString.slice(-6)}`;
+
+  // Create Plan Transaction Record
+  await PlanTransaction.create({
+    userId,
+    planId: plan._id,
+    orderId,
+    amount: plan.finalPrice,
+    credits: plan.totalCredits,
+    planSnapshot: {
+      name: plan.planName,
+      originalPrice: plan.originalPrice,
+      finalPrice: plan.finalPrice
+    },
+    status: 'completed', // Assuming immediate completion for now as per current flow
+    // paymentId: ... // If we had payment integration here
+  });
 
   res.status(200).json({
     success: true,

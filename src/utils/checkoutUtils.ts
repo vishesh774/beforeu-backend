@@ -42,7 +42,7 @@ export async function calculateCheckoutTotal(
     if (field.chargeType === 'fixed') {
       amount = field.value;
     } else if (field.chargeType === 'percentage') {
-      amount = (runningTotal * field.value) / 100;
+      amount = (itemTotal * field.value) / 100;
     }
 
     // Add to breakdown
