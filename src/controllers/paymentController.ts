@@ -242,10 +242,21 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       try {
         const plan = await Plan.findById(planData.planId);
         if (plan) {
+          // Generate transaction ID
+          const now = new Date();
+          const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+          const count = await PlanTransaction.countDocuments({
+            transactionId: {
+              $regex: new RegExp(`^PTX-${dateStr}-`)
+            }
+          });
+          const transactionId = `PTX-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+
           await PlanTransaction.create({
             userId,
             planId: plan._id,
             orderId: order.id,
+            transactionId,
             amount: amount / 100, // Store in Rupees (req.body.amount is in paise)
             credits: plan.totalCredits,
             planSnapshot: {
