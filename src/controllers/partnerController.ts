@@ -102,9 +102,29 @@ export const getPartnerBookings = async (req: Request, res: Response, next: Next
                 serviceName: item.serviceName,
                 customerName: 'Customer', // TODO: Fetch user name from User model if needed
                 date: booking.scheduledDate || 'ASAP', // Return raw date or string for frontend to format
-                time: booking.scheduledTime,
                 address: booking.address.fullAddress,
-                coordinates: booking.address.coordinates ? [booking.address.coordinates.lng, booking.address.coordinates.lat] : null,
+                coordinates: (() => {
+                    const coords = booking.address?.coordinates;
+                    console.log(`[getPartnerBookings] Booking ${booking.bookingId} raw coords:`, coords);
+
+                    if (!coords) return null;
+
+                    // Handle Array format [lng, lat]
+                    if (Array.isArray(coords) && coords.length === 2) {
+                        return coords;
+                    }
+
+                    // Handle Object format { lat, lng } or { latitude, longitude }
+                    const c = coords as any;
+                    const lat = c.lat || c.latitude;
+                    const lng = c.lng || c.longitude;
+
+                    if (typeof lat === 'number' && typeof lng === 'number') {
+                        return [lng, lat];
+                    }
+
+                    return null;
+                })(),
                 status: item.status,
                 notes: booking.notes,
                 variantName: item.variantName, // Added variant name
