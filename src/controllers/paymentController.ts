@@ -15,7 +15,6 @@ import Plan from '../models/Plan';
 import PlanTransaction from '../models/PlanTransaction';
 import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
-import PlanTransaction from '../models/PlanTransaction';
 import User from '../models/User';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import { autoAssignServicePartner } from '../services/bookingService';
