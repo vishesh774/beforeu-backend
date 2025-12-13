@@ -992,56 +992,69 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
         .populate('assignedPartnerId', 'name phone');
 
       if (items.length > 0) {
-        return items.map((item, index) => ({
-          id: `${booking.bookingId}-${index + 1}`,
-          bookingId: booking.bookingId,
-          customer: {
-            id: (booking.userId as any)._id.toString(),
-            name: (booking.userId as any).name,
-            email: (booking.userId as any).email,
-            phone: (booking.userId as any).phone
-          },
-          items: [{
-            id: item._id.toString(),
-            serviceId: (item.serviceId as any).id || (item.serviceId as any)?._id?.toString() || item.serviceId.toString(),
-            serviceName: item.serviceName,
-            variantId: (item.serviceVariantId as any).id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId.toString(),
-            variantName: item.variantName,
-            // Populate icon for admin panel as well
-            icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
-            quantity: item.quantity,
-            originalPrice: item.originalPrice,
-            finalPrice: item.finalPrice,
-            creditValue: item.creditValue,
-            estimatedTimeMinutes: item.estimatedTimeMinutes,
-            assignedPartner: item.assignedPartnerId ? {
-              id: (item.assignedPartnerId as any)._id.toString(),
-              name: (item.assignedPartnerId as any).name,
-              phone: (item.assignedPartnerId as any).phone
-            } : null,
-            status: item.status
-          }],
-          address: booking.address,
-          bookingType: booking.bookingType,
-          scheduledDate: booking.scheduledDate,
-          scheduledTime: booking.scheduledTime,
-          // Show per-item price as total for this row
-          totalAmount: item.finalPrice,
-          itemTotal: item.originalPrice,
-          totalOriginalAmount: booking.totalOriginalAmount, // Keep original total for reference if needed
-          paymentBreakdown: booking.paymentBreakdown || [],
-          paymentId: booking.paymentId,
-          orderId: booking.orderId,
-          paymentDetails: booking.paymentDetails || null,
+        return items.map((item, index) => {
+          // Safeguard against missing user
+          const user = booking.userId as any;
+          const userDetails = user ? {
+            id: user._id.toString(),
+            name: user.name || 'Unknown',
+            email: user.email || '',
+            phone: user.phone || ''
+          } : {
+            id: 'deleted',
+            name: 'Deleted User',
+            email: '',
+            phone: ''
+          };
 
-          paymentStatus: booking.paymentStatus,
-          status: item.status,
-          notes: booking.notes,
-          createdAt: booking.createdAt,
-          updatedAt: booking.updatedAt
-        }));
+          // Safeguard against missing service/variant
+          const serviceId = (item.serviceId as any)?.id || (item.serviceId as any)?._id?.toString() || item.serviceId?.toString() || 'unknown';
+          const variantId = (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId?.toString() || 'unknown';
+
+          return {
+            id: `${booking.bookingId}-${index + 1}`,
+            bookingId: booking.bookingId,
+            customer: userDetails,
+            items: [{
+              id: item._id.toString(),
+              serviceId,
+              serviceName: item.serviceName,
+              variantId,
+              variantName: item.variantName,
+              // Populate icon for admin panel as well
+              icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
+              quantity: item.quantity,
+              originalPrice: item.originalPrice,
+              finalPrice: item.finalPrice,
+              creditValue: item.creditValue,
+              estimatedTimeMinutes: item.estimatedTimeMinutes,
+              assignedPartner: item.assignedPartnerId ? {
+                id: (item.assignedPartnerId as any)._id.toString(),
+                name: (item.assignedPartnerId as any).name,
+                phone: (item.assignedPartnerId as any).phone
+              } : undefined,
+              status: item.status
+            }],
+            address: booking.address,
+            bookingType: booking.bookingType,
+            scheduledDate: booking.scheduledDate,
+            scheduledTime: booking.scheduledTime,
+            // Show per-item price as total for this row
+            totalAmount: item.finalPrice,
+            itemTotal: item.originalPrice,
+            totalOriginalAmount: booking.totalOriginalAmount, // Keep original total for reference if needed
+            paymentBreakdown: booking.paymentBreakdown || [],
+            paymentId: booking.paymentId,
+            orderId: booking.orderId,
+            paymentDetails: booking.paymentDetails || null,
+            paymentStatus: booking.paymentStatus,
+            status: item.status,
+            notes: booking.notes,
+            createdAt: booking.createdAt,
+            updatedAt: booking.updatedAt
+          };
+        });
       }
-
       return [];
     })
   );

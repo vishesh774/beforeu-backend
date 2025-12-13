@@ -658,11 +658,22 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       }
 
       // Deduct credits if used
+      // Deduct credits if used
       if (creditsUsed > 0) {
         const userCredits = await UserCredits.findOne({ userId: userIdObj });
         if (userCredits) {
-          // Update user cache if needed
-          // User model doesn't have credits field, so no need to update currentUser
+          if (userCredits.credits >= creditsUsed) {
+            userCredits.credits -= creditsUsed;
+            await userCredits.save();
+            console.log(`[PaymentController] Deducted ${creditsUsed} credits from user ${userIdObj}`);
+          } else {
+            console.error(`[PaymentController] Critical: User ${userIdObj} has insufficient credits ${userCredits.credits} for deduction of ${creditsUsed}`);
+            // Force deduction anyway to match transaction, or log for reconciliation
+            userCredits.credits = Math.max(0, userCredits.credits - creditsUsed);
+            await userCredits.save();
+          }
+        } else {
+          console.error(`[PaymentController] Critical: UserCredits record not found for user ${userIdObj} during deduction`);
         }
       } // Transform booking for response
       const transformedBooking = {
