@@ -16,7 +16,7 @@ import ServicePartner from '../models/ServicePartner';
 import ServiceLocation from '../models/ServiceLocation';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus } from '../services/bookingService';
-import { BookingStatus } from '../constants/bookingStatus';
+import { BookingStatus, COMPLETED_BOOKING_STATUSES } from '../constants/bookingStatus';
 
 // @desc    Get all active services (without location requirement)
 // @route   GET /api/services/all
@@ -604,7 +604,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
 
   // Filter for specific item if requested
   let displayItems = items;
-  let specificItem = null;
+  let specificItem: any = null;
 
   if (itemIndex >= 0) {
     if (itemIndex < items.length) {
@@ -630,11 +630,15 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     const currentItemWithPartner = itemsWithPartner.find(item => item._id.toString() === specificItem._id.toString());
     if (currentItemWithPartner && currentItemWithPartner.assignedPartnerId) {
       const partner = currentItemWithPartner.assignedPartnerId as any;
+      // Determine status for hiding contact info
+      const statusToCheck = specificItem ? specificItem.status : booking.status;
+      const isCompleted = COMPLETED_BOOKING_STATUSES.includes(statusToCheck as any);
+
       assignedProfessional = {
         id: partner._id.toString(),
         name: partner.name || '',
-        phone: partner.phone,
-        email: partner.email,
+        phone: isCompleted ? '' : partner.phone,
+        email: isCompleted ? '' : partner.email,
         rating: partner.rating || 4.5,
         jobsCompleted: partner.jobsCompleted || 0
       };
@@ -645,11 +649,15 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     const itemWithPartner = itemsWithPartner.find(item => item.assignedPartnerId);
     if (itemWithPartner && itemWithPartner.assignedPartnerId) {
       const partner = itemWithPartner.assignedPartnerId as any;
+      // Determine status for hiding contact info (fallback to global booking status if logic ambiguous, but use item status if available)
+      const statusToCheck = specificItem ? specificItem.status : booking.status;
+      const isCompleted = COMPLETED_BOOKING_STATUSES.includes(statusToCheck as any);
+
       assignedProfessional = {
         id: partner._id.toString(),
         name: partner.name || 'Professional',
-        phone: partner.phone,
-        email: partner.email,
+        phone: isCompleted ? '' : partner.phone,
+        email: isCompleted ? '' : partner.email,
         rating: partner.rating || 4.5,
         jobsCompleted: partner.jobsCompleted || 0
       };
@@ -657,6 +665,19 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   }
 
 
+  // Determine OTPs to return
+  let finalStartOtp = bookingOTP;
+  let finalEndOtp: string | undefined = undefined;
+
+  if (specificItem) {
+    if (specificItem.startJobOtp) finalStartOtp = specificItem.startJobOtp;
+    if (specificItem.endJobOtp) finalEndOtp = specificItem.endJobOtp;
+  } else if (items.length > 0) {
+    // If no specific item requested but items exist, use first item's OTPs for backward compatibility?
+    // Or just keep the booking-level OTP for start.
+    if (items[0].startJobOtp) finalStartOtp = items[0].startJobOtp;
+    if (items[0].endJobOtp) finalEndOtp = items[0].endJobOtp;
+  }
 
   const bookingData = {
     id: requestedId, // Return the requested ID (virtual or real)
@@ -689,20 +710,23 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     orderId: booking.orderId,
     paymentDetails: booking.paymentDetails || null,
     paymentStatus: booking.paymentStatus,
-    status: booking.status,
+    status: specificItem ? specificItem.status : booking.status,
     date: booking.scheduledDate ? booking.scheduledDate.toISOString() : booking.createdAt.toISOString(),
     time: booking.scheduledTime || '',
     address: {
-      id: booking.addressId,
+      id: booking.addressId, // Fixed: use addressId string
       label: booking.address.label,
       fullAddress: booking.address.fullAddress,
       area: booking.address.area,
       coordinates: booking.address.coordinates,
-      isDefault: false // Not stored in booking, default to false
+      isDefault: false
     },
     type: booking.bookingType,
-    otp: bookingOTP, // Include OTP in response
-    professional: assignedProfessional, // Include assigned professional if any
+    rescheduleCount: booking.rescheduleCount,
+    otp: finalStartOtp, // Use determined Start OTP
+    endOtp: finalEndOtp, // Use determined End OTP
+    professional: assignedProfessional,
+    notes: booking.notes,
     createdAt: booking.createdAt,
     updatedAt: booking.updatedAt
   };

@@ -115,6 +115,16 @@ const OrderItemSchema = new Schema<IOrderItem>(
   }
 );
 
+// Generate OTPs before saving
+OrderItemSchema.pre('save', async function () {
+  if (!this.startJobOtp) {
+    this.startJobOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  }
+  if (!this.endJobOtp) {
+    this.endJobOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  }
+});
+
 // Indexes
 OrderItemSchema.index({ bookingId: 1 });
 OrderItemSchema.index({ assignedPartnerId: 1 });
