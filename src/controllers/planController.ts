@@ -124,6 +124,15 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
     },
     { $unwind: '$user' },
     {
+      $lookup: {
+        from: 'usercredits',
+        localField: 'userId',
+        foreignField: 'userId',
+        as: 'userCredits'
+      }
+    },
+    { $unwind: { path: '$userCredits', preserveNullAndEmptyArrays: true } },
+    {
       $project: {
         _id: 1,
         userId: '$user._id',
@@ -133,8 +142,10 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
         planName: '$planSnapshot.name',
         amount: '$amount',
         credits: '$credits',
+        remainingCredits: { $ifNull: ['$userCredits.credits', 0] },
         status: '$status',
         orderId: '$orderId',
+        transactionId: '$transactionId',
         purchaseDate: '$createdAt'
       }
     },
@@ -163,7 +174,16 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
         as: 'plan'
       }
     },
-    { $unwind: { path: '$plan', preserveNullAndEmptyArrays: true } },
+    { $unwind: { path: '$plan', preserveNullAndEmptyArrays: false } }, // STRICTLY require a plan to exist
+    {
+      $lookup: {
+        from: 'usercredits',
+        localField: 'userId',
+        foreignField: 'userId',
+        as: 'credits'
+      }
+    },
+    { $unwind: { path: '$credits', preserveNullAndEmptyArrays: true } },
     {
       $project: {
         _id: { $concat: ['LEGACY-', { $toString: '$_id' }] }, // Mock ID for routing
@@ -174,6 +194,7 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
         planName: { $ifNull: ['$plan.planName', 'Unknown Plan'] },
         amount: { $ifNull: ['$plan.finalPrice', 0] },
         credits: { $ifNull: ['$plan.totalCredits', 0] },
+        remainingCredits: { $ifNull: ['$credits.credits', 0] }, // Use previously looked up credits
         status: { $cond: { if: { $ifNull: ['$plan', false] }, then: 'completed', else: 'failed' } }, // Map active to completed
         orderId: { $concat: ['LEGACY-', { $toString: '$_id' }] }, // Mock Order ID
         purchaseDate: '$updatedAt'
@@ -181,10 +202,17 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
     }
   ]);
 
-  // Filter out active plans that might already have a corresponding real transaction (based on rough timestamp matching or userId?)
-  // For now, since PlanTransaction is NEW, we can assume no overlap for old data.
-  // We can merge them.
-  const allTransactions = [...transactions, ...activePlans];
+  // Filter out active plans that already have a corresponding real transaction
+  // This prevents duplicates for users who purchased via the new flow (which creates both a transaction and updates UserPlan)
+  const uniqueActivePlans = activePlans.filter(ap => {
+    const hasTransaction = transactions.some(tx =>
+      tx.userId.toString() === ap.userId.toString() &&
+      (tx.planName === ap.planName || (tx.planSnapshot && tx.planSnapshot.name === ap.planName))
+    );
+    return !hasTransaction;
+  });
+
+  const allTransactions = [...transactions, ...uniqueActivePlans];
 
   // Sort combined results by date desc
   allTransactions.sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());

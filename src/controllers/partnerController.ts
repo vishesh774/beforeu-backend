@@ -101,12 +101,13 @@ export const getPartnerBookings = async (req: Request, res: Response, next: Next
                 serviceId: item.serviceId,
                 serviceName: item.serviceName,
                 customerName: 'Customer', // TODO: Fetch user name from User model if needed
-                date: booking.scheduledDate ? new Date(booking.scheduledDate).toLocaleDateString() : 'ASAP',
+                date: booking.scheduledDate || 'ASAP', // Return raw date or string for frontend to format
                 time: booking.scheduledTime,
                 address: booking.address.fullAddress,
                 coordinates: booking.address.coordinates,
                 status: item.status,
                 notes: booking.notes,
+                variantName: item.variantName, // Added variant name
                 otpStart: item.startJobOtp, // Should only be visible if reached/started? No, security risk.
                 // Actually, partner needs to verify the OTP given by user.
                 // The backend verifies it. Partner app shouldn't likely receive the correct OTP to display.

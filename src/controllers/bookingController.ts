@@ -733,6 +733,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
       quantity: item.quantity,
       status: item.status, // Include item-level status
       customerVisitRequired: item.customerVisitRequired,
+      paidWithCredits: item.paidWithCredits, // Include paidWithCredits flag
       assignedServiceLocation: item.assignedServiceLocationId ? {
         id: (item.assignedServiceLocationId as any)._id,
         name: (item.assignedServiceLocationId as any).name,
@@ -807,16 +808,25 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
   const filter: any = {};
 
   if (statusFilter) {
-    const statusMap: Record<string, string> = {
+    const statusMap: Record<string, string | string[]> = {
       'pending': 'pending',
       'confirmed': 'confirmed',
       'in_progress': 'in_progress',
+      'ongoing': ['assigned', 'en_route', 'reached', 'in_progress'], // Ongoing includes all active states
       'completed': 'completed',
       'cancelled': 'cancelled',
       'refund_initiated': 'refund_initiated',
+      'refunded': 'refunded',
+      'en_route': 'en_route' // Add en_route explicit support
     };
+
     if (statusMap[statusFilter]) {
-      filter.status = statusMap[statusFilter];
+      const mappedStatus = statusMap[statusFilter];
+      if (Array.isArray(mappedStatus)) {
+        filter.status = { $in: mappedStatus };
+      } else {
+        filter.status = mappedStatus;
+      }
     }
   }
 
