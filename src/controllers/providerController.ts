@@ -246,3 +246,33 @@ export const endJob = asyncHandler(async (req: AuthRequest, res: Response, next:
         data: { job }
     });
 });
+
+// @desc    Get provider profile
+// @route   GET /api/provider/profile
+// @access  Private (ServicePartner)
+export const getProfile = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) {
+        return next(new AppError('Not authenticated', 401));
+    }
+
+    const partner = await ServicePartner.findOne({ phone: user.phone });
+    if (!partner) {
+        return next(new AppError('Service partner profile not found', 404));
+    }
+
+    res.status(200).json({
+        success: true,
+        data: {
+            partner: {
+                id: partner._id,
+                name: partner.name,
+                phone: partner.phone,
+                email: partner.email,
+                isActive: partner.isActive,
+                services: partner.services,
+                availability: partner.availability
+            }
+        }
+    });
+});

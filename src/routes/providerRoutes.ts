@@ -5,7 +5,8 @@ import {
     getJobDetails,
     updateJobStatus,
     startJob,
-    endJob
+    endJob,
+    getProfile
 } from '../controllers/providerController';
 
 const router = express.Router();
@@ -20,5 +21,6 @@ router.get('/jobs/:id', getJobDetails);
 router.put('/jobs/:id/status', updateJobStatus);
 router.post('/jobs/:id/start', startJob);
 router.post('/jobs/:id/end', endJob);
+router.get('/profile', getProfile);
 
 export default router;
