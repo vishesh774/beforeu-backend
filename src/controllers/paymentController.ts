@@ -246,7 +246,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
             userId,
             planId: plan._id,
             orderId: order.id,
-            amount: amount, // Amount in paise, consistent with schema use
+            amount: amount / 100, // Store in Rupees (req.body.amount is in paise)
             credits: plan.totalCredits,
             planSnapshot: {
               name: plan.planName,
@@ -437,15 +437,19 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       });
 
       // Create or Update PlanTransaction Record
+      console.log(`[PaymentController] Looking for existing PlanTransaction with orderId: ${razorpay_order_id}`);
       const existingTx = await PlanTransaction.findOne({ orderId: razorpay_order_id });
+      console.log(`[PaymentController] Existing transaction found: ${!!existingTx}`, existingTx ? `ID: ${existingTx._id}, Status: ${existingTx.status}` : '');
 
       if (existingTx) {
         existingTx.status = 'completed';
+        existingTx.amount = calculationResult.total; // Ensure amount is in Rupees
         existingTx.paymentId = razorpay_payment_id;
         existingTx.paymentDetails = paymentDetails || undefined;
         existingTx.paymentBreakdown = paymentBreakdown.length > 0 ? paymentBreakdown : undefined;
         await existingTx.save();
       } else {
+        console.log('[PaymentController] Fallback: Creating new completed PlanTransaction (pending not found)');
         // Fallback: Create if not exists (e.g. for legacy testing or if createOrder failed to create it)
         await PlanTransaction.create({
           userId: userIdObj,
@@ -501,6 +505,15 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       let creditsUsed = 0;
 
       const orderItems = [];
+      // Fetch latest user data for credit calculation
+      // Credits are stored in UserCredits model, not User model
+      const userCreditsRecord = await UserCredits.findOne({ userId: userIdObj });
+      let availableCredits = userCreditsRecord?.credits || 0;
+
+      // Active plan is stored in UserPlan model, not User model
+      const userPlanRecord = await UserPlan.findOne({ userId: userIdObj });
+      const hasActivePlan = !!userPlanRecord?.activePlanId;
+
       for (const item of bookingData.items) {
         const variant = await ServiceVariant.findOne({ id: item.variantId }).populate('serviceId');
         if (!variant) {
@@ -519,9 +532,22 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         const quantity = parseInt(item.quantity) || 1;
         const itemTotal = variant.finalPrice * quantity;
         const itemOriginalTotal = variant.originalPrice * quantity;
-        const itemCredits = variant.includedInSubscription ? variant.creditValue * quantity : 0;
 
-        totalAmount += itemTotal;
+        // Check for credit coverage
+        let itemCredits = 0;
+        let itemPriceForTotal = itemTotal;
+
+        if (hasActivePlan && variant.includedInSubscription && variant.creditValue > 0) {
+          const requiredCredits = variant.creditValue * quantity;
+          if (availableCredits >= requiredCredits) {
+            // Fully covered by credits
+            itemCredits = requiredCredits;
+            itemPriceForTotal = 0; // No cash cost
+            availableCredits -= requiredCredits; // Deduct from local tracker
+          }
+        }
+
+        totalAmount += itemPriceForTotal;
         totalOriginalAmount += itemOriginalTotal;
         creditsUsed += itemCredits;
 
@@ -635,15 +661,10 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       if (creditsUsed > 0) {
         const userCredits = await UserCredits.findOne({ userId: userIdObj });
         if (userCredits) {
-          userCredits.credits -= creditsUsed;
-          if (userCredits.credits < 0) {
-            userCredits.credits = 0;
-          }
-          await userCredits.save();
+          // Update user cache if needed
+          // User model doesn't have credits field, so no need to update currentUser
         }
-      }
-
-      // Transform booking for response
+      } // Transform booking for response
       const transformedBooking = {
         id: booking._id.toString(),
         bookingId: booking.bookingId,
