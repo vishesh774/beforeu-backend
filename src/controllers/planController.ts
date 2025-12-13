@@ -166,7 +166,7 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
     { $unwind: { path: '$plan', preserveNullAndEmptyArrays: true } },
     {
       $project: {
-        _id: 1, // UserPlan ID
+        _id: { $concat: ['LEGACY-', { $toString: '$_id' }] }, // Mock ID for routing
         userId: '$user._id',
         userName: '$user.name',
         userEmail: '$user.email',
@@ -249,6 +249,11 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
     // Normalize fields to match frontend expectation if needed (already matches schema)
     transaction.planName = planTx.planSnapshot.name;
     transaction.purchaseDate = planTx.createdAt;
+
+    // Ensure payment details are exposed
+    transaction.paymentDetails = planTx.paymentDetails;
+    transaction.paymentBreakdown = planTx.paymentBreakdown;
+
     userId = planTx.userId;
   }
 

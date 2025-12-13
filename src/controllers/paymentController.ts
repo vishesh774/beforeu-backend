@@ -12,8 +12,10 @@ import Address from '../models/Address';
 import Service from '../models/Service';
 import ServiceVariant from '../models/ServiceVariant';
 import Plan from '../models/Plan';
+import PlanTransaction from '../models/PlanTransaction';
 import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
+import PlanTransaction from '../models/PlanTransaction';
 import User from '../models/User';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import { autoAssignServicePartner } from '../services/bookingService';
@@ -235,6 +237,32 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         keyId: process.env.RAZORPAY_KEY_ID,
       },
     });
+
+    // Create Pending Plan Transaction if this is a plan purchase
+    if (planData && planData.planId) {
+      try {
+        const plan = await Plan.findById(planData.planId);
+        if (plan) {
+          await PlanTransaction.create({
+            userId,
+            planId: plan._id,
+            orderId: order.id,
+            amount: amount, // Amount in paise, consistent with schema use
+            credits: plan.totalCredits,
+            planSnapshot: {
+              name: plan.planName,
+              originalPrice: plan.originalPrice,
+              finalPrice: plan.finalPrice
+            },
+            status: 'pending'
+          });
+          console.log('[PaymentController] Created pending PlanTransaction for order:', order.id);
+        }
+      } catch (txError) {
+        console.error('[PaymentController] Error creating pending PlanTransaction:', txError);
+        // Don't fail the response, just log the error
+      }
+    }
   } catch (error: any) {
     console.error('[PaymentController] Unexpected error creating Razorpay order:', error);
     console.error('[PaymentController] Error stack:', error.stack);
@@ -395,6 +423,47 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       } else {
         userCredits.credits += plan.totalCredits;
         await userCredits.save();
+      }
+
+      // Prepare payment breakdown for storage (similar to booking)
+      const paymentBreakdown = calculationResult.breakdown.map(item => {
+        const field = checkoutFields.find(f => f.fieldName === item.fieldName);
+        return {
+          fieldName: item.fieldName,
+          fieldDisplayName: item.fieldDisplayName,
+          chargeType: field?.chargeType || 'fixed',
+          value: field?.value || 0,
+          amount: item.amount
+        };
+      });
+
+      // Create or Update PlanTransaction Record
+      const existingTx = await PlanTransaction.findOne({ orderId: razorpay_order_id });
+
+      if (existingTx) {
+        existingTx.status = 'completed';
+        existingTx.paymentId = razorpay_payment_id;
+        existingTx.paymentDetails = paymentDetails || undefined;
+        existingTx.paymentBreakdown = paymentBreakdown.length > 0 ? paymentBreakdown : undefined;
+        await existingTx.save();
+      } else {
+        // Fallback: Create if not exists (e.g. for legacy testing or if createOrder failed to create it)
+        await PlanTransaction.create({
+          userId: userIdObj,
+          planId: plan._id,
+          orderId: razorpay_order_id,
+          amount: calculationResult.total,
+          credits: plan.totalCredits,
+          planSnapshot: {
+            name: plan.planName,
+            originalPrice: plan.originalPrice,
+            finalPrice: plan.finalPrice
+          },
+          status: 'completed',
+          paymentId: razorpay_payment_id,
+          paymentDetails: paymentDetails || undefined,
+          paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined
+        });
       }
 
       // Fetch updated user

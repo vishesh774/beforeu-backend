@@ -13,6 +13,8 @@ export interface IPlanTransaction extends Document {
     };
     status: 'pending' | 'completed' | 'failed';
     paymentId?: string;
+    paymentDetails?: any;
+    paymentBreakdown?: any[];
     createdAt: Date;
     updatedAt: Date;
 }
@@ -57,6 +59,12 @@ const PlanTransactionSchema = new Schema<IPlanTransaction>(
         },
         paymentId: {
             type: String
+        },
+        paymentDetails: {
+            type: Schema.Types.Mixed
+        },
+        paymentBreakdown: {
+            type: [Schema.Types.Mixed]
         }
     },
     {
