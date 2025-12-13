@@ -558,10 +558,11 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           variantName: variant.name,
           quantity,
           originalPrice: variant.originalPrice,
-          finalPrice: variant.finalPrice,
+          finalPrice: itemPriceForTotal > 0 ? variant.finalPrice : 0, // Set to 0 if fully paid by credits
           creditValue: variant.creditValue,
           estimatedTimeMinutes: variant.estimatedTimeMinutes,
           customerVisitRequired: variant.customerVisitRequired !== undefined ? variant.customerVisitRequired : false,
+          paidWithCredits: itemCredits > 0 && itemPriceForTotal === 0,
         });
       }
 
