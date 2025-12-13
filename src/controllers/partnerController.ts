@@ -104,7 +104,7 @@ export const getPartnerBookings = async (req: Request, res: Response, next: Next
                 date: booking.scheduledDate || 'ASAP', // Return raw date or string for frontend to format
                 time: booking.scheduledTime,
                 address: booking.address.fullAddress,
-                coordinates: booking.address.coordinates,
+                coordinates: booking.address.coordinates ? [booking.address.coordinates.lng, booking.address.coordinates.lat] : null,
                 status: item.status,
                 notes: booking.notes,
                 variantName: item.variantName, // Added variant name
