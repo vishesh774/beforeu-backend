@@ -76,7 +76,8 @@ import {
   updatePlan,
   deletePlan,
   getUserPlans,
-  getPlanTransactions
+  getPlanTransactions,
+  getPlanTransactionDetails
 } from '../controllers/planController';
 import {
   getAllCheckoutFields,
@@ -192,6 +193,7 @@ router.put('/plans/:id', updatePlan);
 router.delete('/plans/:id', deletePlan);
 router.get('/user-plans', getUserPlans);
 router.get('/plan-transactions', getPlanTransactions);
+router.get('/plan-transactions/:id', getPlanTransactionDetails);
 
 // Checkout Config routes
 router.get('/checkout-config', getAllCheckoutFields);

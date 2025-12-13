@@ -7,6 +7,7 @@ import User from '../models/User';
 import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import PlanTransaction from '../models/PlanTransaction';
+import Booking from '../models/Booking';
 import mongoose from 'mongoose';
 
 // @desc    Get all plans
@@ -140,10 +141,140 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
     { $sort: { purchaseDate: -1 } }
   ]);
 
+  // Fetch existing active plans to display as "legacy" transactions if they aren't in the transactions table
+  // This ensures we show the "active plan info" the user sees
+  const activePlans = await UserPlan.aggregate([
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'userId',
+        foreignField: '_id',
+        as: 'user'
+      }
+    },
+    { $unwind: '$user' },
+    {
+      $lookup: {
+        from: 'plans',
+        let: { planId: { $toObjectId: '$activePlanId' } },
+        pipeline: [
+          { $match: { $expr: { $eq: ['$_id', '$$planId'] } } }
+        ],
+        as: 'plan'
+      }
+    },
+    { $unwind: { path: '$plan', preserveNullAndEmptyArrays: true } },
+    {
+      $project: {
+        _id: 1, // UserPlan ID
+        userId: '$user._id',
+        userName: '$user.name',
+        userEmail: '$user.email',
+        userPhone: '$user.phone',
+        planName: { $ifNull: ['$plan.planName', 'Unknown Plan'] },
+        amount: { $ifNull: ['$plan.finalPrice', 0] },
+        credits: { $ifNull: ['$plan.totalCredits', 0] },
+        status: { $cond: { if: { $ifNull: ['$plan', false] }, then: 'completed', else: 'failed' } }, // Map active to completed
+        orderId: { $concat: ['LEGACY-', { $toString: '$_id' }] }, // Mock Order ID
+        purchaseDate: '$updatedAt'
+      }
+    }
+  ]);
+
+  // Filter out active plans that might already have a corresponding real transaction (based on rough timestamp matching or userId?)
+  // For now, since PlanTransaction is NEW, we can assume no overlap for old data.
+  // We can merge them.
+  const allTransactions = [...transactions, ...activePlans];
+
+  // Sort combined results by date desc
+  allTransactions.sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
+
+
   res.status(200).json({
     success: true,
     data: {
-      transactions
+      transactions: allTransactions
+    }
+  });
+});
+
+// @desc    Get plan transaction details
+// @route   GET /api/admin/plan-transactions/:id
+// @access  Private/Admin
+export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: Response, next: any) => {
+  const { id } = req.params;
+  let transaction: any = null;
+  let userId: any = null;
+
+  // Check if it's a legacy ID
+  if (id.startsWith('LEGACY-')) {
+    const userPlanId = id.replace('LEGACY-', '');
+    // Fetch from UserPlan
+    const userPlan = await UserPlan.findById(userPlanId);
+    if (!userPlan) {
+      return next(new AppError('Transaction not found', 404));
+    }
+
+    // Fetch related plan details
+    const activePlan = await Plan.findById(userPlan.activePlanId);
+    if (!activePlan) {
+      // Should verify if activePlanId is valid, if not, handle gracefully
+    }
+
+    userId = userPlan.userId;
+
+    // Mock transaction object
+    transaction = {
+      _id: id,
+      userId: userPlan.userId,
+      orderId: id,
+      planName: activePlan?.planName || 'Unknown Plan',
+      amount: activePlan?.finalPrice || 0,
+      credits: activePlan?.totalCredits || 0,
+      status: activePlan ? 'completed' : 'failed',
+      planSnapshot: activePlan ? {
+        name: activePlan.planName,
+        originalPrice: activePlan.originalPrice,
+        finalPrice: activePlan.finalPrice
+      } : {},
+      purchaseDate: userPlan.updatedAt
+    };
+  } else {
+    // Normal Transaction ID
+    const planTx = await PlanTransaction.findById(id);
+    if (!planTx) {
+      return next(new AppError('Transaction not found', 404));
+    }
+    transaction = planTx.toObject();
+    // Normalize fields to match frontend expectation if needed (already matches schema)
+    transaction.planName = planTx.planSnapshot.name;
+    transaction.purchaseDate = planTx.createdAt;
+    userId = planTx.userId;
+  }
+
+  // Fetch User Details
+  const user = await User.findById(userId).select('name email phone');
+
+  // Fetch User Credits (Wallet Balance)
+  const userCredits = await UserCredits.findOne({ userId });
+  const remainingCredits = userCredits?.credits || 0;
+
+  // Fetch Booking History
+  const bookings = await Booking.find({ userId })
+    .sort({ createdAt: -1 })
+    .select('bookingId createdAt totalAmount creditsUsed status paymentStatus items');
+
+  res.status(200).json({
+    success: true,
+    data: {
+      transaction,
+      user,
+      stats: {
+        totalCredits: transaction.credits,
+        remainingCredits,
+        expiryDate: 'Lifetime' // Hardcoded as per requirement
+      },
+      bookings
     }
   });
 });
