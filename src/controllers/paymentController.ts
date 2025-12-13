@@ -627,8 +627,22 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           coordinates: address.coordinates,
         },
         bookingType: bookingData.bookingType,
-        scheduledDate: bookingData.bookingType === 'SCHEDULED' ? new Date(bookingData.scheduledDate) : undefined,
-        scheduledTime: bookingData.bookingType === 'SCHEDULED' ? bookingData.scheduledTime : undefined,
+        scheduledDate: bookingData.bookingType === 'SCHEDULED'
+          ? new Date(bookingData.scheduledDate)
+          : (() => {
+            const d = new Date();
+            d.setMinutes(0, 0, 0);
+            d.setHours(d.getHours() + 1);
+            return d;
+          })(),
+        scheduledTime: bookingData.bookingType === 'SCHEDULED'
+          ? bookingData.scheduledTime
+          : (() => {
+            const d = new Date();
+            d.setMinutes(0, 0, 0);
+            d.setHours(d.getHours() + 1);
+            return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+          })(),
         totalAmount: calculationResult.total, // Final amount including all checkout fields
         itemTotal: totalAmount, // Item total before checkout fields
         totalOriginalAmount,
