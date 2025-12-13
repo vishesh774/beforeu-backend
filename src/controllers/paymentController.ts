@@ -332,29 +332,7 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
     let paymentDetails: any = null;
     try {
       const payment = await razorpayInstance.payments.fetch(razorpay_payment_id);
-      paymentDetails = {
-        method: payment.method || null,
-        bank: payment.bank || null,
-        wallet: payment.wallet || null,
-        vpa: payment.vpa || null,
-        card: payment.card ? {
-          id: payment.card.id || null,
-          last4: payment.card.last4 || null,
-          network: payment.card.network || null,
-          type: payment.card.type || null,
-          issuer: payment.card.issuer || null,
-        } : null,
-        contact: payment.contact || null,
-        email: payment.email || null,
-        fee: payment.fee ? payment.fee / 100 : null, // Convert from paise to rupees
-        tax: payment.tax ? payment.tax / 100 : null, // Convert from paise to rupees
-        international: payment.international || false,
-        captured: payment.captured || false,
-        description: payment.description || null,
-        refundStatus: payment.refund_status || null,
-        amountRefunded: payment.amount_refunded ? payment.amount_refunded / 100 : null, // Convert from paise to rupees
-        createdAt: payment.created_at ? new Date(payment.created_at * 1000) : null, // Convert Unix timestamp to Date
-      };
+      paymentDetails = payment; // Store raw response as requested
     } catch (paymentError: any) {
       console.error('[PaymentController] Error fetching payment details:', paymentError);
       // Continue without payment details if fetch fails

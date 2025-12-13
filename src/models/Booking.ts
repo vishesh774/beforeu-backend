@@ -41,29 +41,7 @@ export interface IBooking extends Document {
   paymentStatus: 'pending' | 'paid' | 'refunded';
   paymentId?: string; // Razorpay payment ID
   orderId?: string; // Razorpay order ID
-  paymentDetails?: {
-    method?: string; // Payment method (card, netbanking, wallet, upi, etc.)
-    bank?: string; // Bank name (for netbanking)
-    wallet?: string; // Wallet name (for wallet payments)
-    vpa?: string; // VPA for UPI payments
-    card?: {
-      id?: string; // Card ID
-      last4?: string; // Last 4 digits
-      network?: string; // Card network (Visa, Mastercard, etc.)
-      type?: string; // Card type (credit, debit)
-      issuer?: string; // Card issuer
-    };
-    contact?: string; // Contact number
-    email?: string; // Email
-    fee?: number; // Payment gateway fee
-    tax?: number; // Tax on payment
-    international?: boolean; // Whether international payment
-    captured?: boolean; // Whether payment is captured
-    description?: string; // Payment description
-    refundStatus?: string; // Refund status if applicable
-    amountRefunded?: number; // Amount refunded
-    createdAt?: Date; // Payment creation timestamp
-  };
+  paymentDetails?: any; // Raw Razorpay response object
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -198,27 +176,8 @@ const BookingSchema = new Schema<IBooking>(
       trim: true
     },
     paymentDetails: {
-      method: { type: String, trim: true },
-      bank: { type: String, trim: true },
-      wallet: { type: String, trim: true },
-      vpa: { type: String, trim: true },
-      card: {
-        id: { type: String, trim: true },
-        last4: { type: String, trim: true },
-        network: { type: String, trim: true },
-        type: { type: String, trim: true },
-        issuer: { type: String, trim: true }
-      },
-      contact: { type: String, trim: true },
-      email: { type: String, trim: true },
-      fee: { type: Number },
-      tax: { type: Number },
-      international: { type: Boolean },
-      captured: { type: Boolean },
-      description: { type: String, trim: true },
-      refundStatus: { type: String, trim: true },
-      amountRefunded: { type: Number },
-      createdAt: { type: Date }
+      type: Schema.Types.Mixed, // Store raw Razorpay response
+      default: {}
     },
     notes: {
       type: String,
