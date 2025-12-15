@@ -5,8 +5,8 @@ import { AuthRequest } from '../middleware/auth';
 
 export const triggerSOS = async (req: AuthRequest, res: Response) => {
     try {
-        const userId = req.user?.id; // Changed from _id to id
-        const { location } = req.body;
+        const userId = req.user?.id;
+        const { location, familyMemberId, serviceId } = req.body;
 
         if (!userId || !location || !location.latitude || !location.longitude) {
             res.status(400).json({ success: false, error: 'User ID and Location are required' });
@@ -22,10 +22,20 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
         if (existingAlert) {
             // Update location of existing alert instead of creating new one
             existingAlert.location = location;
+            // Update other details if provided
+            if (familyMemberId) existingAlert.familyMemberId = familyMemberId;
+            if (serviceId) existingAlert.serviceId = serviceId;
+
             existingAlert.updatedAt = new Date();
             await existingAlert.save();
+
             // Emit update event
-            const populatedAlert = await existingAlert.populate('user', 'name phoneNumber email');
+            const populatedAlert = await existingAlert.populate([
+                { path: 'user', select: 'name phoneNumber email' },
+                { path: 'familyMemberId' },
+                { path: 'serviceId' }
+            ]);
+
             socketService.emitToAdmin('sos:active', populatedAlert);
 
             res.status(200).json({ success: true, data: existingAlert, message: 'Existing SOS updated' });
@@ -36,6 +46,8 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
         const newAlert = new SOSAlert({
             user: userId,
             location,
+            familyMemberId,
+            serviceId,
             status: SOSStatus.TRIGGERED,
             logs: [{
                 action: 'TRIGGERED',
@@ -48,7 +60,11 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
         await newAlert.save();
 
         // Populate user details for the frontend
-        const populatedAlert = await newAlert.populate('user', 'name phoneNumber email');
+        const populatedAlert = await newAlert.populate([
+            { path: 'user', select: 'name phoneNumber email' },
+            { path: 'familyMemberId' },
+            { path: 'serviceId' }
+        ]);
 
         // Emit socket event to admins
         socketService.emitToAdmin('sos:alert', populatedAlert);
@@ -188,5 +204,45 @@ export const getActiveSOS = async (_req: AuthRequest, res: Response) => { // Cha
     } catch (error) {
         console.error('Error fetching active SOS:', error);
         res.status(500).json({ success: false, error: 'Failed to fetch active SOS' });
+    }
+};
+
+// @desc    Get all SOS alerts (History)
+// @route   GET /api/sos/history
+// @access  Private/Admin
+export const getAllSOS = async (req: AuthRequest, res: Response) => {
+    try {
+        const page = parseInt(req.query.page as string) || 1;
+        const limit = parseInt(req.query.limit as string) || 10;
+        const status = req.query.status as string;
+
+        const filter: any = {};
+        if (status && status !== 'all') {
+            filter.status = status;
+        }
+
+        const total = await SOSAlert.countDocuments(filter);
+        const alerts = await SOSAlert.find(filter)
+            .populate('user', 'name phoneNumber email')
+            .populate('resolvedBy', 'name email')
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(limit);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                alerts,
+                pagination: {
+                    page,
+                    limit,
+                    total,
+                    pages: Math.ceil(total / limit)
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching SOS history:', error);
+        res.status(500).json({ success: false, error: 'Failed to fetch SOS history' });
     }
 };

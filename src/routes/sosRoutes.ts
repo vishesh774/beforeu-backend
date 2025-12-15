@@ -6,7 +6,8 @@ import {
     cancelSOS,
     acknowledgeSOS,
     resolveSOS,
-    getActiveSOS
+    getActiveSOS,
+    getAllSOS
 } from '../controllers/sosController';
 
 const router = express.Router();
@@ -17,6 +18,7 @@ router.post('/cancel', protect, cancelSOS);
 
 // Admin Endpoints (Protected by admin auth)
 router.get('/active', requireAdmin, getActiveSOS);
+router.get('/history', requireAdmin, getAllSOS);
 router.post('/:id/acknowledge', requireAdmin, acknowledgeSOS);
 router.post('/:id/resolve', requireAdmin, resolveSOS);
 

@@ -11,7 +11,6 @@ import OrderItem from '../models/OrderItem';
 import Address from '../models/Address';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
-import User from '../models/User';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import ServicePartner from '../models/ServicePartner';
 import ServiceLocation from '../models/ServiceLocation';
@@ -477,7 +476,7 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
         statusValues.push(...statusMap[statusStr]);
       } else {
         // Also support direct backend status values
-        const backendStatuses = ['pending', 'confirmed', 'in_progress', 'completed', 'cancelled', 'inprogress'];
+        const backendStatuses = ['pending', 'confirmed', 'assigned', 'en_route', 'reached', 'in_progress', 'completed', 'cancelled', 'refund_initiated', 'refunded', 'inprogress'];
         if (backendStatuses.includes(statusStr)) {
           statusValues.push(statusStr === 'inprogress' ? 'in_progress' : statusStr);
         }
@@ -787,7 +786,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   });
 });
 
-// @desc    Get all bookings (Admin)
+// @desc    Get all bookings (Admin) - Refactored to query OrderItems first for granularity
 // @route   GET /api/admin/bookings
 // @access  Private/Admin
 export const getAllBookings = asyncHandler(async (req: Request, res: Response) => {
@@ -805,43 +804,77 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
   const customerEmail = req.query.customerEmail as string | undefined;
   const assignedPartner = req.query.assignedPartner as string | undefined;
 
-  const filter: any = {};
+  // 1. Build Match Stage for OrderItem (Primary filters)
+  const orderItemMatch: any = {};
 
   if (statusFilter) {
     const statusMap: Record<string, string | string[]> = {
       'pending': 'pending',
       'confirmed': 'confirmed',
       'in_progress': 'in_progress',
-      'ongoing': ['assigned', 'en_route', 'reached', 'in_progress'], // Ongoing includes all active states
+      'ongoing': ['assigned', 'en_route', 'reached', 'in_progress'],
       'completed': 'completed',
       'cancelled': 'cancelled',
       'refund_initiated': 'refund_initiated',
       'refunded': 'refunded',
-      'en_route': 'en_route' // Add en_route explicit support
+      'en_route': 'en_route',
+      'assigned': 'assigned',
+      'reached': 'reached'
     };
 
     if (statusMap[statusFilter]) {
       const mappedStatus = statusMap[statusFilter];
       if (Array.isArray(mappedStatus)) {
-        filter.status = { $in: mappedStatus };
+        orderItemMatch.status = { $in: mappedStatus };
       } else {
-        filter.status = mappedStatus;
+        orderItemMatch.status = mappedStatus;
       }
     }
   }
 
+  // Partner Filter: Resolve partner names to IDs first
+  if (assignedPartner && assignedPartner.trim()) {
+    const partnerRegex = { $regex: assignedPartner.trim(), $options: 'i' };
+    const matchingPartners = await ServicePartner.find({ name: partnerRegex }).select('_id');
+    const partnerIds = matchingPartners.map(p => p._id);
+    if (partnerIds.length > 0) {
+      orderItemMatch.assignedPartnerId = { $in: partnerIds };
+    } else {
+      // Force empty result if partner name matches nothing
+      orderItemMatch.assignedPartnerId = new mongoose.Types.ObjectId();
+    }
+  }
+
+  // 2. Prepare Booking & Customer Lookups and Filters
+  const pipeline: any[] = [];
+
+  // Match OrderItems first
+  pipeline.push({ $match: orderItemMatch });
+
+  // Lookup Booking
+  pipeline.push({
+    $lookup: {
+      from: 'bookings',
+      localField: 'bookingId',
+      foreignField: '_id',
+      as: 'booking'
+    }
+  });
+  pipeline.push({ $unwind: '$booking' });
+
+  // Filter by Booking fields (paymentStatus, dates)
+  const bookingMatch: any = {};
   if (paymentStatusFilter) {
-    const paymentStatusMap: Record<string, string> = {
+    const paymentMap: Record<string, string> = {
       'pending': 'pending',
       'paid': 'paid',
       'refunded': 'refunded'
     };
-    if (paymentStatusMap[paymentStatusFilter]) {
-      filter.paymentStatus = paymentStatusMap[paymentStatusFilter];
+    if (paymentMap[paymentStatusFilter]) {
+      bookingMatch['booking.paymentStatus'] = paymentMap[paymentStatusFilter];
     }
   }
 
-  // Date range filter (scheduledDate or createdAt)
   if (startDate || endDate) {
     const dateFilter: any = {};
     if (startDate) {
@@ -855,233 +888,173 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
       dateFilter.$lte = end;
     }
 
-    // Filter by scheduledDate if available, otherwise by createdAt
-    // Use $or to match either scheduledDate or createdAt (for ASAP bookings)
-    const dateConditions: any[] = [
-      { scheduledDate: dateFilter }
+    // Support scheduledDate OR createdAt (for ASAP)
+    bookingMatch.$or = [
+      { 'booking.scheduledDate': dateFilter },
+      {
+        $and: [
+          { $or: [{ 'booking.scheduledDate': { $exists: false } }, { 'booking.scheduledDate': null }] },
+          { 'booking.createdAt': dateFilter }
+        ]
+      }
     ];
-
-    // For bookings without scheduledDate (ASAP), use createdAt
-    dateConditions.push({
-      $and: [
-        { $or: [{ scheduledDate: { $exists: false } }, { scheduledDate: null }] },
-        { createdAt: dateFilter }
-      ]
-    });
-
-    // Combine date filter with existing filters using $and
-    if (Object.keys(filter).length > 0) {
-      filter.$and = [
-        ...(filter.$and || []),
-        { $or: dateConditions }
-      ];
-    } else {
-      filter.$or = dateConditions;
-    }
   }
 
-  // Customer filters - combine all customer criteria into one query
-  if (customerName || customerPhone || customerEmail) {
-    const customerQuery: any = {};
-
-    if (customerName && customerName.trim()) {
-      customerQuery.name = { $regex: customerName.trim(), $options: 'i' };
-    }
-    if (customerPhone && customerPhone.trim()) {
-      customerQuery.phone = { $regex: customerPhone.trim(), $options: 'i' };
-    }
-    if (customerEmail && customerEmail.trim()) {
-      customerQuery.email = { $regex: customerEmail.trim(), $options: 'i' };
-    }
-
-    const matchingUsers = await User.find(customerQuery).select('_id');
-    const userIds = matchingUsers.map(u => u._id);
-
-    if (userIds.length === 0) {
-      // No matching users, return empty result
-      filter.userId = { $in: [] };
-    } else {
-      filter.userId = { $in: userIds };
-    }
+  if (Object.keys(bookingMatch).length > 0) {
+    pipeline.push({ $match: bookingMatch });
   }
 
-  // Assigned partner filter
-  let bookingIdsByPartner: mongoose.Types.ObjectId[] | null = null;
-  if (assignedPartner && assignedPartner.trim()) {
-    const partnerRegex = { $regex: assignedPartner.trim(), $options: 'i' };
-
-    // Find service partners matching the name
-    const matchingPartners = await ServicePartner.find({ name: partnerRegex }).select('_id');
-    const partnerIds = matchingPartners.map(p => p._id);
-
-    if (partnerIds.length > 0) {
-      // Find order items with these partner IDs
-      const orderItems = await OrderItem.find({ assignedPartnerId: { $in: partnerIds } }).select('bookingId');
-      bookingIdsByPartner = [...new Set(orderItems.map(item => item.bookingId))];
-    } else {
-      // No matching partners, return empty result
-      bookingIdsByPartner = [];
+  // Lookup Customer (User)
+  pipeline.push({
+    $lookup: {
+      from: 'users',
+      localField: 'booking.userId',
+      foreignField: '_id',
+      as: 'customer'
     }
+  });
+  pipeline.push({ $unwind: { path: '$customer', preserveNullAndEmptyArrays: true } });
+
+  // Filter by Customer fields
+  const customerMatch: any = {};
+  const searchMatch: any = [];
+
+  // Customer specific filters
+  if (customerName && customerName.trim()) {
+    customerMatch['customer.name'] = { $regex: customerName.trim(), $options: 'i' };
+  }
+  if (customerPhone && customerPhone.trim()) {
+    customerMatch['customer.phone'] = { $regex: customerPhone.trim(), $options: 'i' };
+  }
+  if (customerEmail && customerEmail.trim()) {
+    customerMatch['customer.email'] = { $regex: customerEmail.trim(), $options: 'i' };
   }
 
-  // Search by booking ID or customer name (general search)
+  // General Search (Booking ID or Customer Details)
   if (searchQuery && searchQuery.trim()) {
     const escapedQuery = searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const searchRegex = { $regex: escapedQuery, $options: 'i' };
 
-    // Find users matching search
-    const matchingUsers = await User.find({
-      $or: [
-        { name: searchRegex },
-        { phone: searchRegex },
-        { email: searchRegex }
-      ]
-    }).select('_id');
-    const userIds = matchingUsers.map(u => u._id);
-
-    // Find bookings matching booking ID or user IDs
-    const searchFilter: any[] = [
-      { bookingId: searchRegex }
-    ];
-    if (userIds.length > 0) {
-      searchFilter.push({ userId: { $in: userIds } });
-    }
-
-    // Combine with existing $or conditions
-    if (filter.$or) {
-      // If we already have $or from date filter, combine with $and
-      if (filter.$and) {
-        filter.$and.push({ $or: searchFilter });
-      } else {
-        filter.$and = [
-          { $or: filter.$or },
-          { $or: searchFilter }
-        ];
-        delete filter.$or;
-      }
-    } else {
-      filter.$or = searchFilter;
-    }
+    searchMatch.push({ 'booking.bookingId': searchRegex });
+    searchMatch.push({ 'customer.name': searchRegex });
+    searchMatch.push({ 'customer.phone': searchRegex });
+    searchMatch.push({ 'customer.email': searchRegex });
   }
 
-  // Apply assigned partner filter
-  if (bookingIdsByPartner !== null) {
-    if (bookingIdsByPartner.length === 0) {
-      // No matching bookings, return empty result
-      filter._id = { $in: [] };
-    } else {
-      // Convert bookingIds to ObjectIds for comparison
-      const bookingObjectIds = bookingIdsByPartner.map(id =>
-        typeof id === 'string' ? new mongoose.Types.ObjectId(id) : id
-      );
-
-      if (filter._id) {
-        // Intersect with existing filter
-        const existingIds = Array.isArray(filter._id.$in) ? filter._id.$in : [];
-        filter._id.$in = bookingObjectIds.filter(id =>
-          existingIds.some((existing: any) => existing.toString() === id.toString())
-        );
-      } else {
-        filter._id = { $in: bookingObjectIds };
-      }
-    }
+  if (Object.keys(customerMatch).length > 0) {
+    pipeline.push({ $match: customerMatch });
+  }
+  if (searchMatch.length > 0) {
+    pipeline.push({ $match: { $or: searchMatch } });
   }
 
-  const total = await Booking.countDocuments(filter);
-  const bookings = await Booking.find(filter)
-    .populate('userId', 'name email phone')
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(limit);
+  // Lookup details for OrderItems (Service, Variant, Partner)
+  // Since we started with OrderItem, these fields are on the root
+  pipeline.push({
+    $lookup: {
+      from: 'services',
+      localField: 'serviceId',
+      foreignField: '_id',
+      as: 'service'
+    }
+  });
+  pipeline.push({ $unwind: { path: '$service', preserveNullAndEmptyArrays: true } });
 
-  const bookingsWithItems = await Promise.all(
-    bookings.map(async (booking) => {
-      const items = await OrderItem.find({ bookingId: booking._id })
-        .populate('serviceId', 'name icon')
-        .populate('serviceVariantId', 'name icon')
-        .populate('assignedPartnerId', 'name phone');
+  pipeline.push({
+    $lookup: {
+      from: 'servicevariants',
+      localField: 'serviceVariantId',
+      foreignField: '_id',
+      as: 'variant'
+    }
+  });
+  pipeline.push({ $unwind: { path: '$variant', preserveNullAndEmptyArrays: true } });
 
-      if (items.length > 0) {
-        return items.map((item, index) => {
-          // Safeguard against missing user
-          const user = booking.userId as any;
-          const userDetails = user ? {
-            id: user._id.toString(),
-            name: user.name || 'Unknown',
-            email: user.email || '',
-            phone: user.phone || ''
-          } : {
-            id: 'deleted',
-            name: 'Deleted User',
-            email: '',
-            phone: ''
-          };
+  pipeline.push({
+    $lookup: {
+      from: 'servicepartners',
+      localField: 'assignedPartnerId',
+      foreignField: '_id',
+      as: 'partner'
+    }
+  });
+  pipeline.push({ $unwind: { path: '$partner', preserveNullAndEmptyArrays: true } });
 
-          // Safeguard against missing service/variant
-          const serviceId = (item.serviceId as any)?.id || (item.serviceId as any)?._id?.toString() || item.serviceId?.toString() || 'unknown';
-          const variantId = (item.serviceVariantId as any)?.id || (item.serviceVariantId as any)?._id?.toString() || item.serviceVariantId?.toString() || 'unknown';
+  // Sort
+  pipeline.push({ $sort: { createdAt: -1 } });
 
-          return {
-            id: `${booking.bookingId}-${index + 1}`,
-            bookingId: booking.bookingId,
-            customer: userDetails,
-            items: [{
-              id: item._id.toString(),
-              serviceId,
-              serviceName: item.serviceName,
-              variantId,
-              variantName: item.variantName,
-              // Populate icon for admin panel as well
-              icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
-              quantity: item.quantity,
-              originalPrice: item.originalPrice,
-              finalPrice: item.finalPrice,
-              creditValue: item.creditValue,
-              estimatedTimeMinutes: item.estimatedTimeMinutes,
-              assignedPartner: item.assignedPartnerId ? {
-                id: (item.assignedPartnerId as any)._id.toString(),
-                name: (item.assignedPartnerId as any).name,
-                phone: (item.assignedPartnerId as any).phone
-              } : undefined,
-              status: item.status,
-              paidWithCredits: item.paidWithCredits || false
-            }],
-            address: booking.address,
-            bookingType: booking.bookingType,
-            scheduledDate: booking.scheduledDate,
-            scheduledTime: booking.scheduledTime,
-            // Show per-item price as total for this row
-            totalAmount: item.finalPrice,
-            itemTotal: item.originalPrice,
-            totalOriginalAmount: booking.totalOriginalAmount, // Keep original total for reference if needed
-            paymentBreakdown: booking.paymentBreakdown || [],
-            paymentId: booking.paymentId,
-            orderId: booking.orderId,
-            paymentDetails: booking.paymentDetails || null,
-            paymentStatus: booking.paymentStatus,
-            status: item.status,
-            notes: booking.notes,
-            createdAt: booking.createdAt,
-            updatedAt: booking.updatedAt
-          };
-        });
-      }
-      return [];
-    })
-  );
+  // Facet for Pagination
+  pipeline.push({
+    $facet: {
+      metadata: [{ $count: 'total' }],
+      data: [{ $skip: skip }, { $limit: limit }]
+    }
+  });
 
-  // Flatten the array of arrays
-  const flatBookings = bookingsWithItems.flat();
+  // Execute Aggregation
+  const result = await OrderItem.aggregate(pipeline);
+
+  const metadata = result[0].metadata[0] || { total: 0 };
+  const data = result[0].data || [];
+
+  // Transform to response format
+  const bookingsResponse = data.map((item: any) => {
+    // Map to AdminBooking format, but representing a single item row
+    const customer = item.customer || { _id: 'deleted', name: 'Deleted User', email: '', phone: '' };
+
+    return {
+      id: item._id, // Use OrderItem ID for uniqueness in table
+      bookingId: item.booking.bookingId, // Display ID
+      customer: {
+        id: customer._id,
+        name: customer.name || 'Unknown',
+        email: customer.email,
+        phone: customer.phone
+      },
+      items: [{
+        id: item._id,
+        serviceId: item.service?._id || item.serviceId,
+        serviceName: item.serviceName,
+        variantId: item.variant?._id || item.serviceVariantId,
+        variantName: item.variantName,
+        icon: item.variant?.icon || item.service?.icon || null,
+        quantity: item.quantity,
+        originalPrice: item.originalPrice,
+        finalPrice: item.finalPrice,
+        creditValue: item.creditValue,
+        estimatedTimeMinutes: item.estimatedTimeMinutes,
+        assignedPartner: item.partner ? {
+          id: item.partner._id,
+          name: item.partner.name,
+          phone: item.partner.phone
+        } : undefined,
+        status: item.status,
+        paidWithCredits: item.paidWithCredits
+      }],
+      address: item.booking.address,
+      bookingType: item.booking.bookingType,
+      scheduledDate: item.booking.scheduledDate,
+      scheduledTime: item.booking.scheduledTime,
+      totalAmount: item.finalPrice, // Show item price as row total
+      itemTotal: item.originalPrice,
+      totalOriginalAmount: item.booking.totalOriginalAmount,
+      paymentStatus: item.booking.paymentStatus,
+      status: item.status, // Item status
+      notes: item.booking.notes,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt
+    };
+  });
 
   res.status(200).json({
     success: true,
     data: {
-      bookings: flatBookings,
+      bookings: bookingsResponse,
       pagination: {
         page,
         limit,
-        total,
-        pages: Math.ceil(total / limit)
+        total: metadata.total,
+        pages: Math.ceil(metadata.total / limit)
       }
     }
   });

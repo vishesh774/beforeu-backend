@@ -6,6 +6,7 @@ import OrderItem from '../models/OrderItem';
 import ServicePartner from '../models/ServicePartner';
 
 import { BookingStatus, COMPLETED_BOOKING_STATUSES } from '../constants/bookingStatus';
+import { syncBookingStatus } from '../services/bookingService';
 
 // @desc    Get all assigned jobs for the logged-in provider
 // @route   GET /api/provider/jobs
@@ -162,9 +163,8 @@ export const updateJobStatus = asyncHandler(async (req: AuthRequest, res: Respon
     job.status = status;
     await job.save();
 
-    // Also update parent booking status if it makes sense? 
-    // Sync logic might be complex if multiple items.
-    // We'll rely on a basic sync or just item status.
+    // Sync parent booking status
+    await syncBookingStatus(job.bookingId);
 
     res.status(200).json({
         success: true,
@@ -205,6 +205,9 @@ export const startJob = asyncHandler(async (req: AuthRequest, res: Response, nex
     job.status = BookingStatus.IN_PROGRESS;
     await job.save();
 
+    // Sync parent booking status
+    await syncBookingStatus(job.bookingId);
+
     res.status(200).json({
         success: true,
         message: 'Job started successfully',
@@ -240,12 +243,16 @@ export const endJob = asyncHandler(async (req: AuthRequest, res: Response, next:
     job.status = BookingStatus.COMPLETED;
     await job.save();
 
+    // Sync parent booking status
+    await syncBookingStatus(job.bookingId);
+
     res.status(200).json({
         success: true,
         message: 'Job completed successfully',
         data: { job }
     });
 });
+
 
 // @desc    Get provider profile
 // @route   GET /api/provider/profile

@@ -21,6 +21,8 @@ export interface ISOSAlert extends Document {
         longitude: number;
         address?: string;
     };
+    familyMemberId?: mongoose.Types.ObjectId;
+    serviceId?: mongoose.Types.ObjectId; // E.g., Booking ID or OrderItem ID
     status: SOSStatus;
     createdAt: Date;
     updatedAt: Date;
@@ -43,6 +45,8 @@ const SOSAlertSchema = new Schema({
         longitude: { type: Number, required: true },
         address: { type: String }
     },
+    familyMemberId: { type: Schema.Types.ObjectId, ref: 'FamilyMember' },
+    serviceId: { type: Schema.Types.ObjectId, ref: 'OrderItem' }, // Or Booking
     status: {
         type: String,
         enum: Object.values(SOSStatus),
