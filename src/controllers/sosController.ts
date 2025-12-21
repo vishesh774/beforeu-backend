@@ -1,7 +1,10 @@
 import { Response } from 'express';
 import { SOSAlert, SOSStatus } from '../models/SOSAlert';
+import Booking from '../models/Booking';
+import OrderItem from '../models/OrderItem';
 import { socketService } from '../services/socketService';
 import { AuthRequest } from '../middleware/auth';
+import { getSOSService } from '../utils/systemServices';
 
 export const triggerSOS = async (req: AuthRequest, res: Response) => {
     try {
@@ -26,19 +29,24 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
             if (familyMemberId) existingAlert.familyMemberId = familyMemberId;
             if (serviceId) existingAlert.serviceId = serviceId;
 
+            existingAlert.logs.push({
+                action: 'LOCATION_UPDATE',
+                timestamp: new Date(),
+                details: 'User triggered SOS again, location updated'
+            });
+
             existingAlert.updatedAt = new Date();
             await existingAlert.save();
 
             // Emit update event
-            const populatedAlert = await existingAlert.populate([
-                { path: 'user', select: 'name phone email' },
-                { path: 'familyMemberId' },
-                { path: 'serviceId' }
-            ]);
-
+            const populatedAlert = await existingAlert.populate('user', 'name phone email');
             socketService.emitToAdmin('sos:active', populatedAlert);
 
-            res.status(200).json({ success: true, data: existingAlert, message: 'Existing SOS updated' });
+            res.status(200).json({
+                success: true,
+                data: populatedAlert,
+                message: 'SOS location updated'
+            });
             return;
         }
 
@@ -56,6 +64,61 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 details: 'User initiated SOS'
             }]
         });
+
+        // --- NEW: Create Booking and OrderItem for SOS ---
+        try {
+            const { service, variant } = await getSOSService();
+
+            // Generate booking ID
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+            const count = await Booking.countDocuments({
+                bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) }
+            });
+            const bIdStr = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+
+            const booking = await Booking.create({
+                userId: userId,
+                bookingId: bIdStr,
+                addressId: 'SOS_LOCATION',
+                address: {
+                    label: 'SOS Emergency',
+                    fullAddress: location.fullAddress || 'Emergency Location',
+                    coordinates: {
+                        lat: location.latitude,
+                        lng: location.longitude
+                    }
+                },
+                bookingType: 'SOS',
+                itemTotal: 0,
+                totalAmount: 0,
+                totalOriginalAmount: 0,
+                status: 'pending',
+                notes: `SOS ALERT: ${location.emergencyType || 'General Emergency'}`
+            });
+
+            await OrderItem.create({
+                bookingId: booking._id,
+                serviceId: service._id,
+                serviceVariantId: variant._id,
+                serviceName: service.name,
+                variantName: variant.name,
+                quantity: 1,
+                originalPrice: 0,
+                finalPrice: 0,
+                estimatedTimeMinutes: 30,
+                customerVisitRequired: true,
+                status: 'pending',
+                startJobOtp: 'NONE', // Special case for SOS
+            });
+
+            // Link booking to SOS alert
+            newAlert.bookingId = booking._id;
+            console.log(`[triggerSOS] Created Booking ${bIdStr} for SOS`);
+        } catch (bookingError) {
+            console.error('[triggerSOS] Error creating SOS booking:', bookingError);
+        }
+        // --- END: Create Booking ---
 
         await newAlert.save();
 
@@ -76,10 +139,9 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
     }
 };
 
-export const cancelSOS = async (req: AuthRequest, res: Response) => { // Changed Request to AuthRequest
+export const cancelSOS = async (req: AuthRequest, res: Response) => {
     try {
-        const userId = req.user?.id; // Changed from _id to id
-        // We might accept alertId, or just find the active one for this user
+        const userId = req.user?.id;
         const { alertId } = req.body;
 
         let alert;
@@ -101,15 +163,13 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => { // Changed
         alert.logs.push({
             action: 'CANCELLED',
             timestamp: new Date(),
-            performedBy: userId as any, // Added as any for type compatibility
+            performedBy: userId as any,
             details: 'User cancelled SOS'
         });
 
         await alert.save();
 
         const populatedAlert = await alert.populate('user', 'name phone email');
-
-        // Emit Cancellation Event
         socketService.emitToAdmin('sos:cancelled', populatedAlert);
 
         res.status(200).json({ success: true, data: alert });
@@ -119,9 +179,9 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => { // Changed
     }
 };
 
-export const acknowledgeSOS = async (req: AuthRequest, res: Response) => { // Changed Request to AuthRequest
+export const acknowledgeSOS = async (req: AuthRequest, res: Response) => {
     try {
-        const adminId = req.user?.id; // Changed from _id to id
+        const adminId = req.user?.id;
         const { id } = req.params;
 
         const alert = await SOSAlert.findById(id);
@@ -139,15 +199,13 @@ export const acknowledgeSOS = async (req: AuthRequest, res: Response) => { // Ch
         alert.logs.push({
             action: 'ACKNOWLEDGED',
             timestamp: new Date(),
-            performedBy: adminId as any, // Added as any for type compatibility
+            performedBy: adminId as any,
             details: 'Admin acknowledged request'
         });
 
         await alert.save();
 
         const populatedAlert = await alert.populate('user', 'name phone email');
-
-        // Notify all admins that it's been picked up (to avoid double handling)
         socketService.emitToAdmin('sos:acknowledged', populatedAlert);
 
         res.status(200).json({ success: true, data: alert });
@@ -157,9 +215,9 @@ export const acknowledgeSOS = async (req: AuthRequest, res: Response) => { // Ch
     }
 };
 
-export const resolveSOS = async (req: AuthRequest, res: Response) => { // Changed Request to AuthRequest
+export const resolveSOS = async (req: AuthRequest, res: Response) => {
     try {
-        const adminId = req.user?.id; // Changed from _id to id
+        const adminId = req.user?.id;
         const { id } = req.params;
 
         const alert = await SOSAlert.findById(id);
@@ -170,19 +228,17 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => { // Change
 
         alert.status = SOSStatus.RESOLVED;
         alert.resolvedAt = new Date();
-        alert.resolvedBy = adminId as any; // Cast if type mismatch
+        alert.resolvedBy = adminId as any;
         alert.logs.push({
             action: 'RESOLVED',
             timestamp: new Date(),
-            performedBy: adminId as any, // Added as any for type compatibility
+            performedBy: adminId as any,
             details: 'Admin marked as resolved'
         });
 
         await alert.save();
 
         const populatedAlert = await alert.populate('user', 'name phone email');
-
-        // Notify removal
         socketService.emitToAdmin('sos:resolved', populatedAlert);
 
         res.status(200).json({ success: true, data: alert });
@@ -192,7 +248,7 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => { // Change
     }
 };
 
-export const getActiveSOS = async (_req: AuthRequest, res: Response) => { // Changed Request to AuthRequest and req to _req
+export const getActiveSOS = async (_req: AuthRequest, res: Response) => {
     try {
         const activeAlerts = await SOSAlert.find({
             status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] }
@@ -207,9 +263,6 @@ export const getActiveSOS = async (_req: AuthRequest, res: Response) => { // Cha
     }
 };
 
-// @desc    Get all SOS alerts (History)
-// @route   GET /api/sos/history
-// @access  Private/Admin
 export const getAllSOS = async (req: AuthRequest, res: Response) => {
     try {
         const page = parseInt(req.query.page as string) || 1;
@@ -244,5 +297,57 @@ export const getAllSOS = async (req: AuthRequest, res: Response) => {
     } catch (error) {
         console.error('Error fetching SOS history:', error);
         res.status(500).json({ success: false, error: 'Failed to fetch SOS history' });
+    }
+};
+
+export const getSOSAlertByBookingId = async (req: AuthRequest, res: Response) => {
+    try {
+        const { bookingId } = req.params;
+        const alert = await SOSAlert.findOne({ bookingId })
+            .populate('user', 'name phone email')
+            .populate('familyMemberId', 'name relationship phone');
+
+        if (!alert) {
+            res.status(404).json({ success: false, error: 'SOS alert not found for this booking' });
+            return;
+        }
+
+        res.status(200).json({ success: true, alert });
+    } catch (error) {
+        console.error('Error fetching SOS alert by booking ID:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+export const updatePartnerLocation = async (req: AuthRequest, res: Response) => {
+    try {
+        const { alertId, latitude, longitude } = req.body;
+
+        if (!alertId || latitude === undefined || longitude === undefined) {
+            res.status(400).json({ success: false, error: 'Alert ID and coordinates are required' });
+            return;
+        }
+
+        const alert = await SOSAlert.findById(alertId);
+        if (!alert) {
+            res.status(404).json({ success: false, error: 'SOS Alert not found' });
+            return;
+        }
+
+        alert.partnerLocation = {
+            latitude,
+            longitude,
+            updatedAt: new Date()
+        };
+
+        await alert.save();
+
+        // Emit to admins
+        socketService.emitToAdmin('sos:active', await alert.populate('user', 'name phone email'));
+
+        res.status(200).json({ success: true, partnerLocation: alert.partnerLocation });
+    } catch (error) {
+        console.error('Error updating partner location:', error);
+        res.status(500).json({ success: false, error: 'Failed to update partner location' });
     }
 };

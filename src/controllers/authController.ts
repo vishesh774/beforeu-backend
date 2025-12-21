@@ -179,13 +179,13 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
 // @access  Private
 export const getMe = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const authReq = req as AuthRequest;
-  
+
   if (!authReq.user) {
     return next(new AppError('User not authenticated', 401));
   }
 
   const userData = await aggregateUserData(authReq.user.id);
-  
+
   if (!userData) {
     return next(new AppError('User not found', 404));
   }
@@ -211,6 +211,12 @@ export const addAddress = asyncHandler(async (req: AuthRequest, res: Response, n
 
   if (!label || !fullAddress) {
     return next(new AppError('Label and full address are required', 400));
+  }
+
+  // Check current address count
+  const addressCount = await Address.countDocuments({ userId: new mongoose.Types.ObjectId(userId) });
+  if (addressCount >= 4) {
+    return next(new AppError('Maximum limit of 4 addresses reached. Please delete an existing address to add a new one.', 400));
   }
 
   // Convert userId string to ObjectId

@@ -8,7 +8,9 @@ import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import PlanTransaction from '../models/PlanTransaction';
 import Booking from '../models/Booking';
+import OrderItem from '../models/OrderItem';
 import mongoose from 'mongoose';
+import { getPlanPurchaseService } from '../utils/systemServices';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -585,65 +587,81 @@ export const purchasePlan = asyncHandler(async (req: AuthRequest, res: Response,
     return next(new AppError('User not found', 404));
   }
 
-  // Get plan ID as string
-  const planIdString = plan._id.toString();
+  // --- NEW: Create Booking and OrderItem for Plan Purchase ---
+  try {
+    const { service, variant } = await getPlanPurchaseService();
 
-  // Update or create UserPlan record
-  let userPlan = await UserPlan.findOne({ userId });
-  if (!userPlan) {
-    userPlan = await UserPlan.create({
-      userId,
-      activePlanId: planIdString
+    // Generate booking ID
+    const now = new Date();
+    const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+    const count = await Booking.countDocuments({
+      bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) }
     });
-  } else {
-    userPlan.activePlanId = planIdString;
-    await userPlan.save();
-  }
+    const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
-  // Update or create UserCredits record (add plan credits)
-  let userCredits = await UserCredits.findOne({ userId });
-  const currentCredits = userCredits?.credits || 0;
-  const newCredits = currentCredits + plan.totalCredits;
-
-  if (!userCredits) {
-    userCredits = await UserCredits.create({
-      userId,
-      credits: newCredits
-    });
-  } else {
-    userCredits.credits = newCredits;
-    await userCredits.save();
-  }
-
-  // Generate order ID (simple format: ORDER-{timestamp}-{userId})
-  const orderId = `ORDER-${Date.now()}-${userIdString.slice(-6)}`;
-
-  // Create Plan Transaction Record
-  await PlanTransaction.create({
-    userId,
-    planId: plan._id,
-    orderId,
-    amount: plan.finalPrice,
-    credits: plan.totalCredits,
-    planSnapshot: {
-      name: plan.planName,
-      originalPrice: plan.originalPrice,
-      finalPrice: plan.finalPrice
-    },
-    status: 'completed', // Assuming immediate completion for now as per current flow
-    // paymentId: ... // If we had payment integration here
-  });
-
-  res.status(200).json({
-    success: true,
-    data: {
-      plan: {
-        ...plan.toObject(),
-        id: plan._id.toString()
+    const booking = await Booking.create({
+      userId: userId,
+      bookingId,
+      addressId: 'PLAN_PURCHASE',
+      address: {
+        label: 'Plan Purchase',
+        fullAddress: 'Digital Service Activation',
       },
-      orderId
-    },
-    message: 'Plan purchased successfully'
-  });
+      bookingType: 'PLAN_PURCHASE',
+      itemTotal: plan.finalPrice,
+      totalAmount: plan.finalPrice,
+      totalOriginalAmount: plan.originalPrice,
+      status: 'pending',
+      paymentStatus: 'pending',
+      notes: `Purchase of Plan: ${plan.planName}`
+    });
+
+    await OrderItem.create({
+      bookingId: booking._id,
+      serviceId: service._id,
+      serviceVariantId: variant._id,
+      serviceName: service.name,
+      variantName: variant.name,
+      quantity: 1,
+      originalPrice: plan.originalPrice,
+      finalPrice: plan.finalPrice,
+      creditValue: plan.totalCredits,
+      estimatedTimeMinutes: 5,
+      customerVisitRequired: false,
+      status: 'pending',
+      startJobOtp: 'NONE', // No start OTP
+    });
+
+    // Create Plan Transaction Record (marked as pending)
+    await PlanTransaction.create({
+      userId,
+      planId: plan._id,
+      orderId: bookingId,
+      amount: plan.finalPrice,
+      credits: plan.totalCredits,
+      planSnapshot: {
+        name: plan.planName,
+        originalPrice: plan.originalPrice,
+        finalPrice: plan.finalPrice
+      },
+      status: 'pending',
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        plan: {
+          ...plan.toObject(),
+          id: plan._id.toString()
+        },
+        bookingId: booking.bookingId
+      },
+      message: 'Plan purchase initiated. Awaiting admin completion.'
+    });
+
+  } catch (error) {
+    console.error('[purchasePlan] Error creating plan booking:', error);
+    return next(new AppError('Failed to initiate plan purchase', 500));
+  }
 });
 

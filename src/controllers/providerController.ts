@@ -63,7 +63,8 @@ export const getProviderJobs = asyncHandler(async (req: AuthRequest, res: Respon
             customerPhone: isCompleted ? '' : (booking.userId?.phone || 'Hidden'),
             price: job.finalPrice,
             quantity: job.quantity,
-            customerVisitRequired: job.customerVisitRequired
+            customerVisitRequired: job.customerVisitRequired,
+            bookingType: booking.bookingType // Added bookingType
         };
     }).filter(Boolean);
 
@@ -126,7 +127,9 @@ export const getJobDetails = asyncHandler(async (req: AuthRequest, res: Response
                 quantity: job.quantity,
                 notes: booking.notes,
                 customerVisitRequired: job.customerVisitRequired,
-                otpRequired: true // Flag to tell frontend to ask for OTP
+                bookingType: booking.bookingType,
+                startOtpRequired: booking.bookingType !== 'SOS',
+                endOtpRequired: true
             }
         }
     });
@@ -194,8 +197,9 @@ export const startJob = asyncHandler(async (req: AuthRequest, res: Response, nex
         // Let's be lenient or check strict flow: Assigned -> EnRoute -> Reached -> InProgress
     }
 
-    // Verify OTP
-    if (job.startJobOtp !== otp) {
+    // Verify OTP (Skip if SOS)
+    const isSOS = (job.bookingId as any)?.bookingType === 'SOS';
+    if (!isSOS && job.startJobOtp !== otp) {
         return next(new AppError('Invalid Start OTP', 400));
     }
 

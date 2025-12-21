@@ -122,6 +122,7 @@ const OrderItemSchema = new Schema<IOrderItem>(
 
 // Generate OTPs before saving
 OrderItemSchema.pre('save', async function () {
+  // Only generate startJobOtp if not already set and it's not explicitly skipped
   if (!this.startJobOtp) {
     this.startJobOtp = Math.floor(1000 + Math.random() * 9000).toString();
   }

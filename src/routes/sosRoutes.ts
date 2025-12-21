@@ -7,14 +7,18 @@ import {
     acknowledgeSOS,
     resolveSOS,
     getActiveSOS,
-    getAllSOS
+    getAllSOS,
+    updatePartnerLocation,
+    getSOSAlertByBookingId
 } from '../controllers/sosController';
 
 const router = express.Router();
 
-// Customer Endpoints (Protected by user auth)
+// Customer/Partner Endpoints (Protected by user auth)
+router.get('/booking/:bookingId', protect, getSOSAlertByBookingId);
 router.post('/trigger', protect, triggerSOS);
 router.post('/cancel', protect, cancelSOS);
+router.post('/update-location', protect, updatePartnerLocation);
 
 // Admin Endpoints (Protected by admin auth)
 router.get('/active', requireAdmin, getActiveSOS);

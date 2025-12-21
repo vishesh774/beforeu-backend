@@ -14,7 +14,7 @@ export interface IBooking extends Document {
       lng: number;
     };
   };
-  bookingType: 'ASAP' | 'SCHEDULED';
+  bookingType: 'ASAP' | 'SCHEDULED' | 'SOS' | 'PLAN_PURCHASE';
   scheduledDate?: Date;
   scheduledTime?: string;
   totalAmount: number; // Final amount paid (includes all checkout fields)
@@ -85,7 +85,7 @@ const BookingSchema = new Schema<IBooking>(
     },
     bookingType: {
       type: String,
-      enum: ['ASAP', 'SCHEDULED'],
+      enum: ['ASAP', 'SCHEDULED', 'SOS', 'PLAN_PURCHASE'],
       required: true
     },
     scheduledDate: {

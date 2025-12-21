@@ -11,6 +11,10 @@ import OrderItem from '../models/OrderItem';
 import Address from '../models/Address';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
+import Plan from '../models/Plan';
+import PlanTransaction from '../models/PlanTransaction';
+import { SOSAlert, SOSStatus } from '../models/SOSAlert';
+import { socketService } from '../services/socketService';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import ServicePartner from '../models/ServicePartner';
 import ServiceLocation from '../models/ServiceLocation';
@@ -1416,12 +1420,68 @@ export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Resp
 
   // Update status
   orderItem.status = newStatus;
-
-  // Add to transparent status history if we had it (TODO)
-  // if (!orderItem.statusHistory) orderItem.statusHistory = [];
-  // orderItem.statusHistory.push({ status: newStatus, timestamp: new Date(), updatedBy: req.user.id });
-
   await orderItem.save();
+
+  // Handle Plan Activation for PLAN_PURCHASE bookings
+  if (newStatus === BookingStatus.COMPLETED && booking.bookingType === 'PLAN_PURCHASE') {
+    try {
+      // Find the pending transaction for this booking
+      const transaction = await PlanTransaction.findOne({ orderId: booking.bookingId, status: 'pending' });
+      const planId = transaction ? transaction.planId : null;
+
+      if (planId) {
+        const plan = await Plan.findById(planId);
+        if (plan) {
+          // 1. Update UserPlan
+          await UserPlan.findOneAndUpdate(
+            { userId: booking.userId },
+            { activePlanId: plan._id.toString() },
+            { upsert: true }
+          );
+
+          // 2. Update UserCredits
+          const userCredits = await UserCredits.findOne({ userId: booking.userId });
+          const currentCredits = userCredits?.credits || 0;
+          await UserCredits.findOneAndUpdate(
+            { userId: booking.userId },
+            { credits: currentCredits + plan.totalCredits },
+            { upsert: true }
+          );
+
+          // 3. Mark transaction as completed
+          if (transaction) {
+            transaction.status = 'completed';
+            await transaction.save();
+          }
+
+          console.log(`[updateOrderItemStatus] Plan ${plan.planName} activated for user ${booking.userId}`);
+        }
+      }
+    } catch (activationError) {
+      console.error('[updateOrderItemStatus] Error activating plan:', activationError);
+      // We still proceed even if activation fails, but log it.
+    }
+  }
+
+  // Handle SOS Resolution sync
+  if (newStatus === BookingStatus.COMPLETED && booking.bookingType === 'SOS') {
+    try {
+      const sosAlert = await SOSAlert.findOne({ bookingId: booking._id });
+      if (sosAlert && sosAlert.status !== 'RESOLVED') {
+        sosAlert.status = SOSStatus.RESOLVED;
+        sosAlert.resolvedAt = new Date();
+        sosAlert.logs.push({
+          action: 'RESOLVED',
+          timestamp: new Date(),
+          details: 'Auto-resolved via booking completion'
+        });
+        await sosAlert.save();
+        socketService.emitToAdmin('sos:resolved', await sosAlert.populate('user', 'name phone email'));
+      }
+    } catch (sosError) {
+      console.error('[updateOrderItemStatus] Error syncing SOS resolution:', sosError);
+    }
+  }
 
   // Sync parent booking status
   await syncBookingStatus(booking._id);
