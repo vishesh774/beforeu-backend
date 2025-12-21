@@ -442,11 +442,19 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       const plan = await Plan.findById(planTx.planId);
       if (plan) {
         // Update UserPlan
+        const expiryDate = new Date();
+        expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+
         let userPlan = await UserPlan.findOne({ userId: userIdObj });
         if (!userPlan) {
-          userPlan = await UserPlan.create({ userId: userIdObj, activePlanId: plan._id.toString() });
+          userPlan = await UserPlan.create({
+            userId: userIdObj,
+            activePlanId: plan._id.toString(),
+            expiresAt: expiryDate
+          });
         } else {
           userPlan.activePlanId = plan._id.toString();
+          userPlan.expiresAt = expiryDate;
           await userPlan.save();
         }
 

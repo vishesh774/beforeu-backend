@@ -3,6 +3,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IUserPlan extends Document {
   userId: mongoose.Types.ObjectId;
   activePlanId?: string;
+  expiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -18,6 +19,10 @@ const UserPlanSchema = new Schema<IUserPlan>(
     },
     activePlanId: {
       type: String,
+      default: null
+    },
+    expiresAt: {
+      type: Date,
       default: null
     }
   },

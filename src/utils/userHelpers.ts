@@ -27,6 +27,7 @@ export interface AggregatedUserData {
     finalPrice: number;
     totalMembers: number;
     extraDiscount?: number;
+    expiresAt?: Date;
   };
   familyMembers: Array<{
     id: string;
@@ -83,7 +84,8 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
         originalPrice: plan.originalPrice,
         finalPrice: plan.finalPrice,
         totalMembers: plan.totalMembers,
-        extraDiscount: plan.extraDiscount
+        extraDiscount: plan.extraDiscount,
+        expiresAt: userPlan.expiresAt
       };
     }
   }
