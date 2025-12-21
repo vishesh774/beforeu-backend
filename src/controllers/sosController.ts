@@ -5,7 +5,7 @@ import OrderItem from '../models/OrderItem';
 import { socketService } from '../services/socketService';
 import { AuthRequest } from '../middleware/auth';
 import { getSOSService } from '../utils/systemServices';
-import { syncBookingStatus } from '../services/bookingService';
+import { syncBookingStatus, autoAssignServicePartner } from '../services/bookingService';
 
 export const triggerSOS = async (req: AuthRequest, res: Response) => {
     try {
@@ -114,7 +114,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 notes: `SOS ALERT: ${location.emergencyType || 'General Emergency'}`
             });
 
-            await OrderItem.create({
+            const orderItem = await OrderItem.create({
                 bookingId: booking._id,
                 serviceId: service._id,
                 serviceVariantId: variant._id,
@@ -130,9 +130,13 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 endJobOtp: generatedOtp, // Use the SOS OTP as the completion OTP
             });
 
+            // Trigger auto-assignment for SOS
+            console.log(`[triggerSOS] Triggering auto-assignment for SOS booking ${bIdStr}`);
+            await autoAssignServicePartner(booking, [orderItem]);
+
             // Link booking to SOS alert
             newAlert.bookingId = booking._id;
-            console.log(`[triggerSOS] Created Booking ${bIdStr} for SOS`);
+            console.log(`[triggerSOS] Created and auto-assigned Booking ${bIdStr} for SOS`);
         } catch (bookingError) {
             console.error('[triggerSOS] Error creating SOS booking:', bookingError);
         }
@@ -407,15 +411,70 @@ export const getSOSDetails = async (req: AuthRequest, res: Response) => {
         const alert = await SOSAlert.findById(id)
             .populate('user', 'name phone email')
             .populate('familyMemberId')
-            .populate('resolvedBy', 'name email')
-            .populate('bookingId');
+            .populate('resolvedBy', 'name email');
 
         if (!alert) {
             res.status(404).json({ success: false, error: 'SOS alert not found' });
             return;
         }
 
-        res.status(200).json({ success: true, data: alert });
+        let bookingData = null;
+        if (alert.bookingId) {
+            const booking = await Booking.findById(alert.bookingId).populate('userId', 'name email phone');
+            if (booking) {
+                const items = await OrderItem.find({ bookingId: booking._id })
+                    .populate('serviceId', 'name icon')
+                    .populate('serviceVariantId', 'name icon')
+                    .populate('assignedPartnerId', 'name phone email')
+                    .populate('assignedServiceLocationId', 'name address contactNumber');
+
+                bookingData = {
+                    id: booking._id,
+                    bookingId: booking.bookingId,
+                    customer: {
+                        id: (booking.userId as any)._id,
+                        name: (booking.userId as any).name,
+                        email: (booking.userId as any).email,
+                        phone: (booking.userId as any).phone
+                    },
+                    items: items.map(item => ({
+                        id: item._id,
+                        serviceId: (item.serviceId as any)._id || item.serviceId,
+                        serviceName: item.serviceName,
+                        variantName: item.variantName,
+                        quantity: item.quantity,
+                        finalPrice: item.finalPrice,
+                        originalPrice: item.originalPrice,
+                        estimatedTimeMinutes: item.estimatedTimeMinutes,
+                        status: item.status,
+                        startJobOtp: item.startJobOtp,
+                        endJobOtp: item.endJobOtp,
+                        assignedPartner: item.assignedPartnerId ? {
+                            id: (item.assignedPartnerId as any)._id,
+                            name: (item.assignedPartnerId as any).name,
+                            phone: (item.assignedPartnerId as any).phone,
+                            email: (item.assignedPartnerId as any).email
+                        } : null,
+                        customerVisitRequired: item.customerVisitRequired,
+                        paidWithCredits: item.paidWithCredits || false
+                    })),
+                    address: booking.address,
+                    bookingType: booking.bookingType,
+                    scheduledDate: booking.scheduledDate,
+                    scheduledTime: booking.scheduledTime,
+                    totalAmount: booking.totalAmount,
+                    status: booking.status,
+                    paymentStatus: booking.paymentStatus,
+                    createdAt: booking.createdAt,
+                    updatedAt: booking.updatedAt
+                };
+            }
+        }
+
+        const alertData = alert.toObject();
+        (alertData as any).bookingId = bookingData;
+
+        res.status(200).json({ success: true, data: alertData });
     } catch (error) {
         console.error('Error fetching SOS details:', error);
         res.status(500).json({ success: false, error: 'Internal server error' });
