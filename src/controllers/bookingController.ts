@@ -1146,6 +1146,8 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     bookingType: booking.bookingType,
     scheduledDate: booking.scheduledDate,
     scheduledTime: booking.scheduledTime,
+    otp: items[0]?.startJobOtp,
+    endOtp: items[0]?.endJobOtp,
     // If specific item, show its price. Otherwise show total.
     totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
     itemTotal: specificItem ? specificItem.originalPrice : (booking.itemTotal || booking.totalAmount),
