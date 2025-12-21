@@ -94,6 +94,10 @@ const router = express.Router();
 // All routes require admin authentication
 router.use(requireAdmin);
 
+// Dashboard routes
+import { getDashboardMetrics } from '../controllers/dashboardController';
+router.get('/metrics', getDashboardMetrics);
+
 // User management routes
 router.get('/users', getAllUsers);
 router.get('/users/:id', getUser);
