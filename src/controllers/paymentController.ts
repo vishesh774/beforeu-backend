@@ -18,6 +18,7 @@ import UserCredits from '../models/UserCredits';
 import User from '../models/User';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import { autoAssignServicePartner } from '../services/bookingService';
+import { BookingStatus } from '../constants/bookingStatus';
 
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
 let razorpay: any = null;
@@ -59,7 +60,7 @@ export const testRazorpayConfig = asyncHandler(async (_req: AuthRequest, res: Re
   }
 });
 
-// @desc    Create Razorpay order
+// @desc    Create Razorpay order and Pending Booking/Transaction
 // @route   POST /api/payments/create-order
 // @access  Private
 export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
@@ -68,47 +69,19 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
     return next(new AppError('User not authenticated', 401));
   }
 
-  // Log request for debugging
-  console.log('[PaymentController] createOrder called:', {
-    userId,
-    body: {
-      amount: req.body.amount,
-      currency: req.body.currency,
-      hasBookingData: !!req.body.bookingData,
-      hasPlanData: !!req.body.planData,
-    },
-  });
-
   // Check Razorpay credentials upfront
   const keyId = process.env.RAZORPAY_KEY_ID;
   const keySecret = process.env.RAZORPAY_API_SECRET;
 
   if (!keyId || !keySecret) {
-    console.error('[PaymentController] Razorpay credentials missing:', {
-      hasKeyId: !!keyId,
-      hasSecret: !!keySecret,
-      keyIdLength: keyId?.length || 0,
-      keySecretLength: keySecret?.length || 0,
-      envKeys: Object.keys(process.env).filter(k => k.includes('RAZORPAY')),
-    });
     return next(new AppError('Payment gateway not configured. Please contact support.', 500));
   }
-
-  console.log('[PaymentController] Razorpay credentials found:', {
-    hasKeyId: !!keyId,
-    hasSecret: !!keySecret,
-    keyIdPrefix: keyId?.substring(0, 10) || 'none',
-  });
 
   const { amount, currency = 'INR', bookingData, planData } = req.body;
 
   // Validation
   if (!amount || amount <= 0) {
     return next(new AppError('Valid amount is required', 400));
-  }
-
-  if (amount < 100) {
-    return next(new AppError('Minimum amount is ₹1 (100 paise)', 400));
   }
 
   // Validate that either bookingData or planData is provided, but not both
@@ -120,253 +93,16 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
     return next(new AppError('Cannot process both booking and plan purchase in one order', 400));
   }
 
-  // Validate booking data if provided
-  if (bookingData) {
-    if (!bookingData.addressId || !bookingData.items || !Array.isArray(bookingData.items) || bookingData.items.length === 0) {
-      return next(new AppError('Valid booking data is required', 400));
-    }
-
-    if (!bookingData.bookingType || !['ASAP', 'SCHEDULED'].includes(bookingData.bookingType)) {
-      return next(new AppError('Valid booking type is required', 400));
-    }
-
-    if (bookingData.bookingType === 'SCHEDULED' && (!bookingData.scheduledDate || !bookingData.scheduledTime)) {
-      return next(new AppError('Scheduled date and time are required for scheduled bookings', 400));
-    }
-  }
-
-  // Validate plan data if provided
-  if (planData) {
-    if (!planData.planId) {
-      return next(new AppError('Plan ID is required', 400));
-    }
-
-    const plan = await Plan.findById(planData.planId);
-    if (!plan) {
-      return next(new AppError('Plan not found', 404));
-    }
-
-    // Calculate expected amount using checkout config fields
-    const checkoutFields = await getActiveCheckoutFields();
-    const calculationResult = await calculateCheckoutTotal(plan.finalPrice, checkoutFields);
-    const expectedAmountInPaise = Math.round(calculationResult.total * 100);
-
-    // Verify amount matches calculated price (with tolerance of 5 Rs = 500 paise)
-    const tolerance = 500; // 5 Rs tolerance
-    const amountDifference = Math.abs(amount - expectedAmountInPaise);
-    if (amountDifference > tolerance) {
-      return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${amount / 100}`, 400));
-    }
-  }
-
   try {
-    // Get Razorpay instance (will throw if credentials not configured)
-    let razorpayInstance;
-    try {
-      razorpayInstance = getRazorpayInstance();
-    } catch (razorpayError: any) {
-      console.error('[PaymentController] Razorpay initialization error:', razorpayError);
-      return next(new AppError('Payment gateway not configured. Please contact support.', 500));
-    }
-
-    // Create Razorpay order
-    // Receipt must be max 40 characters - use short format
-    const timestamp = Date.now().toString(36); // Base36 for shorter string
-    const userIdShort = userId.toString().slice(-6); // Last 6 chars of userId
-    const receipt = `${timestamp}_${userIdShort}`.substring(0, 40); // Ensure max 40 chars
-
-    const options = {
-      amount: Math.round(amount), // Amount in paise
-      currency: currency.toUpperCase(),
-      receipt: receipt,
-      notes: {
-        userId,
-        type: planData ? 'plan' : 'booking',
-        ...(bookingData && { bookingData: JSON.stringify(bookingData) }),
-        ...(planData && { planData: JSON.stringify(planData) }),
-      },
-    };
-
-    console.log('[PaymentController] Creating Razorpay order with options:', {
-      amount: options.amount,
-      currency: options.currency,
-      receipt: options.receipt,
-      type: options.notes.type,
-    });
-
-    let order;
-    try {
-      order = await razorpayInstance.orders.create(options);
-      console.log('[PaymentController] Razorpay order created:', order.id);
-    } catch (razorpayError: any) {
-      // Razorpay errors have a specific structure
-      console.error('[PaymentController] Razorpay API error:', razorpayError);
-      console.error('[PaymentController] Razorpay error details:', {
-        message: razorpayError.message,
-        description: razorpayError.description,
-        code: razorpayError.code,
-        field: razorpayError.field,
-        source: razorpayError.source,
-        step: razorpayError.step,
-        reason: razorpayError.reason,
-        statusCode: razorpayError.statusCode,
-        error: razorpayError.error,
-        status: razorpayError.status,
-      });
-
-      // Extract error message from Razorpay error structure
-      let errorMessage = 'Failed to create payment order';
-      if (razorpayError.error?.description) {
-        errorMessage = razorpayError.error.description;
-      } else if (razorpayError.description) {
-        errorMessage = razorpayError.description;
-      } else if (razorpayError.message) {
-        errorMessage = razorpayError.message;
-      }
-
-      return next(new AppError(errorMessage, 500));
-    }
-
-    res.status(200).json({
-      success: true,
-      data: {
-        orderId: order.id,
-        amount: order.amount,
-        currency: order.currency,
-        keyId: process.env.RAZORPAY_KEY_ID,
-      },
-    });
-
-    // Create Pending Plan Transaction if this is a plan purchase
-    if (planData && planData.planId) {
-      try {
-        const plan = await Plan.findById(planData.planId);
-        if (plan) {
-          // Generate transaction ID
-          const now = new Date();
-          const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
-          const count = await PlanTransaction.countDocuments({
-            transactionId: {
-              $regex: new RegExp(`^PTX-${dateStr}-`)
-            }
-          });
-          const transactionId = `PTX-${dateStr}-${String(count + 1).padStart(3, '0')}`;
-
-          await PlanTransaction.create({
-            userId,
-            planId: plan._id,
-            orderId: order.id,
-            transactionId,
-            amount: amount / 100, // Store in Rupees (req.body.amount is in paise)
-            credits: plan.totalCredits,
-            planSnapshot: {
-              name: plan.planName,
-              originalPrice: plan.originalPrice,
-              finalPrice: plan.finalPrice
-            },
-            status: 'pending'
-          });
-          console.log('[PaymentController] Created pending PlanTransaction for order:', order.id);
-        }
-      } catch (txError) {
-        console.error('[PaymentController] Error creating pending PlanTransaction:', txError);
-        // Don't fail the response, just log the error
-      }
-    }
-  } catch (error: any) {
-    console.error('[PaymentController] Unexpected error creating Razorpay order:', error);
-    console.error('[PaymentController] Error stack:', error.stack);
-    console.error('[PaymentController] Error details:', {
-      message: error.message,
-      code: error.code,
-      description: error.description,
-      field: error.field,
-      source: error.source,
-      step: error.step,
-      reason: error.reason,
-      metadata: error.metadata,
-      statusCode: error.statusCode,
-      error: error.error,
-    });
-
-    // Provide more specific error messages
-    let errorMessage = 'Failed to create payment order';
-    if (error.message) {
-      errorMessage = error.message;
-    } else if (error.description) {
-      errorMessage = error.description;
-    } else if (error.error?.description) {
-      errorMessage = error.error.description;
-    }
-
-    return next(new AppError(errorMessage, 500));
-  }
-});
-
-// @desc    Verify payment and create booking/plan purchase
-// @route   POST /api/payments/verify
-// @access  Private
-export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
-  const userId = req.user?.id;
-  if (!userId) {
-    return next(new AppError('User not authenticated', 401));
-  }
-
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-
-  // Validation
-  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-    return next(new AppError('Payment verification data is required', 400));
-  }
-
-  try {
-    // Fetch order from Razorpay to get notes
     const razorpayInstance = getRazorpayInstance();
-    const order = await razorpayInstance.orders.fetch(razorpay_order_id);
-
-    if (!order || order.status !== 'paid') {
-      return next(new AppError('Order not found or not paid', 400));
-    }
-
-    // Verify signature
-    const text = `${razorpay_order_id}|${razorpay_payment_id}`;
-    const generatedSignature = crypto
-      .createHmac('sha256', process.env.RAZORPAY_API_SECRET || '')
-      .update(text)
-      .digest('hex');
-
-    if (generatedSignature !== razorpay_signature) {
-      return next(new AppError('Invalid payment signature', 400));
-    }
-
-    // Fetch payment details from Razorpay
-    let paymentDetails: any = null;
-    try {
-      const payment = await razorpayInstance.payments.fetch(razorpay_payment_id);
-      paymentDetails = payment; // Store raw response as requested
-    } catch (paymentError: any) {
-      console.error('[PaymentController] Error fetching payment details:', paymentError);
-      // Continue without payment details if fetch fails
-    }
-
-    // Extract metadata from order notes
-    const notes = order.notes || {};
-    const orderUserId = notes.userId;
-    const orderType = notes.type;
-
-    // Verify user matches
-    if (orderUserId !== userId) {
-      return next(new AppError('Order does not belong to this user', 403));
-    }
-
     const userIdObj = new mongoose.Types.ObjectId(userId);
 
-    // Process based on order type
-    if (orderType === 'plan') {
-      // Handle plan purchase
-      const planData = notes.planData ? JSON.parse(String(notes.planData)) : null;
-      if (!planData || !planData.planId) {
-        return next(new AppError('Plan data not found in order', 400));
+    // ==========================================
+    // Handle PLAN Purchase
+    // ==========================================
+    if (planData) {
+      if (!planData.planId) {
+        return next(new AppError('Plan ID is required', 400));
       }
 
       const plan = await Plan.findById(planData.planId);
@@ -374,46 +110,41 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         return next(new AppError('Plan not found', 404));
       }
 
-      // Calculate expected amount using checkout config fields
+      // Calculate expected amount
       const checkoutFields = await getActiveCheckoutFields();
       const calculationResult = await calculateCheckoutTotal(plan.finalPrice, checkoutFields);
       const expectedAmountInPaise = Math.round(calculationResult.total * 100);
 
-      // Verify amount matches calculated price (with tolerance of 5 Rs = 500 paise)
-      const tolerance = 500; // 5 Rs tolerance
-      const amountDifference = Math.abs(order.amount - expectedAmountInPaise);
-      if (amountDifference > tolerance) {
-        return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${order.amount / 100}`, 400));
+      // Verify amount
+      const tolerance = 500; // 5 Rs
+      if (Math.abs(amount - expectedAmountInPaise) > tolerance) {
+        return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${amount / 100}`, 400));
       }
 
-      // Get plan ID as string
-      const planIdString = plan._id.toString();
+      // Create Razorpay Order
+      const receipt = `PTX_${Date.now().toString(36)}_${userId.toString().slice(-4)}`;
+      const options = {
+        amount: Math.round(amount),
+        currency: currency.toUpperCase(),
+        receipt: receipt.substring(0, 40),
+        notes: {
+          userId,
+          type: 'plan',
+          planData: JSON.stringify({ planId: planData.planId })
+        },
+      };
 
-      // Update or create UserPlan record
-      let userPlan = await UserPlan.findOne({ userId: userIdObj });
-      if (!userPlan) {
-        userPlan = await UserPlan.create({
-          userId: userIdObj,
-          activePlanId: planIdString,
-        });
-      } else {
-        userPlan.activePlanId = planIdString;
-        await userPlan.save();
-      }
+      const order = await razorpayInstance.orders.create(options);
 
-      // Add credits to user
-      let userCredits = await UserCredits.findOne({ userId: userIdObj });
-      if (!userCredits) {
-        userCredits = await UserCredits.create({
-          userId: userIdObj,
-          credits: plan.totalCredits,
-        });
-      } else {
-        userCredits.credits += plan.totalCredits;
-        await userCredits.save();
-      }
+      // Create PENDING PlanTransaction
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+      const count = await PlanTransaction.countDocuments({
+        transactionId: { $regex: new RegExp(`^PTX-${dateStr}-`) }
+      });
+      const transactionId = `PTX-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
-      // Prepare payment breakdown for storage (similar to booking)
+      // Prepare payment breakdown
       const paymentBreakdown = calculationResult.breakdown.map(item => {
         const field = checkoutFields.find(f => f.fieldName === item.fieldName);
         return {
@@ -425,61 +156,44 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         };
       });
 
-      // Create or Update PlanTransaction Record
-      console.log(`[PaymentController] Looking for existing PlanTransaction with orderId: ${razorpay_order_id}`);
-      const existingTx = await PlanTransaction.findOne({ orderId: razorpay_order_id });
-      console.log(`[PaymentController] Existing transaction found: ${!!existingTx}`, existingTx ? `ID: ${existingTx._id}, Status: ${existingTx.status}` : '');
-
-      if (existingTx) {
-        existingTx.status = 'completed';
-        existingTx.amount = calculationResult.total; // Ensure amount is in Rupees
-        existingTx.paymentId = razorpay_payment_id;
-        existingTx.paymentDetails = paymentDetails || undefined;
-        existingTx.paymentBreakdown = paymentBreakdown.length > 0 ? paymentBreakdown : undefined;
-        await existingTx.save();
-      } else {
-        console.log('[PaymentController] Fallback: Creating new completed PlanTransaction (pending not found)');
-        // Fallback: Create if not exists (e.g. for legacy testing or if createOrder failed to create it)
-        await PlanTransaction.create({
-          userId: userIdObj,
-          planId: plan._id,
-          orderId: razorpay_order_id,
-          amount: calculationResult.total,
-          credits: plan.totalCredits,
-          planSnapshot: {
-            name: plan.planName,
-            originalPrice: plan.originalPrice,
-            finalPrice: plan.finalPrice
-          },
-          status: 'completed',
-          paymentId: razorpay_payment_id,
-          paymentDetails: paymentDetails || undefined,
-          paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined
-        });
-      }
-
-      // Fetch updated user
-      const user = await User.findById(userIdObj).select('-password');
+      await PlanTransaction.create({
+        userId: userIdObj,
+        planId: plan._id,
+        orderId: order.id,
+        transactionId,
+        amount: calculationResult.total, // Store in Rupees
+        credits: plan.totalCredits,
+        planSnapshot: {
+          name: plan.planName,
+          originalPrice: plan.originalPrice,
+          finalPrice: plan.finalPrice
+        },
+        paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
+        status: 'pending' // Pending payment
+      });
 
       res.status(200).json({
         success: true,
         data: {
-          plan: {
-            id: plan._id.toString(),
-            planName: plan.planName,
-            planTitle: plan.planTitle,
-            planSubTitle: plan.planSubTitle,
-            totalCredits: plan.totalCredits,
-            finalPrice: plan.finalPrice,
-          },
-          user: user?.toObject(),
+          orderId: order.id,
+          amount: order.amount,
+          currency: order.currency,
+          keyId: process.env.RAZORPAY_KEY_ID,
         },
       });
-    } else if (orderType === 'booking') {
-      // Handle booking creation
-      const bookingData = notes.bookingData ? JSON.parse(String(notes.bookingData)) : null;
-      if (!bookingData) {
-        return next(new AppError('Booking data not found in order', 400));
+      return;
+    }
+
+    // ==========================================
+    // Handle BOOKING
+    // ==========================================
+    if (bookingData) {
+      if (!bookingData.addressId || !bookingData.items || !Array.isArray(bookingData.items) || bookingData.items.length === 0) {
+        return next(new AppError('Valid booking data is required', 400));
+      }
+
+      if (!bookingData.bookingType || !['ASAP', 'SCHEDULED'].includes(bookingData.bookingType)) {
+        return next(new AppError('Valid booking type is required', 400));
       }
 
       // Get user's address
@@ -492,14 +206,10 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       let totalAmount = 0;
       let totalOriginalAmount = 0;
       let creditsUsed = 0;
-
       const orderItems = [];
-      // Fetch latest user data for credit calculation
-      // Credits are stored in UserCredits model, not User model
+
       const userCreditsRecord = await UserCredits.findOne({ userId: userIdObj });
       let availableCredits = userCreditsRecord?.credits || 0;
-
-      // Active plan is stored in UserPlan model, not User model
       const userPlanRecord = await UserPlan.findOne({ userId: userIdObj });
       const hasActivePlan = !!userPlanRecord?.activePlanId;
 
@@ -529,10 +239,9 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         if (hasActivePlan && variant.includedInSubscription && variant.creditValue > 0) {
           const requiredCredits = variant.creditValue * quantity;
           if (availableCredits >= requiredCredits) {
-            // Fully covered by credits
             itemCredits = requiredCredits;
-            itemPriceForTotal = 0; // No cash cost
-            availableCredits -= requiredCredits; // Deduct from local tracker
+            itemPriceForTotal = 0;
+            availableCredits -= requiredCredits;
           }
         }
 
@@ -547,7 +256,7 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           variantName: variant.name,
           quantity,
           originalPrice: variant.originalPrice,
-          finalPrice: itemPriceForTotal > 0 ? variant.finalPrice : 0, // Set to 0 if fully paid by credits
+          finalPrice: itemPriceForTotal > 0 ? variant.finalPrice : 0,
           creditValue: variant.creditValue,
           estimatedTimeMinutes: variant.estimatedTimeMinutes,
           customerVisitRequired: variant.customerVisitRequired !== undefined ? variant.customerVisitRequired : false,
@@ -555,19 +264,34 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         });
       }
 
-      // Calculate expected amount using checkout config fields
+      // Calculate expected amount
       const checkoutFields = await getActiveCheckoutFields();
       const calculationResult = await calculateCheckoutTotal(totalAmount, checkoutFields);
       const expectedAmountInPaise = Math.round(calculationResult.total * 100);
 
-      // Verify amount matches calculated total (with tolerance of 5 Rs = 500 paise)
-      const tolerance = 500; // 5 Rs tolerance
-      const amountDifference = Math.abs(order.amount - expectedAmountInPaise);
-      if (amountDifference > tolerance) {
-        return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${order.amount / 100}`, 400));
+      // Verify amount
+      const tolerance = 500;
+      if (Math.abs(amount - expectedAmountInPaise) > tolerance) {
+        return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${amount / 100}`, 400));
       }
 
-      // Prepare payment breakdown for storage
+      // Create Razorpay Order
+      const receipt = `BK_${Date.now().toString(36)}_${userId.toString().slice(-4)}`;
+      const options = {
+        amount: Math.round(amount),
+        currency: currency.toUpperCase(),
+        receipt: receipt.substring(0, 40),
+        notes: {
+          userId,
+          type: 'booking',
+          // minimal info in notes, detailed info in DB
+          bookingRef: `user_${userId}`
+        },
+      };
+
+      const order = await razorpayInstance.orders.create(options);
+
+      // Prepare payment breakdown
       const paymentBreakdown = calculationResult.breakdown.map(item => {
         const field = checkoutFields.find(f => f.fieldName === item.fieldName);
         return {
@@ -579,32 +303,15 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
         };
       });
 
-      // Generate booking ID
+      // Generate booking ID manually to use for Order Items assignment
       const now = new Date();
       const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
-      const startOfDay = new Date(now);
-      startOfDay.setHours(0, 0, 0, 0);
-      const endOfDay = new Date(now);
-      endOfDay.setHours(23, 59, 59, 999);
-
       const count = await Booking.countDocuments({
-        $or: [
-          {
-            createdAt: {
-              $gte: startOfDay,
-              $lt: endOfDay,
-            },
-          },
-          {
-            bookingId: {
-              $regex: new RegExp(`^BOOK-${dateStr}-`),
-            },
-          },
-        ],
+        bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) }
       });
       const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
-      // Create booking
+      // Create PENDING Booking
       const booking = await Booking.create({
         userId: userIdObj,
         bookingId,
@@ -632,54 +339,186 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
             d.setHours(d.getHours() + 1);
             return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
           })(),
-        totalAmount: calculationResult.total, // Final amount including all checkout fields
-        itemTotal: totalAmount, // Item total before checkout fields
+        totalAmount: calculationResult.total,
+        itemTotal: totalAmount,
         totalOriginalAmount,
         creditsUsed,
         paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
-        status: 'pending',
-        paymentStatus: 'paid',
-        paymentId: razorpay_payment_id,
-        orderId: razorpay_order_id,
-        paymentDetails: paymentDetails || undefined,
+        status: BookingStatus.PENDING,
+        paymentStatus: 'pending',
+        orderId: order.id,
         notes: bookingData.notes || undefined,
       });
 
-      // Create order items
-      // Create order items
-      const createdOrderItems = await OrderItem.insertMany(
-        orderItems.map((item) => ({
-          bookingId: booking._id,
-          ...item,
-        }))
-      );
-
-      // Auto-assign service partner
       try {
-        await autoAssignServicePartner(booking, createdOrderItems);
-      } catch (error) {
-        console.error('[PaymentController] Error auto-assigning partner:', error);
+        // Create Order Items linked to this booking
+        await OrderItem.insertMany(
+          orderItems.map((item) => ({
+            bookingId: booking._id,
+            ...item,
+            status: BookingStatus.PENDING
+          }))
+        );
+      } catch (itemError) {
+        // If creating items fails, we must delete the orphan booking to prevent "invisible" bookings
+        await Booking.findByIdAndDelete(booking._id);
+        throw itemError;
       }
 
-      // Deduct credits if used
-      // Deduct credits if used
-      if (creditsUsed > 0) {
+      res.status(200).json({
+        success: true,
+        data: {
+          orderId: order.id,
+          amount: order.amount,
+          currency: order.currency,
+          keyId: process.env.RAZORPAY_KEY_ID,
+        },
+      });
+    }
+
+  } catch (error: any) {
+    console.error('[PaymentController] Error creating order:', error);
+    // Provide nice error message
+    let errorMessage = 'Failed to create payment order';
+    if (error.error?.description) errorMessage = error.error.description;
+    else if (error.message) errorMessage = error.message;
+    return next(new AppError(errorMessage, 500));
+  }
+});
+
+// @desc    Verify payment and confirm booking/plan purchase
+// @route   POST /api/payments/verify
+// @access  Private
+export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    return next(new AppError('Payment verification data is required', 400));
+  }
+
+  try {
+    const userIdObj = new mongoose.Types.ObjectId(userId);
+
+    // Verify signature
+    const text = `${razorpay_order_id}|${razorpay_payment_id}`;
+    const generatedSignature = crypto
+      .createHmac('sha256', process.env.RAZORPAY_API_SECRET || '')
+      .update(text)
+      .digest('hex');
+
+    if (generatedSignature !== razorpay_signature) {
+      return next(new AppError('Invalid payment signature', 400));
+    }
+
+    // Try to find a pending PlanTransaction with this orderId
+    const planTx = await PlanTransaction.findOne({ orderId: razorpay_order_id });
+
+    // ==========================================
+    // Handle PLAN Verification
+    // ==========================================
+    if (planTx) {
+      if (planTx.userId.toString() !== userId) {
+        return next(new AppError('Transaction does not belong to this user', 403));
+      }
+
+      if (planTx.status === 'completed') {
+        // Already completed, just return success
+        res.status(200).json({ success: true, data: { plan: { /* minimal data needed */ } } });
+        return;
+      }
+
+      // Update Transaction
+      planTx.status = 'completed';
+      planTx.paymentId = razorpay_payment_id;
+      // Fetch and save details asynchronously if needed, or skip for speed
+      await planTx.save();
+
+      // Update User Plan & Credits
+      const plan = await Plan.findById(planTx.planId);
+      if (plan) {
+        // Update UserPlan
+        let userPlan = await UserPlan.findOne({ userId: userIdObj });
+        if (!userPlan) {
+          userPlan = await UserPlan.create({ userId: userIdObj, activePlanId: plan._id.toString() });
+        } else {
+          userPlan.activePlanId = plan._id.toString();
+          await userPlan.save();
+        }
+
+        // Add Credits
+        let userCredits = await UserCredits.findOne({ userId: userIdObj });
+        if (!userCredits) {
+          userCredits = await UserCredits.create({ userId: userIdObj, credits: plan.totalCredits });
+        } else {
+          userCredits.credits += plan.totalCredits;
+          await userCredits.save();
+        }
+      }
+
+      // Return success
+      const user = await User.findById(userIdObj).select('-password');
+      res.status(200).json({
+        success: true,
+        data: {
+          plan: {
+            id: plan?._id.toString(),
+            planName: plan?.planName,
+            finalPrice: plan?.finalPrice,
+          },
+          user: user?.toObject(),
+        },
+      });
+      return;
+    }
+
+    // ==========================================
+    // Handle BOOKING Verification
+    // ==========================================
+    const booking = await Booking.findOne({ orderId: razorpay_order_id });
+
+    if (booking) {
+      if (booking.userId.toString() !== userId) {
+        return next(new AppError('Booking does not belong to this user', 403));
+      }
+
+      if (booking.paymentStatus === 'paid') {
+        res.status(200).json({ success: true, data: { booking: { id: booking._id } } });
+        return;
+      }
+
+      // Update Booking
+      booking.paymentStatus = 'paid';
+      booking.paymentId = razorpay_payment_id;
+      booking.status = 'confirmed'; // Confirmed after payment
+      await booking.save();
+
+      // 1. Deduct Credits
+      if (booking.creditsUsed > 0) {
         const userCredits = await UserCredits.findOne({ userId: userIdObj });
         if (userCredits) {
-          if (userCredits.credits >= creditsUsed) {
-            userCredits.credits -= creditsUsed;
-            await userCredits.save();
-            console.log(`[PaymentController] Deducted ${creditsUsed} credits from user ${userIdObj}`);
-          } else {
-            console.error(`[PaymentController] Critical: User ${userIdObj} has insufficient credits ${userCredits.credits} for deduction of ${creditsUsed}`);
-            // Force deduction anyway to match transaction, or log for reconciliation
-            userCredits.credits = Math.max(0, userCredits.credits - creditsUsed);
-            await userCredits.save();
-          }
-        } else {
-          console.error(`[PaymentController] Critical: UserCredits record not found for user ${userIdObj} during deduction`);
+          userCredits.credits = Math.max(0, userCredits.credits - booking.creditsUsed);
+          await userCredits.save();
+          console.log(`[PaymentController] Deducted ${booking.creditsUsed} credits from user ${userIdObj}`);
         }
-      } // Transform booking for response
+      }
+
+      // 2. Fetch Order Items for this booking
+      const orderItems = await OrderItem.find({ bookingId: booking._id });
+
+      // 3. Auto-Assign
+      try {
+        await autoAssignServicePartner(booking, orderItems);
+      } catch (err) {
+        console.error('[PaymentController] Auto-assign failed:', err);
+      }
+
+      // 4. Construct response
+      const address = booking.address;
       const transformedBooking = {
         id: booking._id.toString(),
         bookingId: booking.bookingId,
@@ -694,18 +533,18 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           quantity: item.quantity,
         })),
         totalAmount: booking.totalAmount,
-        itemTotal: booking.itemTotal || totalAmount, // Fallback for old bookings
+        itemTotal: booking.itemTotal,
         paymentBreakdown: booking.paymentBreakdown || [],
-        status: booking.status === 'pending' ? 'Upcoming' : booking.status,
+        status: booking.status,
         date: booking.scheduledDate?.toISOString() || new Date().toISOString(),
         time: booking.scheduledTime || '',
         address: {
-          id: address.id,
+          id: booking.addressId,
           label: address.label,
           fullAddress: address.fullAddress,
           area: address.area,
           coordinates: address.coordinates,
-          isDefault: address.isDefault || false,
+          isDefault: false,
         },
         type: booking.bookingType === 'ASAP' ? 'ASAP' : 'SCHEDULED',
       };
@@ -716,9 +555,12 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           booking: transformedBooking,
         },
       });
-    } else {
-      return next(new AppError('Invalid order type', 400));
+      return;
     }
+
+    // If neither planTx nor booking found
+    return next(new AppError('Order not found', 404));
+
   } catch (error: any) {
     console.error('[PaymentController] Error verifying payment:', error);
     return next(new AppError(error.message || 'Payment verification failed', 500));

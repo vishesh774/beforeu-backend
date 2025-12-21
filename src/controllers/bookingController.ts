@@ -464,10 +464,11 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
     const statusValues: string[] = [];
 
     // Map frontend status values to backend status values
+    // Map frontend status values to backend status values
     const statusMap: Record<string, string[]> = {
-      'Upcoming': ['pending', 'confirmed', 'in_progress'],
-      'Completed': ['completed'],
-      'Cancelled': ['cancelled']
+      'Upcoming': [BookingStatus.PENDING, BookingStatus.CONFIRMED, BookingStatus.ASSIGNED, BookingStatus.EN_ROUTE, BookingStatus.REACHED, BookingStatus.IN_PROGRESS],
+      'Completed': [BookingStatus.COMPLETED],
+      'Cancelled': [BookingStatus.CANCELLED]
     };
 
     statusArray.forEach((status) => {
@@ -476,9 +477,12 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
         statusValues.push(...statusMap[statusStr]);
       } else {
         // Also support direct backend status values
-        const backendStatuses = ['pending', 'confirmed', 'assigned', 'en_route', 'reached', 'in_progress', 'completed', 'cancelled', 'refund_initiated', 'refunded', 'inprogress'];
-        if (backendStatuses.includes(statusStr)) {
-          statusValues.push(statusStr === 'inprogress' ? 'in_progress' : statusStr);
+        const validStatuses = Object.values(BookingStatus) as string[];
+        // Handle legacy 'inprogress' case
+        if (statusStr === 'inprogress' && validStatuses.includes(BookingStatus.IN_PROGRESS)) {
+          statusValues.push(BookingStatus.IN_PROGRESS);
+        } else if (validStatuses.includes(statusStr)) {
+          statusValues.push(statusStr);
         }
       }
     });
@@ -809,17 +813,17 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
 
   if (statusFilter) {
     const statusMap: Record<string, string | string[]> = {
-      'pending': 'pending',
-      'confirmed': 'confirmed',
-      'in_progress': 'in_progress',
-      'ongoing': ['assigned', 'en_route', 'reached', 'in_progress'],
-      'completed': 'completed',
-      'cancelled': 'cancelled',
-      'refund_initiated': 'refund_initiated',
-      'refunded': 'refunded',
-      'en_route': 'en_route',
-      'assigned': 'assigned',
-      'reached': 'reached'
+      [BookingStatus.PENDING]: BookingStatus.PENDING,
+      [BookingStatus.CONFIRMED]: BookingStatus.CONFIRMED,
+      [BookingStatus.IN_PROGRESS]: BookingStatus.IN_PROGRESS,
+      'ongoing': [BookingStatus.ASSIGNED, BookingStatus.EN_ROUTE, BookingStatus.REACHED, BookingStatus.IN_PROGRESS],
+      [BookingStatus.COMPLETED]: BookingStatus.COMPLETED,
+      [BookingStatus.CANCELLED]: BookingStatus.CANCELLED,
+      [BookingStatus.REFUND_INITIATED]: BookingStatus.REFUND_INITIATED,
+      [BookingStatus.REFUNDED]: BookingStatus.REFUNDED,
+      [BookingStatus.EN_ROUTE]: BookingStatus.EN_ROUTE,
+      [BookingStatus.ASSIGNED]: BookingStatus.ASSIGNED,
+      [BookingStatus.REACHED]: BookingStatus.REACHED
     };
 
     if (statusMap[statusFilter]) {
