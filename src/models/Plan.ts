@@ -18,6 +18,7 @@ export interface IPlan extends Document {
   originalPrice: number;
   finalPrice: number;
   totalMembers: number;
+  validity: number;
   extraDiscount?: number; // Optional discount percentage (0-100)
   createdAt: Date;
   updatedAt: Date;
@@ -88,7 +89,7 @@ const PlanSchema = new Schema<IPlan>(
       required: true,
       default: [],
       validate: {
-        validator: function(services: IPlanService[]) {
+        validator: function (services: IPlanService[]) {
           // Check for duplicate subServiceIds
           const subServiceIds = services.map(s => s.subServiceId);
           return new Set(subServiceIds).size === subServiceIds.length;
@@ -110,6 +111,12 @@ const PlanSchema = new Schema<IPlan>(
       type: Number,
       required: [true, 'Total members is required'],
       min: [1, 'Total members must be at least 1']
+    },
+    validity: {
+      type: Number,
+      required: [true, 'Validity (in days) is required'],
+      default: 365,
+      enum: [7, 15, 30, 45, 60, 75, 90, 120, 180, 270, 365]
     },
     extraDiscount: {
       type: Number,

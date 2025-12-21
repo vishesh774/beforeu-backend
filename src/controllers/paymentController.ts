@@ -443,7 +443,8 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       if (plan) {
         // Update UserPlan
         const expiryDate = new Date();
-        expiryDate.setFullYear(expiryDate.getFullYear() + 1);
+        const validityDays = plan.validity || 365;
+        expiryDate.setDate(expiryDate.getDate() + validityDays);
 
         let userPlan = await UserPlan.findOne({ userId: userIdObj });
         if (!userPlan) {

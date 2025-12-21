@@ -97,6 +97,7 @@ export const getUserPlans = asyncHandler(async (_: Request, res: Response) => {
         totalCredits: { $ifNull: ['$plan.totalCredits', 0] },
         remainingCredits: { $ifNull: ['$credits.credits', 0] },
         purchaseDate: '$updatedAt', // UserPlan updatedAt is essentially the last purchase/activation time
+        expiresAt: '$expiresAt',
         createdAt: '$createdAt'
       }
     },
@@ -133,7 +134,20 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
         as: 'userCredits'
       }
     },
-    { $unwind: { path: '$userCredits', preserveNullAndEmptyArrays: true } },
+    {
+      $unwind: { path: '$userCredits', preserveNullAndEmptyArrays: true }
+    },
+    {
+      $lookup: {
+        from: 'userplans',
+        localField: 'userId',
+        foreignField: 'userId',
+        as: 'userPlan'
+      }
+    },
+    {
+      $unwind: { path: '$userPlan', preserveNullAndEmptyArrays: true }
+    },
     {
       $project: {
         _id: 1,
@@ -148,7 +162,8 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
         status: '$status',
         orderId: '$orderId',
         transactionId: '$transactionId',
-        purchaseDate: '$createdAt'
+        purchaseDate: '$createdAt',
+        expiresAt: '$userPlan.expiresAt'
       }
     },
     { $sort: { purchaseDate: -1 } }
@@ -199,7 +214,8 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
         remainingCredits: { $ifNull: ['$credits.credits', 0] }, // Use previously looked up credits
         status: { $cond: { if: { $ifNull: ['$plan', false] }, then: 'completed', else: 'failed' } }, // Map active to completed
         orderId: { $concat: ['LEGACY-', { $toString: '$_id' }] }, // Mock Order ID
-        purchaseDate: '$updatedAt'
+        purchaseDate: '$updatedAt',
+        expiresAt: '$expiresAt'
       }
     }
   ]);
@@ -287,6 +303,9 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
     userId = planTx.userId;
   }
 
+  // Fetch active plan details for expiry
+  const userPlan = await UserPlan.findOne({ userId });
+
   // Fetch User Details
   const user = await User.findById(userId).select('name email phone');
 
@@ -307,7 +326,7 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
       stats: {
         totalCredits: transaction.credits,
         remainingCredits,
-        expiryDate: 'Lifetime' // Hardcoded as per requirement
+        expiryDate: userPlan?.expiresAt || 'Lifetime'
       },
       bookings
     }
@@ -341,7 +360,7 @@ export const getPlan = asyncHandler(async (req: Request, res: Response, next: an
 // @route   POST /api/admin/plans
 // @access  Private/Admin
 export const createPlan = asyncHandler(async (req: Request, res: Response, next: any) => {
-  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, extraDiscount } = req.body;
+  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, validity, extraDiscount } = req.body;
 
   if (!planName || !planName.trim()) {
     return next(new AppError('Plan name is required', 400));
@@ -400,6 +419,7 @@ export const createPlan = asyncHandler(async (req: Request, res: Response, next:
     originalPrice,
     finalPrice,
     totalMembers,
+    validity: validity || 365,
     extraDiscount: extraDiscount !== undefined && extraDiscount !== null ? extraDiscount : undefined
   });
 
@@ -419,7 +439,7 @@ export const createPlan = asyncHandler(async (req: Request, res: Response, next:
 // @access  Private/Admin
 export const updatePlan = asyncHandler(async (req: Request, res: Response, next: any) => {
   const { id } = req.params;
-  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, extraDiscount } = req.body;
+  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, validity, extraDiscount } = req.body;
 
   const plan = await Plan.findById(id);
 
@@ -486,6 +506,13 @@ export const updatePlan = asyncHandler(async (req: Request, res: Response, next:
       return next(new AppError('Total members must be at least 1', 400));
     }
     plan.totalMembers = totalMembers;
+  }
+
+  if (validity !== undefined) {
+    if (validity <= 0) {
+      return next(new AppError('Validity must be a positive number', 400));
+    }
+    plan.validity = validity;
   }
 
   if (extraDiscount !== undefined) {
