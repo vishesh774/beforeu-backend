@@ -1463,23 +1463,34 @@ export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Resp
     }
   }
 
-  // Handle SOS Resolution sync
-  if (newStatus === BookingStatus.COMPLETED && booking.bookingType === 'SOS') {
+  // Handle SOS Resolution/Cancellation sync
+  if (booking.bookingType === 'SOS') {
     try {
       const sosAlert = await SOSAlert.findOne({ bookingId: booking._id });
-      if (sosAlert && sosAlert.status !== 'RESOLVED') {
-        sosAlert.status = SOSStatus.RESOLVED;
-        sosAlert.resolvedAt = new Date();
-        sosAlert.logs.push({
-          action: 'RESOLVED',
-          timestamp: new Date(),
-          details: 'Auto-resolved via booking completion'
-        });
-        await sosAlert.save();
-        socketService.emitToAdmin('sos:resolved', await sosAlert.populate('user', 'name phone email'));
+      if (sosAlert) {
+        if (newStatus === BookingStatus.COMPLETED && sosAlert.status !== SOSStatus.RESOLVED) {
+          sosAlert.status = SOSStatus.RESOLVED;
+          sosAlert.resolvedAt = new Date();
+          sosAlert.logs.push({
+            action: 'RESOLVED',
+            timestamp: new Date(),
+            details: 'Auto-resolved via booking completion'
+          });
+          await sosAlert.save();
+          socketService.emitToAdmin('sos:resolved', await sosAlert.populate('user', 'name phone email'));
+        } else if (newStatus === BookingStatus.CANCELLED && sosAlert.status !== SOSStatus.CANCELLED) {
+          sosAlert.status = SOSStatus.CANCELLED;
+          sosAlert.logs.push({
+            action: 'CANCELLED',
+            timestamp: new Date(),
+            details: 'Auto-cancelled via booking cancellation'
+          });
+          await sosAlert.save();
+          socketService.emitToAdmin('sos:cancelled', await sosAlert.populate('user', 'name phone email'));
+        }
       }
     } catch (sosError) {
-      console.error('[updateOrderItemStatus] Error syncing SOS resolution:', sosError);
+      console.error('[updateOrderItemStatus] Error syncing SOS alert status:', sosError);
     }
   }
 

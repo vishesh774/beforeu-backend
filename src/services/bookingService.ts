@@ -216,7 +216,7 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                 // Assign partner to this specific order item
                 await OrderItem.findByIdAndUpdate(item._id, {
                     assignedPartnerId: assignedPartner._id,
-                    status: item.status === BookingStatus.PENDING ? BookingStatus.ASSIGNED : item.status
+                    status: [BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(item.status) ? BookingStatus.ASSIGNED : item.status
                 });
                 console.log(`[autoAssignServicePartner] Assigned partner ${assignedPartner.name} to item ${item._id} (${service.name})`);
             } else {

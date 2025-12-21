@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { SOSAlert, SOSStatus } from '../models/SOSAlert';
+import mongoose from 'mongoose';
 import Booking from '../models/Booking';
 import OrderItem from '../models/OrderItem';
 import { socketService } from '../services/socketService';
@@ -95,7 +96,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
             const bIdStr = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
             const booking = await Booking.create({
-                userId: userId,
+                userId: new mongoose.Types.ObjectId(userId),
                 bookingId: bIdStr,
                 addressId: 'SOS_LOCATION',
                 address: {
@@ -110,7 +111,8 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 itemTotal: 0,
                 totalAmount: 0,
                 totalOriginalAmount: 0,
-                status: 'pending',
+                status: 'confirmed',
+                paymentStatus: 'paid',
                 notes: `SOS ALERT: ${location.emergencyType || 'General Emergency'}`
             });
 
@@ -123,9 +125,11 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 quantity: 1,
                 originalPrice: 0,
                 finalPrice: 0,
+                creditValue: 0,
                 estimatedTimeMinutes: 30,
                 customerVisitRequired: true,
-                status: 'pending',
+                paidWithCredits: false,
+                status: 'confirmed',
                 startJobOtp: 'NONE', // Special case for SOS
                 endJobOtp: generatedOtp, // Use the SOS OTP as the completion OTP
             });
