@@ -1033,6 +1033,8 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
           phone: item.partner.phone
         } : undefined,
         status: item.status,
+        startJobOtp: item.startJobOtp,
+        endJobOtp: item.endJobOtp,
         paidWithCredits: item.paidWithCredits
       }],
       address: item.booking.address,
@@ -1123,6 +1125,8 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
       originalPrice: item.originalPrice,
       estimatedTimeMinutes: item.estimatedTimeMinutes,
       status: item.status,
+      startJobOtp: item.startJobOtp,
+      endJobOtp: item.endJobOtp,
       assignedPartner: item.assignedPartnerId ? {
         id: (item.assignedPartnerId as any)._id,
         name: (item.assignedPartnerId as any).name,

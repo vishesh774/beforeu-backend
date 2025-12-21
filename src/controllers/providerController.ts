@@ -5,7 +5,7 @@ import { AuthRequest } from '../middleware/auth';
 import OrderItem from '../models/OrderItem';
 import ServicePartner from '../models/ServicePartner';
 
-import { BookingStatus, COMPLETED_BOOKING_STATUSES } from '../constants/bookingStatus';
+import { BookingStatus, COMPLETED_BOOKING_STATUSES, ONGOING_BOOKING_STATUSES } from '../constants/bookingStatus';
 import { syncBookingStatus } from '../services/bookingService';
 
 // @desc    Get all assigned jobs for the logged-in provider
@@ -29,10 +29,7 @@ export const getProviderJobs = asyncHandler(async (req: AuthRequest, res: Respon
         assignedPartnerId: partner._id,
         status: {
             $in: [
-                BookingStatus.ASSIGNED,
-                BookingStatus.EN_ROUTE,
-                BookingStatus.REACHED,
-                BookingStatus.IN_PROGRESS,
+                ...ONGOING_BOOKING_STATUSES,
                 BookingStatus.COMPLETED
             ]
         }
