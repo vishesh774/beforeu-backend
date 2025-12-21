@@ -116,6 +116,9 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 notes: `SOS ALERT: ${location.emergencyType || 'General Emergency'}`
             });
 
+            // Link booking to SOS alert immediately after creation
+            newAlert.bookingId = booking._id;
+
             const orderItem = await OrderItem.create({
                 bookingId: booking._id,
                 serviceId: service._id,
@@ -136,13 +139,15 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
 
             // Trigger auto-assignment for SOS
             console.log(`[triggerSOS] Triggering auto-assignment for SOS booking ${bIdStr}`);
-            await autoAssignServicePartner(booking, [orderItem]);
+            try {
+                await autoAssignServicePartner(booking, [orderItem]);
+            } catch (assignError) {
+                console.error('[triggerSOS] Auto-assignment failed but booking/item created:', assignError);
+            }
 
-            // Link booking to SOS alert
-            newAlert.bookingId = booking._id;
-            console.log(`[triggerSOS] Created and auto-assigned Booking ${bIdStr} for SOS`);
+            console.log(`[triggerSOS] Created Booking ${bIdStr} for SOS`);
         } catch (bookingError) {
-            console.error('[triggerSOS] Error creating SOS booking:', bookingError);
+            console.error('[triggerSOS] Error creating SOS booking/item:', bookingError);
         }
         // --- END: Create Booking ---
 
@@ -423,14 +428,57 @@ export const getSOSDetails = async (req: AuthRequest, res: Response) => {
         }
 
         let bookingData = null;
-        if (alert.bookingId) {
-            const booking = await Booking.findById(alert.bookingId).populate('userId', 'name email phone');
+        let bookingIdToUse = alert.bookingId;
+
+        // Fallback: If no bookingId on alert, try to find a recent SOS booking for this user
+        if (!bookingIdToUse) {
+            const foundBooking = await Booking.findOne({
+                userId: alert.user._id,
+                bookingType: 'SOS'
+            }).sort({ createdAt: -1 });
+            if (foundBooking) {
+                bookingIdToUse = foundBooking._id;
+            }
+        }
+
+        if (bookingIdToUse) {
+            const booking = await Booking.findById(bookingIdToUse).populate('userId', 'name email phone');
             if (booking) {
-                const items = await OrderItem.find({ bookingId: booking._id })
+                let items = await OrderItem.find({ bookingId: booking._id })
                     .populate('serviceId', 'name icon')
                     .populate('serviceVariantId', 'name icon')
                     .populate('assignedPartnerId', 'name phone email')
                     .populate('assignedServiceLocationId', 'name address contactNumber');
+
+                // Healing logic: If SOS booking has no items, create the default one
+                if (items.length === 0 && booking.bookingType === 'SOS') {
+                    console.log(`[getSOSDetails] Healing SOS booking ${booking.bookingId}: Creating missing OrderItem`);
+                    const { service, variant } = await getSOSService();
+                    await OrderItem.create({
+                        bookingId: booking._id,
+                        serviceId: service._id,
+                        serviceVariantId: variant._id,
+                        serviceName: service.name,
+                        variantName: variant.name,
+                        quantity: 1,
+                        originalPrice: 0,
+                        finalPrice: 0,
+                        creditValue: 0,
+                        estimatedTimeMinutes: 30,
+                        customerVisitRequired: true,
+                        paidWithCredits: false,
+                        status: booking.status === 'pending' ? 'confirmed' : (booking.status as any) || 'confirmed',
+                        startJobOtp: 'NONE',
+                        endJobOtp: alert.otp || Math.floor(1000 + Math.random() * 9000).toString(),
+                    });
+
+                    // Re-fetch items after creation to have populated data
+                    items = await OrderItem.find({ bookingId: booking._id })
+                        .populate('serviceId', 'name icon')
+                        .populate('serviceVariantId', 'name icon')
+                        .populate('assignedPartnerId', 'name phone email')
+                        .populate('assignedServiceLocationId', 'name address contactNumber');
+                }
 
                 bookingData = {
                     id: booking._id,

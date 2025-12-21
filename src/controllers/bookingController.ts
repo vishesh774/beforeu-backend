@@ -552,6 +552,32 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
           updatedAt: booking.updatedAt.toISOString(),
           creditsUsed: booking.creditsUsed || 0 // Include creditsUsed in list view
         }));
+      } else if (booking.bookingType === 'SOS') {
+        // Fallback for SOS bookings with no items yet (healing will happen when details are viewed)
+        return [{
+          id: `${booking.bookingId}-1`,
+          bookingId: booking.bookingId,
+          items: [],
+          totalAmount: 0,
+          taxAmount: 0,
+          itemTotal: 0,
+          status: booking.status,
+          date: booking.createdAt.toISOString(),
+          time: '',
+          address: {
+            id: booking.addressId || '',
+            label: booking.address?.label || 'Address',
+            fullAddress: booking.address?.fullAddress || '',
+            area: booking.address?.area,
+            coordinates: booking.address?.coordinates,
+            isDefault: false
+          },
+          type: 'SOS',
+          paymentStatus: booking.paymentStatus,
+          createdAt: booking.createdAt.toISOString(),
+          updatedAt: booking.updatedAt.toISOString(),
+          creditsUsed: 0
+        }];
       }
 
       return []; // Return empty array if no items found

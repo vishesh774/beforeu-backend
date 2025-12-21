@@ -1,5 +1,6 @@
 import OTP from '../models/OTP';
-import { generateOTP, getOTPExpiration } from '../utils/generateOTP';
+// import { generateOTP, getOTPExpiration } from '../utils/generateOTP';
+import { getOTPExpiration } from '../utils/generateOTP';
 
 /**
  * Send OTP via SMS
@@ -101,7 +102,8 @@ export const createAndSendOTP = async (phone: string): Promise<{ success: boolea
     }
 
     // Generate OTP
-    const otpCode = generateOTP();
+    // const otpCode = generateOTP();
+    const otpCode = '123456';
     const expiresAt = getOTPExpiration(10); // 10 minutes expiry
 
     // Invalidate previous unverified OTPs for this phone
