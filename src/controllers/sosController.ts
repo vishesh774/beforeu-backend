@@ -31,7 +31,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
 
             // Emit update event
             const populatedAlert = await existingAlert.populate([
-                { path: 'user', select: 'name phoneNumber email' },
+                { path: 'user', select: 'name phone email' },
                 { path: 'familyMemberId' },
                 { path: 'serviceId' }
             ]);
@@ -61,7 +61,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
 
         // Populate user details for the frontend
         const populatedAlert = await newAlert.populate([
-            { path: 'user', select: 'name phoneNumber email' },
+            { path: 'user', select: 'name phone email' },
             { path: 'familyMemberId' },
             { path: 'serviceId' }
         ]);
@@ -107,7 +107,7 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => { // Changed
 
         await alert.save();
 
-        const populatedAlert = await alert.populate('user', 'name phoneNumber email');
+        const populatedAlert = await alert.populate('user', 'name phone email');
 
         // Emit Cancellation Event
         socketService.emitToAdmin('sos:cancelled', populatedAlert);
@@ -145,7 +145,7 @@ export const acknowledgeSOS = async (req: AuthRequest, res: Response) => { // Ch
 
         await alert.save();
 
-        const populatedAlert = await alert.populate('user', 'name phoneNumber email');
+        const populatedAlert = await alert.populate('user', 'name phone email');
 
         // Notify all admins that it's been picked up (to avoid double handling)
         socketService.emitToAdmin('sos:acknowledged', populatedAlert);
@@ -180,7 +180,7 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => { // Change
 
         await alert.save();
 
-        const populatedAlert = await alert.populate('user', 'name phoneNumber email');
+        const populatedAlert = await alert.populate('user', 'name phone email');
 
         // Notify removal
         socketService.emitToAdmin('sos:resolved', populatedAlert);
@@ -197,7 +197,7 @@ export const getActiveSOS = async (_req: AuthRequest, res: Response) => { // Cha
         const activeAlerts = await SOSAlert.find({
             status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] }
         })
-            .populate('user', 'name phoneNumber email')
+            .populate('user', 'name phone email')
             .sort({ createdAt: -1 });
 
         res.status(200).json({ success: true, data: activeAlerts });
@@ -223,7 +223,7 @@ export const getAllSOS = async (req: AuthRequest, res: Response) => {
 
         const total = await SOSAlert.countDocuments(filter);
         const alerts = await SOSAlert.find(filter)
-            .populate('user', 'name phoneNumber email')
+            .populate('user', 'name phone email')
             .populate('resolvedBy', 'name email')
             .sort({ createdAt: -1 })
             .skip((page - 1) * limit)
