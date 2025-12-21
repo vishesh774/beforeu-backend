@@ -16,10 +16,12 @@ export interface ISOSLog {
 
 export interface ISOSAlert extends Document {
     user: mongoose.Types.ObjectId;
+    sosId: string;
     location: {
         latitude: number;
         longitude: number;
         address?: string;
+        emergencyType?: string;
     };
     partnerLocation?: {
         latitude: number;
@@ -30,6 +32,7 @@ export interface ISOSAlert extends Document {
     serviceId?: mongoose.Types.ObjectId; // E.g., Booking ID or OrderItem ID
     bookingId?: mongoose.Types.ObjectId;
     status: SOSStatus;
+    otp: string;
     createdAt: Date;
     updatedAt: Date;
     resolvedAt?: Date;
@@ -46,10 +49,12 @@ const SOSLogSchema = new Schema({
 
 const SOSAlertSchema = new Schema({
     user: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    sosId: { type: String, required: true, unique: true },
     location: {
         latitude: { type: Number, required: true },
         longitude: { type: Number, required: true },
-        address: { type: String }
+        address: { type: String },
+        emergencyType: { type: String }
     },
     partnerLocation: {
         latitude: { type: Number },
@@ -64,6 +69,7 @@ const SOSAlertSchema = new Schema({
         enum: Object.values(SOSStatus),
         default: SOSStatus.TRIGGERED
     },
+    otp: { type: String, required: true },
     resolvedAt: { type: Date },
     resolvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     logs: [SOSLogSchema]

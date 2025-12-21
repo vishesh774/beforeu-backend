@@ -8,6 +8,7 @@ import {
     resolveSOS,
     getActiveSOS,
     getAllSOS,
+    getSOSDetails,
     updatePartnerLocation,
     getSOSAlertByBookingId
 } from '../controllers/sosController';
@@ -23,6 +24,7 @@ router.post('/update-location', protect, updatePartnerLocation);
 // Admin Endpoints (Protected by admin auth)
 router.get('/active', requireAdmin, getActiveSOS);
 router.get('/history', requireAdmin, getAllSOS);
+router.get('/:id', requireAdmin, getSOSDetails);
 router.post('/:id/acknowledge', requireAdmin, acknowledgeSOS);
 router.post('/:id/resolve', requireAdmin, resolveSOS);
 

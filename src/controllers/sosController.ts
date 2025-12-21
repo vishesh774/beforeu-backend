@@ -50,10 +50,26 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
             return;
         }
 
+        // Generate human-readable SOS ID
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+        const count = await SOSAlert.countDocuments({
+            sosId: { $regex: new RegExp(`^SOS-${dateStr}-`) }
+        });
+        const sosIdStr = `SOS-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+
+        // Generate 4-digit OTP
+        const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+
         // Create new SOS Alert
         const newAlert = new SOSAlert({
             user: userId,
-            location,
+            sosId: sosIdStr,
+            otp: generatedOtp,
+            location: {
+                ...location,
+                emergencyType: location.emergencyType || 'General Emergency'
+            },
             familyMemberId,
             serviceId,
             status: SOSStatus.TRIGGERED,
@@ -219,11 +235,24 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => {
     try {
         const adminId = req.user?.id;
         const { id } = req.params;
+        const { otp, manualOverride, reason } = req.body;
 
         const alert = await SOSAlert.findById(id);
         if (!alert) {
             res.status(404).json({ success: false, error: 'SOS Alert not found' });
             return;
+        }
+
+        // Verify OTP unless manual override is requested by admin
+        if (!manualOverride) {
+            if (!otp) {
+                res.status(400).json({ success: false, error: 'OTP is required to resolve SOS' });
+                return;
+            }
+            if (alert.otp !== otp) {
+                res.status(400).json({ success: false, error: 'Invalid OTP' });
+                return;
+            }
         }
 
         alert.status = SOSStatus.RESOLVED;
@@ -233,7 +262,7 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => {
             action: 'RESOLVED',
             timestamp: new Date(),
             performedBy: adminId as any,
-            details: 'Admin marked as resolved'
+            details: manualOverride ? `Admin marked as resolved (Manual Override). Reason: ${reason || 'N/A'}` : 'Admin marked as resolved with OTP verification'
         });
 
         await alert.save();
@@ -349,5 +378,26 @@ export const updatePartnerLocation = async (req: AuthRequest, res: Response) => 
     } catch (error) {
         console.error('Error updating partner location:', error);
         res.status(500).json({ success: false, error: 'Failed to update partner location' });
+    }
+};
+
+export const getSOSDetails = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const alert = await SOSAlert.findById(id)
+            .populate('user', 'name phone email')
+            .populate('familyMemberId')
+            .populate('resolvedBy', 'name email')
+            .populate('bookingId');
+
+        if (!alert) {
+            res.status(404).json({ success: false, error: 'SOS alert not found' });
+            return;
+        }
+
+        res.status(200).json({ success: true, data: alert });
+    } catch (error) {
+        console.error('Error fetching SOS details:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
     }
 };
