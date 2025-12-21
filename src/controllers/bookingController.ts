@@ -546,7 +546,7 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
             coordinates: booking.address?.coordinates,
             isDefault: false
           },
-          type: booking.bookingType === 'ASAP' ? 'ASAP' : 'SCHEDULED',
+          type: ['SOS', 'ASAP', 'SCHEDULED'].includes(booking.bookingType) ? (booking.bookingType as any) : 'SCHEDULED',
           paymentStatus: booking.paymentStatus,
           createdAt: booking.createdAt.toISOString(),
           updatedAt: booking.updatedAt.toISOString(),

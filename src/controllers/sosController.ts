@@ -5,6 +5,7 @@ import OrderItem from '../models/OrderItem';
 import { socketService } from '../services/socketService';
 import { AuthRequest } from '../middleware/auth';
 import { getSOSService } from '../utils/systemServices';
+import { syncBookingStatus } from '../services/bookingService';
 
 export const triggerSOS = async (req: AuthRequest, res: Response) => {
     try {
@@ -126,6 +127,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 customerVisitRequired: true,
                 status: 'pending',
                 startJobOtp: 'NONE', // Special case for SOS
+                endJobOtp: generatedOtp, // Use the SOS OTP as the completion OTP
             });
 
             // Link booking to SOS alert
@@ -185,6 +187,12 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => {
 
         await alert.save();
 
+        // Sync with Booking
+        if (alert.bookingId) {
+            await OrderItem.updateMany({ bookingId: alert.bookingId }, { status: 'cancelled' });
+            await syncBookingStatus(alert.bookingId);
+        }
+
         const populatedAlert = await alert.populate('user', 'name phone email');
         socketService.emitToAdmin('sos:cancelled', populatedAlert);
 
@@ -220,6 +228,12 @@ export const acknowledgeSOS = async (req: AuthRequest, res: Response) => {
         });
 
         await alert.save();
+
+        // Sync with Booking
+        if (alert.bookingId) {
+            await OrderItem.updateMany({ bookingId: alert.bookingId }, { status: 'assigned' });
+            await syncBookingStatus(alert.bookingId);
+        }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
         socketService.emitToAdmin('sos:acknowledged', populatedAlert);
@@ -266,6 +280,12 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => {
         });
 
         await alert.save();
+
+        // Sync with Booking
+        if (alert.bookingId) {
+            await OrderItem.updateMany({ bookingId: alert.bookingId }, { status: 'completed' });
+            await syncBookingStatus(alert.bookingId);
+        }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
         socketService.emitToAdmin('sos:resolved', populatedAlert);
