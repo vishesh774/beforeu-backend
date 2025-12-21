@@ -7,7 +7,7 @@ export interface TokenPayload {
 
 export const generateToken = (payload: TokenPayload): string => {
   const secret = process.env.JWT_SECRET;
-  const expiresIn = process.env.JWT_EXPIRE || '7d';
+  const expiresIn = process.env.JWT_EXPIRE || '365d';
 
   if (!secret) {
     throw new Error('JWT_SECRET is not defined in environment variables');
