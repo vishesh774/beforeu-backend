@@ -39,6 +39,13 @@ export const ACTIVE_BOOKING_STATUSES = [
     BookingStatus.IN_PROGRESS
 ];
 
+export const ONGOING_BOOKING_STATUSES = [
+    BookingStatus.ASSIGNED,
+    BookingStatus.EN_ROUTE,
+    BookingStatus.REACHED,
+    BookingStatus.IN_PROGRESS
+];
+
 export const COMPLETED_BOOKING_STATUSES = [
     BookingStatus.COMPLETED,
     BookingStatus.CANCELLED,

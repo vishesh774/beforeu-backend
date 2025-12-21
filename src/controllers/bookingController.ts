@@ -16,7 +16,7 @@ import ServicePartner from '../models/ServicePartner';
 import ServiceLocation from '../models/ServiceLocation';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus } from '../services/bookingService';
-import { BookingStatus, COMPLETED_BOOKING_STATUSES } from '../constants/bookingStatus';
+import { BookingStatus, COMPLETED_BOOKING_STATUSES, ONGOING_BOOKING_STATUSES } from '../constants/bookingStatus';
 
 // @desc    Get all active services (without location requirement)
 // @route   GET /api/services/all
@@ -816,7 +816,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
       [BookingStatus.PENDING]: BookingStatus.PENDING,
       [BookingStatus.CONFIRMED]: BookingStatus.CONFIRMED,
       [BookingStatus.IN_PROGRESS]: BookingStatus.IN_PROGRESS,
-      'ongoing': [BookingStatus.ASSIGNED, BookingStatus.EN_ROUTE, BookingStatus.REACHED, BookingStatus.IN_PROGRESS],
+      'ongoing': ONGOING_BOOKING_STATUSES,
       [BookingStatus.COMPLETED]: BookingStatus.COMPLETED,
       [BookingStatus.CANCELLED]: BookingStatus.CANCELLED,
       [BookingStatus.REFUND_INITIATED]: BookingStatus.REFUND_INITIATED,
