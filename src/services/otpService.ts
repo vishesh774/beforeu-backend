@@ -1,6 +1,6 @@
 import OTP from '../models/OTP';
 // import { generateOTP, getOTPExpiration } from '../utils/generateOTP';
-import { getOTPExpiration } from '../utils/generateOTP';
+import { generateOTP, getOTPExpiration } from '../utils/generateOTP';
 
 /**
  * Send OTP via SMS
@@ -12,6 +12,14 @@ import { getOTPExpiration } from '../utils/generateOTP';
 export const sendOTPViaSMS = async (phone: string, otp: string): Promise<boolean> => {
   try {
     console.log('[OTP] Generated OTP:', otp); // Log OTP for development/fallback
+
+    // Check for provider configuration
+    const smsProvider = process.env.SMS_PROVIDER || 'smartping';
+
+    if (smsProvider === 'brevo') {
+      return await sendOTPViaBrevo(phone, otp);
+    }
+
 
     // 1. Get Credentials from Env
     const username = process.env.SMS_USERNAME;
@@ -83,6 +91,67 @@ export const sendOTPViaSMS = async (phone: string, otp: string): Promise<boolean
   }
 };
 
+
+/**
+ * Send OTP via Brevo
+ */
+const sendOTPViaBrevo = async (phone: string, otp: string): Promise<boolean> => {
+  try {
+    const apiKey = process.env.BREVO_API_KEY;
+    const sender = process.env.BREVO_SMS_SENDER || 'BeforeU';
+
+    if (!apiKey) {
+      console.warn('Brevo API Key missing. OTP logged to console instead.');
+      console.log(`[DEV MODE - Brevo] Sending OTP ${otp} to ${phone}`);
+      return true;
+    }
+
+    // Brevo requires phone number with country code without '+' if it's purely checking digits, 
+    // but the API documentation usually expects E.164. 
+    // However, the user input might be just 10 digits.
+    // Ensure we have a valid format for Brevo. Assuming Indian numbers if length is 10.
+    let formattedPhone = phone;
+    if (phone.length === 10) {
+      formattedPhone = '91' + phone;
+    } else if (phone.startsWith('+')) {
+      formattedPhone = phone.substring(1);
+    }
+
+    const url = 'https://api.brevo.com/v3/transactionalSMS/sms';
+
+    const body = {
+      sender: sender.substring(0, 11), // Max 11 alphanumeric characters
+      recipient: formattedPhone,
+      content: `Your OTP for login to BeforeU is ${otp}. Valid for 10 mins.`,
+      type: 'transactional'
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'api-key': apiKey,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+
+    const responseData = await response.json() as any;
+
+    if (response.ok) {
+      console.log('[SMS-Brevo] Sent successfully. Reference:', responseData.reference);
+      return true;
+    } else {
+      console.error('[SMS-Brevo] Failed to send. Status:', response.status, 'Response:', responseData);
+      return false;
+    }
+
+  } catch (error) {
+    console.error('[SMS-Brevo] Error sending SMS:', error);
+    return false;
+  }
+};
+
 /**
  * Create and send OTP
  */
@@ -103,7 +172,17 @@ export const createAndSendOTP = async (phone: string): Promise<{ success: boolea
 
     // Generate OTP
     // const otpCode = generateOTP();
-    const otpCode = '123456';
+    // const otpCode = '123456';
+
+    let otpCode: string;
+
+    // 1. Hardcoded OTP for specific number
+    if (phone === '8197744060' || phone.endsWith('8197744060')) {
+      otpCode = '123456';
+    } else {
+      otpCode = generateOTP();
+    }
+
     const expiresAt = getOTPExpiration(10); // 10 minutes expiry
 
     // Invalidate previous unverified OTPs for this phone

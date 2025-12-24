@@ -8,6 +8,7 @@ import ServiceVariant from '../models/ServiceVariant';
 import ServiceRegion from '../models/ServiceRegion';
 import Booking from '../models/Booking';
 import OrderItem from '../models/OrderItem';
+import Coupon from '../models/Coupon';
 import Address from '../models/Address';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
@@ -212,7 +213,8 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     bookingType,
     scheduledDate,
     scheduledTime,
-    notes
+    notes,
+    couponCode
   } = req.body;
 
   // Validation
@@ -314,6 +316,66 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   const checkoutFields = await getActiveCheckoutFields();
   const calculationResult = await calculateCheckoutTotal(itemTotal, checkoutFields);
 
+  // Apply Coupon Discount if available
+  let couponDiscount = 0;
+  let appliedCoupon: any = null; // Use explicit type or any if quick fix, properly ICoupon | null is best but ICoupon might need import
+
+
+  if (couponCode) {
+    appliedCoupon = await Coupon.findOne({ code: couponCode, isActive: true });
+    if (!appliedCoupon) {
+      return next(new AppError('Invalid coupon code', 400));
+    }
+
+    // Validate Coupon
+    if (appliedCoupon.expiryDate && new Date() > appliedCoupon.expiryDate) {
+      return next(new AppError('Coupon has expired', 400));
+    }
+    if (appliedCoupon.maxUses !== -1 && appliedCoupon.usedCount >= appliedCoupon.maxUses) {
+      return next(new AppError('Coupon usage limit exceeded', 400));
+    }
+
+    const user = await mongoose.model('User').findById(userIdObj);
+    if (appliedCoupon.type === 'restricted' && !appliedCoupon.allowedPhoneNumbers.includes(user.phone)) {
+      return next(new AppError('Coupon not available for you', 400));
+    }
+
+    // Check Applicability
+    if (appliedCoupon.appliesTo === 'plan') {
+      // We currently only support service bookings in this controller function
+      // If bookingType becomes PLAN_PURCHASE, we might need adjustments
+      if (bookingType !== 'PLAN_PURCHASE') {
+        return next(new AppError('Coupon is only for plan purchases', 400));
+      }
+    } else if (appliedCoupon.appliesTo === 'service') {
+      if (bookingType === 'PLAN_PURCHASE') {
+        return next(new AppError('Coupon is only for services', 400));
+      }
+      if (appliedCoupon.serviceId) {
+        // Check if any item matches serviceId
+        const hasService = orderItems.some(item => item.serviceId.toString() === appliedCoupon.serviceId);
+        if (!hasService) {
+          return next(new AppError('Coupon not applicable for these services', 400));
+        }
+      }
+    }
+
+    // Calculate Discount
+    // Logic matches Frontend: (itemTotal * value) / 100
+    if (appliedCoupon.discountType === 'percentage') {
+      couponDiscount = (itemTotal * appliedCoupon.discountValue) / 100;
+    }
+
+    // Update Total
+    calculationResult.total = Math.max(0, calculationResult.total - couponDiscount);
+
+    // Add to breakdown logically (for storage)
+    // calculationResult.breakdown type in backend utils does not allow arbitrary chargeType?
+    // Let's check Utils. Breakdown struct matches Booking struct?
+    // Booking struct: chargeType: 'fixed' | 'percentage'.
+    // We can fake it or just add it to mapping below.
+  }
+
   // Format breakdown for storage
   const paymentBreakdown = calculationResult.breakdown.map(item => {
     const field = checkoutFields.find(f => f.fieldName === item.fieldName);
@@ -325,6 +387,16 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
       amount: item.amount
     };
   });
+
+  if (appliedCoupon && couponDiscount > 0) {
+    paymentBreakdown.push({
+      fieldName: 'coupon_discount',
+      fieldDisplayName: `Coupon (${appliedCoupon.code})`,
+      chargeType: 'percentage', // It is percentage based
+      value: appliedCoupon.discountValue,
+      amount: couponDiscount
+    });
+  }
 
   // Generate booking ID
   const now = new Date();
@@ -379,6 +451,8 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     totalAmount: calculationResult.total,
     totalOriginalAmount,
     creditsUsed, // Add creditsUsed to booking document
+    couponCode: appliedCoupon?.code,
+    discountAmount: couponDiscount,
     paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
     status: initialStatus,
     paymentStatus: initialPaymentStatus,
@@ -400,8 +474,12 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
       await autoAssignServicePartner(booking, createdOrderItems);
     }
   } catch (error) {
-    // Log error but don't fail the booking
     console.error('[createBooking] Error auto-assigning partner:', error);
+  }
+
+  // Detect Coupon Usage
+  if (appliedCoupon) {
+    await Coupon.findByIdAndUpdate(appliedCoupon._id, { $inc: { usedCount: 1 } });
   }
 
   // Deduct credits if used

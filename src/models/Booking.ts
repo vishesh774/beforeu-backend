@@ -21,6 +21,8 @@ export interface IBooking extends Document {
   totalOriginalAmount: number; // Before discounts
   itemTotal: number; // Sum of item prices before checkout fields
   creditsUsed: number;
+  couponCode?: string;
+  discountAmount?: number;
   paymentBreakdown?: Array<{
     fieldName: string;
     fieldDisplayName: string;
@@ -116,6 +118,15 @@ const BookingSchema = new Schema<IBooking>(
       min: 0
     },
     creditsUsed: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+    couponCode: {
+      type: String,
+      trim: true
+    },
+    discountAmount: {
       type: Number,
       default: 0,
       min: 0

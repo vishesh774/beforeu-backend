@@ -12,7 +12,10 @@ import partnerRoutes from './routes/partnerRoutes';
 import providerRoutes from './routes/providerRoutes';
 import sosRoutes from './routes/sosRoutes';
 import configRoutes from './routes/configRoutes';
+import couponRoutes from './routes/couponRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
+
+
 
 // Load environment variables
 dotenv.config();
@@ -113,6 +116,7 @@ app.use('/api/partners', partnerRoutes);
 app.use('/api/provider', providerRoutes);
 app.use('/api/sos', sosRoutes);
 app.use('/api', configRoutes);
+app.use('/api/coupons', couponRoutes);
 console.log('✅ Routes registered successfully');
 
 // 404 handler
