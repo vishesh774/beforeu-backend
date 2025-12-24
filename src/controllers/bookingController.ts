@@ -538,7 +538,15 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
 
   // Status filter - map frontend status to backend status
   const statusFilter = req.query.status;
-  const filter: any = { userId: new mongoose.Types.ObjectId(userId) };
+  const filter: any = {
+    userId: new mongoose.Types.ObjectId(userId),
+    // Only show orders that are either paid or free (zero amount)
+    $or: [
+      { paymentStatus: 'paid' },
+      { paymentStatus: 'refunded' },
+      { totalAmount: 0 }
+    ]
+  };
 
   if (statusFilter) {
     // Handle array of statuses (when multiple status query params are provided)
@@ -738,7 +746,13 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   // Find booking and ensure it belongs to the user
   const booking = await Booking.findOne({
     bookingId,
-    userId: userIdObj
+    userId: userIdObj,
+    // Only allow access if paid or free
+    $or: [
+      { paymentStatus: 'paid' },
+      { paymentStatus: 'refunded' },
+      { totalAmount: 0 }
+    ]
   });
 
   if (!booking) {
