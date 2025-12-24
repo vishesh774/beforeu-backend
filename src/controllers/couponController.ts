@@ -104,7 +104,12 @@ export const getApplicableCoupons = asyncHandler(async (req: any, res: Response,
             {
                 $or: [
                     { type: 'public' },
-                    { type: 'restricted', allowedPhoneNumbers: userPhone }
+                    {
+                        type: 'restricted',
+                        allowedPhoneNumbers: {
+                            $in: [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`]
+                        }
+                    }
                 ]
             },
             // Check maxUsage if not unlimited (-1)
@@ -153,7 +158,10 @@ export const validateCoupon = asyncHandler(async (req: any, res: Response, next:
 
     // Check Restricted
     if (coupon.type === 'restricted') {
-        if (!coupon.allowedPhoneNumbers.includes(userPhone)) {
+        const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
+        const isAllowed = phoneVariants.some(variant => coupon.allowedPhoneNumbers.includes(variant));
+
+        if (!isAllowed) {
             return next(new AppError('This coupon is not available for your account', 400));
         }
     }
