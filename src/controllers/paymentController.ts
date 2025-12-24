@@ -513,7 +513,20 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           currency: currency.toUpperCase(),
           keyId: process.env.RAZORPAY_KEY_ID,
           isFree: amount === 0,
-          booking: booking
+          booking: {
+            ...booking.toObject(),
+            id: booking._id.toString(),
+            items: orderItems.map(item => ({
+              ...item,
+              price: item.finalPrice,
+              originalPrice: item.originalPrice,
+              creditCost: item.creditValue,
+              quantity: item.quantity
+            })),
+            date: booking.scheduledDate?.toISOString() || new Date().toISOString(),
+            time: booking.scheduledTime || '',
+            type: booking.bookingType
+          }
         },
       });
       return;
