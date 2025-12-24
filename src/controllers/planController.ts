@@ -28,7 +28,7 @@ export const getAllPlans = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const plans = await Plan.find(filter)
-    .sort({ createdAt: -1 });
+    .sort({ finalPrice: -1 });
 
   // Transform _id to id for frontend
   const transformedPlans = plans.map(plan => ({
