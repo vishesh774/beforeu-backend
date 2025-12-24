@@ -16,6 +16,7 @@ import PlanTransaction from '../models/PlanTransaction';
 import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import User from '../models/User';
+import Coupon from '../models/Coupon';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import { autoAssignServicePartner } from '../services/bookingService';
 import { BookingStatus } from '../constants/bookingStatus';
@@ -80,7 +81,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
   const { amount, currency = 'INR', bookingData, planData } = req.body;
 
   // Validation
-  if (!amount || amount <= 0) {
+  if (!amount || amount < 0) {
     return next(new AppError('Valid amount is required', 400));
   }
 
@@ -110,9 +111,33 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         return next(new AppError('Plan not found', 404));
       }
 
+      // Handle Coupon
+      let discountAmount = 0;
+      if (planData.couponCode) {
+        const userPhone = req.user!.phone;
+        const coupon = await Coupon.findOne({
+          code: planData.couponCode.toUpperCase(),
+          isActive: true,
+          appliesTo: 'plan'
+        });
+
+        if (coupon) {
+          // Validate Restricted
+          let isAllowed = true;
+          if (coupon.type === 'restricted') {
+            const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
+            isAllowed = phoneVariants.some(variant => coupon.allowedPhoneNumbers.includes(variant));
+          }
+
+          if (isAllowed && (!coupon.expiryDate || new Date() <= coupon.expiryDate) && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
+            discountAmount = (plan.finalPrice * coupon.discountValue) / 100;
+          }
+        }
+      }
+
       // Calculate expected amount
       const checkoutFields = await getActiveCheckoutFields();
-      const calculationResult = await calculateCheckoutTotal(plan.finalPrice, checkoutFields);
+      const calculationResult = await calculateCheckoutTotal(plan.finalPrice - discountAmount, checkoutFields);
       const expectedAmountInPaise = Math.round(calculationResult.total * 100);
 
       // Verify amount
@@ -264,9 +289,42 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         });
       }
 
+      // Handle Coupon
+      let discountAmount = 0;
+      let appliedCouponCode = undefined;
+
+      if (bookingData.couponCode) {
+        const userPhone = req.user!.phone;
+        const coupon = await Coupon.findOne({
+          code: bookingData.couponCode.toUpperCase(),
+          isActive: true,
+          appliesTo: 'service'
+        });
+
+        if (coupon) {
+          // Validate Restricted
+          let isAllowed = true;
+          if (coupon.type === 'restricted') {
+            const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
+            isAllowed = phoneVariants.some(variant => coupon.allowedPhoneNumbers.includes(variant));
+          }
+
+          // Check relevance if serviceId is specific
+          let isRelevant = true;
+          if (coupon.serviceId) {
+            isRelevant = bookingData.items.some((item: any) => item.serviceId === coupon.serviceId);
+          }
+
+          if (isAllowed && isRelevant && (!coupon.expiryDate || new Date() <= coupon.expiryDate) && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
+            discountAmount = (totalAmount * coupon.discountValue) / 100;
+            appliedCouponCode = coupon.code;
+          }
+        }
+      }
+
       // Calculate expected amount
       const checkoutFields = await getActiveCheckoutFields();
-      const calculationResult = await calculateCheckoutTotal(totalAmount, checkoutFields);
+      const calculationResult = await calculateCheckoutTotal(totalAmount - discountAmount, checkoutFields);
       const expectedAmountInPaise = Math.round(calculationResult.total * 100);
 
       // Verify amount
@@ -343,6 +401,8 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         itemTotal: totalAmount,
         totalOriginalAmount,
         creditsUsed,
+        couponCode: appliedCouponCode,
+        discountAmount,
         paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
         status: BookingStatus.PENDING,
         paymentStatus: 'pending',
