@@ -13,7 +13,11 @@ export const sendOTPViaSMS = async (phone: string, otp: string): Promise<boolean
   try {
     console.log('[OTP] Generated OTP:', otp); // Log OTP for development/fallback
 
-    // Check for provider configuration
+    // Skip sending for hardcoded test OTP
+    if (otp === '123456') {
+      console.log(`[OTP] Skipping SMS send for hardcoded test OTP ${otp} to ${phone}`);
+      return true;
+    }
     const smsProvider = process.env.SMS_PROVIDER || 'smartping';
 
     if (smsProvider === 'brevo') {
