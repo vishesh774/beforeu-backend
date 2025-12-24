@@ -16,8 +16,14 @@ export const getDashboardMetrics = asyncHandler(async (_req: Request, res: Respo
         isActive: true
     });
 
-    // 2. All Time Bookings (Count of all bookings)
-    const totalBookingsCount = await Booking.countDocuments({});
+    // 2. All Time Bookings (Count of all bookings with confirmed payment or free)
+    const totalBookingsCount = await Booking.countDocuments({
+        $or: [
+            { paymentStatus: 'paid' },
+            { paymentStatus: 'refunded' },
+            { totalAmount: 0 }
+        ]
+    });
 
     // 3. Active Services (Count of active services)
     const activeServicesCount = await Service.countDocuments({ isActive: true });
@@ -30,9 +36,15 @@ export const getDashboardMetrics = asyncHandler(async (_req: Request, res: Respo
     ]);
     const totalRevenue = revenueResult.length > 0 ? revenueResult[0].totalRevenue : 0;
 
-    // 5. Recent Activity (Latest 5 bookings)
+    // 5. Recent Activity (Latest 5 bookings with confirmed payment or free)
     // We'll fetch basic details: bookingId, customer name, date, amount, status
-    const recentBookings = await Booking.find({})
+    const recentBookings = await Booking.find({
+        $or: [
+            { paymentStatus: 'paid' },
+            { paymentStatus: 'refunded' },
+            { totalAmount: 0 }
+        ]
+    })
         .sort({ createdAt: -1 })
         .limit(5)
         .populate('userId', 'name email');

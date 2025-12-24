@@ -988,11 +988,21 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
   });
   pipeline.push({ $unwind: '$booking' });
 
+  // Mandatory filter: Do not show bookings with pending payment (unless free/confirmed)
+  pipeline.push({
+    $match: {
+      $or: [
+        { 'booking.paymentStatus': 'paid' },
+        { 'booking.paymentStatus': 'refunded' },
+        { 'booking.totalAmount': 0 }
+      ]
+    }
+  });
+
   // Filter by Booking fields (paymentStatus, dates)
   const bookingMatch: any = {};
   if (paymentStatusFilter) {
     const paymentMap: Record<string, string> = {
-      'pending': 'pending',
       'paid': 'paid',
       'refunded': 'refunded'
     };
