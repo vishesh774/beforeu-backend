@@ -81,7 +81,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
   const { amount, currency = 'INR', bookingData, planData } = req.body;
 
   // Validation
-  if (!amount || amount < 0) {
+  if (amount === undefined || amount === null || amount < 0) {
     return next(new AppError('Valid amount is required', 400));
   }
 
@@ -137,7 +137,11 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
 
       // Calculate expected amount
       const checkoutFields = await getActiveCheckoutFields();
-      const calculationResult = await calculateCheckoutTotal(plan.finalPrice - discountAmount, checkoutFields);
+      const calculationResult = await calculateCheckoutTotal(
+        plan.finalPrice,
+        checkoutFields,
+        discountAmount > 0 ? { amount: discountAmount, label: `Coupon (${planData.couponCode!.toUpperCase()})` } : undefined
+      );
       const expectedAmountInPaise = Math.round(calculationResult.total * 100);
 
       // Verify amount
@@ -146,22 +150,30 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${amount / 100}`, 400));
       }
 
-      // Create Razorpay Order
-      const receipt = `PTX_${Date.now().toString(36)}_${userId.toString().slice(-4)}`;
-      const options = {
-        amount: Math.round(amount),
-        currency: currency.toUpperCase(),
-        receipt: receipt.substring(0, 40),
-        notes: {
-          userId,
-          type: 'plan',
-          planData: JSON.stringify({ planId: planData.planId })
-        },
-      };
+      // If amount is 0, we don't need Razorpay
+      let orderId = 'free_' + Date.now().toString(36);
+      let orderAmount = 0;
 
-      const order = await razorpayInstance.orders.create(options);
+      if (amount > 0) {
+        // Create Razorpay Order
+        const receipt = `PTX_${Date.now().toString(36)}_${userId.toString().slice(-4)}`;
+        const options = {
+          amount: Math.round(amount),
+          currency: currency.toUpperCase(),
+          receipt: receipt.substring(0, 40),
+          notes: {
+            userId,
+            type: 'plan',
+            planData: JSON.stringify({ planId: planData.planId })
+          },
+        };
 
-      // Create PENDING PlanTransaction
+        const order = await razorpayInstance.orders.create(options);
+        orderId = order.id;
+        orderAmount = order.amount;
+      }
+
+      // Create PlanTransaction ID
       const now = new Date();
       const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
       const count = await PlanTransaction.countDocuments({
@@ -184,7 +196,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       await PlanTransaction.create({
         userId: userIdObj,
         planId: plan._id,
-        orderId: order.id,
+        orderId: orderId,
         transactionId,
         amount: calculationResult.total, // Store in Rupees
         credits: plan.totalCredits,
@@ -193,17 +205,48 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           originalPrice: plan.originalPrice,
           finalPrice: plan.finalPrice
         },
+        couponCode: planData.couponCode ? planData.couponCode.toUpperCase() : undefined,
+        discountAmount: discountAmount || 0,
         paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
-        status: 'pending' // Pending payment
+        status: amount === 0 ? 'completed' : 'pending'
       });
+
+      // If free, activate plan immediately
+      if (amount === 0) {
+        const expiryDate = new Date();
+        const validityDays = plan.validity || 365;
+        expiryDate.setDate(expiryDate.getDate() + validityDays);
+
+        let userPlan = await UserPlan.findOne({ userId: userIdObj });
+        if (!userPlan) {
+          await UserPlan.create({
+            userId: userIdObj,
+            activePlanId: plan._id.toString(),
+            expiresAt: expiryDate
+          });
+        } else {
+          userPlan.activePlanId = plan._id.toString();
+          userPlan.expiresAt = expiryDate;
+          await userPlan.save();
+        }
+
+        let userCredits = await UserCredits.findOne({ userId: userIdObj });
+        if (!userCredits) {
+          await UserCredits.create({ userId: userIdObj, credits: plan.totalCredits });
+        } else {
+          userCredits.credits += plan.totalCredits;
+          await userCredits.save();
+        }
+      }
 
       res.status(200).json({
         success: true,
         data: {
-          orderId: order.id,
-          amount: order.amount,
-          currency: order.currency,
+          orderId: orderId,
+          amount: orderAmount,
+          currency: currency.toUpperCase(),
           keyId: process.env.RAZORPAY_KEY_ID,
+          isFree: amount === 0
         },
       });
       return;
@@ -222,74 +265,69 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       }
 
       // Get user's address
-      const address = await Address.findOne({ userId: userIdObj, id: bookingData.addressId });
+      const address = await Address.findOne({ _id: bookingData.addressId, userId });
       if (!address) {
         return next(new AppError('Address not found', 404));
       }
 
-      // Calculate totals and validate items
+      // 1. Calculate base item total and validate items
       let totalAmount = 0;
       let totalOriginalAmount = 0;
-      let creditsUsed = 0;
-      const orderItems = [];
-
-      const userCreditsRecord = await UserCredits.findOne({ userId: userIdObj });
-      let availableCredits = userCreditsRecord?.credits || 0;
-      const userPlanRecord = await UserPlan.findOne({ userId: userIdObj });
-      const hasActivePlan = !!userPlanRecord?.activePlanId;
+      let orderItems = [];
 
       for (const item of bookingData.items) {
-        const variant = await ServiceVariant.findOne({ id: item.variantId }).populate('serviceId');
-        if (!variant) {
-          return next(new AppError(`Service variant ${item.variantId} not found`, 404));
+        const service = await Service.findById(item.serviceId);
+        const variant = await ServiceVariant.findById(item.variantId);
+
+        if (!service || !variant) {
+          return next(new AppError(`Service or variant not found for item ${item.variantId}`, 404));
         }
 
-        const service = await Service.findById(variant.serviceId);
-        if (!service || !service.isActive) {
-          return next(new AppError(`Service ${item.serviceId} is not available`, 400));
-        }
-
-        if (!variant.isActive) {
-          return next(new AppError(`Service variant ${item.variantId} is not available`, 400));
-        }
-
-        const quantity = parseInt(item.quantity) || 1;
-        const itemTotal = variant.finalPrice * quantity;
-        const itemOriginalTotal = variant.originalPrice * quantity;
-
-        // Check for credit coverage
-        let itemCredits = 0;
-        let itemPriceForTotal = itemTotal;
-
-        if (hasActivePlan && variant.includedInSubscription && variant.creditValue > 0) {
-          const requiredCredits = variant.creditValue * quantity;
-          if (availableCredits >= requiredCredits) {
-            itemCredits = requiredCredits;
-            itemPriceForTotal = 0;
-            availableCredits -= requiredCredits;
-          }
-        }
-
-        totalAmount += itemPriceForTotal;
-        totalOriginalAmount += itemOriginalTotal;
-        creditsUsed += itemCredits;
+        const quantity = item.quantity || 1;
+        totalAmount += variant.finalPrice * quantity;
+        totalOriginalAmount += variant.originalPrice * quantity;
 
         orderItems.push({
           serviceId: service._id,
           serviceVariantId: variant._id,
-          serviceName: service.name,
           variantName: variant.name,
-          quantity,
+          serviceName: service.name,
+          basePrice: variant.finalPrice,
           originalPrice: variant.originalPrice,
-          finalPrice: itemPriceForTotal > 0 ? variant.finalPrice : 0,
-          creditValue: variant.creditValue,
-          estimatedTimeMinutes: variant.estimatedTimeMinutes,
-          customerVisitRequired: variant.customerVisitRequired !== undefined ? variant.customerVisitRequired : false,
-          paidWithCredits: itemCredits > 0 && itemPriceForTotal === 0,
+          finalPrice: variant.finalPrice, // Discount will be handled at booking level
+          quantity: quantity,
+          creditValue: variant.creditValue || 0
         });
       }
 
-      // Handle Coupon
+      // 2. Handle Credits (Deduct from amount calculation, not current balance yet)
+      let creditsUsed = 0;
+      if (bookingData.useCredits) {
+        const userCredits = await UserCredits.findOne({ userId: userIdObj });
+        if (userCredits && userCredits.credits > 0) {
+          // Credits apply to item total
+          // We assume credits cover full item cost if available
+          let remainingAmount = 0;
+          let tempUserCredits = userCredits.credits;
+
+          // Re-calculate how many items are covered by credits
+          for (let i = 0; i < orderItems.length; i++) {
+            const item = orderItems[i];
+            const itemCostInCredits = item.creditValue * item.quantity;
+
+            if (tempUserCredits >= itemCostInCredits && itemCostInCredits > 0) {
+              tempUserCredits -= itemCostInCredits;
+              creditsUsed += itemCostInCredits;
+              // This item is covered by credits
+            } else {
+              remainingAmount += item.basePrice * item.quantity;
+            }
+          }
+          totalAmount = remainingAmount;
+        }
+      }
+
+      // 3. Handle Coupon
       let discountAmount = 0;
       let appliedCouponCode = undefined;
 
@@ -322,9 +360,13 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         }
       }
 
-      // Calculate expected amount
+      // Calculate expected amount using checkout utils
       const checkoutFields = await getActiveCheckoutFields();
-      const calculationResult = await calculateCheckoutTotal(totalAmount - discountAmount, checkoutFields);
+      const calculationResult = await calculateCheckoutTotal(
+        totalAmount,
+        checkoutFields,
+        discountAmount > 0 ? { amount: discountAmount, label: `Coupon (${bookingData.couponCode!.toUpperCase()})` } : undefined
+      );
       const expectedAmountInPaise = Math.round(calculationResult.total * 100);
 
       // Verify amount
@@ -333,23 +375,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         return next(new AppError(`Amount mismatch. Expected ₹${calculationResult.total.toFixed(2)}, got ₹${amount / 100}`, 400));
       }
 
-      // Create Razorpay Order
-      const receipt = `BK_${Date.now().toString(36)}_${userId.toString().slice(-4)}`;
-      const options = {
-        amount: Math.round(amount),
-        currency: currency.toUpperCase(),
-        receipt: receipt.substring(0, 40),
-        notes: {
-          userId,
-          type: 'booking',
-          // minimal info in notes, detailed info in DB
-          bookingRef: `user_${userId}`
-        },
-      };
-
-      const order = await razorpayInstance.orders.create(options);
-
-      // Prepare payment breakdown
+      // Prepare payment breakdown for storage
       const paymentBreakdown = calculationResult.breakdown.map(item => {
         const field = checkoutFields.find(f => f.fieldName === item.fieldName);
         return {
@@ -361,7 +387,28 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         };
       });
 
-      // Generate booking ID manually to use for Order Items assignment
+      // Handle Razorpay Order Creation if amount > 0
+      let orderId = 'free_' + Date.now().toString(36);
+      let orderAmount = 0;
+
+      if (amount > 0) {
+        const receipt = `BK_${Date.now().toString(36)}_${userId.toString().slice(-4)}`;
+        const options = {
+          amount: Math.round(amount),
+          currency: currency.toUpperCase(),
+          receipt: receipt.substring(0, 40),
+          notes: {
+            userId,
+            type: 'booking',
+          },
+        };
+
+        const razorpayOrder = await razorpayInstance.orders.create(options);
+        orderId = razorpayOrder.id;
+        orderAmount = razorpayOrder.amount;
+      }
+
+      // Generate Booking ID
       const now = new Date();
       const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
       const count = await Booking.countDocuments({
@@ -369,7 +416,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       });
       const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
-      // Create PENDING Booking
+      // Create Booking
       const booking = await Booking.create({
         userId: userIdObj,
         bookingId,
@@ -404,23 +451,41 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         couponCode: appliedCouponCode,
         discountAmount,
         paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
-        status: BookingStatus.PENDING,
-        paymentStatus: 'pending',
-        orderId: order.id,
+        status: amount === 0 ? 'confirmed' : BookingStatus.PENDING,
+        paymentStatus: amount === 0 ? 'paid' : 'pending',
+        orderId: orderId,
         notes: bookingData.notes || undefined,
       });
 
       try {
         // Create Order Items linked to this booking
-        await OrderItem.insertMany(
-          orderItems.map((item) => ({
-            bookingId: booking._id,
-            ...item,
-            status: BookingStatus.PENDING
-          }))
-        );
+        const itemsToInsert = orderItems.map((item) => ({
+          bookingId: booking._id,
+          ...item,
+          status: amount === 0 ? 'confirmed' : BookingStatus.PENDING
+        }));
+        await OrderItem.insertMany(itemsToInsert);
+
+        // If free, handle finalizations immediately
+        if (amount === 0) {
+          // Deduct Credits if used
+          if (booking.creditsUsed > 0) {
+            const userCredits = await UserCredits.findOne({ userId: userIdObj });
+            if (userCredits) {
+              userCredits.credits = Math.max(0, userCredits.credits - booking.creditsUsed);
+              await userCredits.save();
+            }
+          }
+          // Auto-assign partner
+          try {
+            const orderItemsFetched = await OrderItem.find({ bookingId: booking._id });
+            await autoAssignServicePartner(booking, orderItemsFetched);
+          } catch (err) {
+            console.error('[PaymentController] Auto-assign failed for free booking:', err);
+          }
+        }
       } catch (itemError) {
-        // If creating items fails, we must delete the orphan booking to prevent "invisible" bookings
+        // Cleanup if item creation fails
         await Booking.findByIdAndDelete(booking._id);
         throw itemError;
       }
@@ -428,12 +493,15 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       res.status(200).json({
         success: true,
         data: {
-          orderId: order.id,
-          amount: order.amount,
-          currency: order.currency,
+          orderId: orderId,
+          amount: orderAmount,
+          currency: currency.toUpperCase(),
           keyId: process.env.RAZORPAY_KEY_ID,
+          isFree: amount === 0,
+          bookingId: booking._id
         },
       });
+      return;
     }
 
   } catch (error: any) {

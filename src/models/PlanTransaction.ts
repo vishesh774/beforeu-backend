@@ -16,6 +16,8 @@ export interface IPlanTransaction extends Document {
     paymentDetails?: any;
     paymentBreakdown?: any[];
     transactionId: string;
+    couponCode?: string;
+    discountAmount?: number;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -72,6 +74,13 @@ const PlanTransactionSchema = new Schema<IPlanTransaction>(
         },
         paymentBreakdown: {
             type: [Schema.Types.Mixed]
+        },
+        couponCode: {
+            type: String
+        },
+        discountAmount: {
+            type: Number,
+            default: 0
         }
     },
     {

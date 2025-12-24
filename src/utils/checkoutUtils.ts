@@ -18,7 +18,8 @@ export interface CheckoutCalculationResult {
  */
 export async function calculateCheckoutTotal(
   itemTotal: number,
-  checkoutFields?: ICheckoutField[]
+  checkoutFields?: ICheckoutField[],
+  discountOptions?: { amount: number; label: string }
 ): Promise<CheckoutCalculationResult> {
   // If no checkout fields provided, return itemTotal as-is
   if (!checkoutFields || checkoutFields.length === 0) {
@@ -33,7 +34,19 @@ export async function calculateCheckoutTotal(
   const sortedFields = [...checkoutFields].sort((a, b) => a.order - b.order);
 
   let runningTotal = itemTotal;
+  let discountedItemTotal = itemTotal;
   const breakdown: Array<{ fieldName: string; fieldDisplayName: string; amount: number }> = [];
+
+  // Apply discount first if provided
+  if (discountOptions && discountOptions.amount > 0) {
+    breakdown.push({
+      fieldName: 'discount',
+      fieldDisplayName: discountOptions.label || 'Discount',
+      amount: discountOptions.amount,
+    });
+    discountedItemTotal = Math.max(0, itemTotal - discountOptions.amount);
+    runningTotal = discountedItemTotal;
+  }
 
   // Process checkout fields in order
   for (const field of sortedFields) {
@@ -42,7 +55,8 @@ export async function calculateCheckoutTotal(
     if (field.chargeType === 'fixed') {
       amount = field.value;
     } else if (field.chargeType === 'percentage') {
-      amount = (itemTotal * field.value) / 100;
+      // Calculate percentage on the discounted item total
+      amount = (discountedItemTotal * field.value) / 100;
     }
 
     // Add to breakdown
@@ -52,8 +66,6 @@ export async function calculateCheckoutTotal(
       amount: amount,
     });
 
-    // Update running total based on field name convention
-    // If field name contains 'discount', subtract; otherwise add
     const isDiscount = field.fieldName.toLowerCase().includes('discount');
 
     if (isDiscount) {
