@@ -508,7 +508,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           currency: currency.toUpperCase(),
           keyId: process.env.RAZORPAY_KEY_ID,
           isFree: amount === 0,
-          bookingId: booking._id
+          booking: booking
         },
       });
       return;
