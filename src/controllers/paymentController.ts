@@ -276,8 +276,18 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       let orderItems = [];
 
       for (const item of bookingData.items) {
-        const service = await Service.findOne({ id: item.serviceId });
-        const variant = await ServiceVariant.findOne({ id: item.variantId });
+        const service = await Service.findOne({
+          $or: [
+            { id: item.serviceId },
+            { name: item.serviceId }
+          ]
+        });
+        const variant = await ServiceVariant.findOne({
+          $or: [
+            { id: item.variantId },
+            { name: item.variantId }
+          ]
+        });
 
         if (!service || !variant) {
           return next(new AppError(`Service or variant not found for item ${item.variantId}`, 404));
