@@ -306,7 +306,9 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           originalPrice: variant.originalPrice,
           finalPrice: variant.finalPrice, // Discount will be handled at booking level
           quantity: quantity,
-          creditValue: variant.creditValue || 0
+          creditValue: variant.creditValue || 0,
+          estimatedTimeMinutes: variant.estimatedTimeMinutes,
+          customerVisitRequired: variant.customerVisitRequired || false
         });
       }
 
@@ -329,8 +331,11 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
               tempUserCredits -= itemCostInCredits;
               creditsUsed += itemCostInCredits;
               // This item is covered by credits
+              (item as any).paidWithCredits = true;
+              (item as any).finalPrice = 0;
             } else {
               remainingAmount += item.basePrice * item.quantity;
+              (item as any).paidWithCredits = false;
             }
           }
           totalAmount = remainingAmount;
