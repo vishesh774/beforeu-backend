@@ -87,6 +87,7 @@ import {
   deleteCheckoutField,
   toggleCheckoutFieldStatus
 } from '../controllers/checkoutConfigController';
+import { updateAppConfig } from '../controllers/configController';
 import { requireAdmin } from '../middleware/adminAuth';
 
 const router = express.Router();
@@ -206,6 +207,9 @@ router.post('/checkout-config', createCheckoutField);
 router.put('/checkout-config/:id', updateCheckoutField);
 router.delete('/checkout-config/:id', deleteCheckoutField);
 router.patch('/checkout-config/:id/toggle-status', toggleCheckoutFieldStatus);
+
+// Global App Config
+router.put('/config', updateAppConfig);
 
 export default router;
 
