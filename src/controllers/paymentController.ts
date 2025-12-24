@@ -265,7 +265,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       }
 
       // Get user's address
-      const address = await Address.findOne({ _id: bookingData.addressId, userId });
+      const address = await Address.findOne({ id: bookingData.addressId, userId });
       if (!address) {
         return next(new AppError('Address not found', 404));
       }
