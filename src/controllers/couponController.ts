@@ -2,7 +2,6 @@ import { Request, Response, NextFunction } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import Coupon from '../models/Coupon';
-import User from '../models/User';
 
 // @desc    Create a new coupon
 // @route   POST /api/coupons
@@ -85,14 +84,8 @@ export const deleteCoupon = asyncHandler(async (req: Request, res: Response, nex
 // @desc    Get applicable coupons for logged in user
 // @route   GET /api/coupons/applicable
 // @access  Private (User)
-export const getApplicableCoupons = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
-    const userId = req.user._id;
-    const user = await User.findById(userId);
-
-    if (!user) {
-        return next(new AppError('User not found', 404));
-    }
-
+export const getApplicableCoupons = asyncHandler(async (req: any, res: Response, _next: NextFunction) => {
+    const userPhone = req.user.phone;
     const currentDate = new Date();
 
     // Find coupons that are:
@@ -111,7 +104,7 @@ export const getApplicableCoupons = asyncHandler(async (req: any, res: Response,
             {
                 $or: [
                     { type: 'public' },
-                    { type: 'restricted', allowedPhoneNumbers: user.phone }
+                    { type: 'restricted', allowedPhoneNumbers: userPhone }
                 ]
             },
             // Check maxUsage if not unlimited (-1)
@@ -137,12 +130,7 @@ export const getApplicableCoupons = asyncHandler(async (req: any, res: Response,
 // @access  Private
 export const validateCoupon = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
     const { code, serviceId, isPlanPurchase } = req.body;
-    const userId = req.user._id;
-    const user = await User.findById(userId);
-
-    if (!user) {
-        return next(new AppError('User not found', 404));
-    }
+    const userPhone = req.user.phone;
 
     const coupon = await Coupon.findOne({
         code: code.toUpperCase(),
@@ -165,7 +153,7 @@ export const validateCoupon = asyncHandler(async (req: any, res: Response, next:
 
     // Check Restricted
     if (coupon.type === 'restricted') {
-        if (!coupon.allowedPhoneNumbers.includes(user.phone)) {
+        if (!coupon.allowedPhoneNumbers.includes(userPhone)) {
             return next(new AppError('This coupon is not available for your account', 400));
         }
     }
