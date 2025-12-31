@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import Coupon from '../models/Coupon';
+import User from '../models/User';
 
 // @desc    Create a new coupon
 // @route   POST /api/coupons
@@ -60,6 +61,117 @@ export const getCoupons = asyncHandler(async (_req: Request, res: Response, _nex
     res.status(200).json({
         success: true,
         data: coupons
+    });
+});
+
+// @desc    Get all coupons with associated users (for export and detailed list)
+// @route   GET /api/coupons/with-users
+// @access  Admin
+export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Response, _next: NextFunction) => {
+    // 1. Get all coupons
+    const coupons = await Coupon.find({}).sort({ createdAt: -1 });
+
+    // 2. Identify all phone numbers from restricted coupons
+    const allPhoneNumbers = new Set<string>();
+    coupons.forEach(coupon => {
+        if (coupon.type === 'restricted' && coupon.allowedPhoneNumbers) {
+            coupon.allowedPhoneNumbers.forEach(phone => allPhoneNumbers.add(phone));
+        }
+    });
+
+    // 3. Find users matching these phone numbers
+    // We need to handle potential +91 prefix issues
+    const phoneArray = Array.from(allPhoneNumbers);
+    const searchPhones = [...phoneArray];
+    phoneArray.forEach(p => {
+        if (p.startsWith('+91')) searchPhones.push(p.replace('+91', ''));
+        else searchPhones.push('+91' + p);
+    });
+
+    const users = await User.find({
+        phone: { $in: searchPhones },
+        role: 'customer'
+    }).select('name email phone');
+
+    // Create a map for quick lookup
+    const userMapByPhone = new Map<string, any>();
+    users.forEach(u => {
+        userMapByPhone.set(u.phone, u);
+        if (u.phone.startsWith('+91')) {
+            userMapByPhone.set(u.phone.replace('+91', ''), u);
+        } else {
+            userMapByPhone.set('+91' + u.phone, u);
+        }
+    });
+
+    // 4. Create a robust normalization function for matching
+    const normalize = (p: string) => p.replace(/\D/g, '').slice(-10);
+
+    const mappedUsers: Record<string, any[]> = {};
+
+    coupons.forEach(coupon => {
+        if (coupon.type === 'restricted' && coupon.allowedPhoneNumbers) {
+            const usersList: any[] = [];
+            coupon.allowedPhoneNumbers.forEach(phone => {
+                const normPhone = normalize(phone);
+                // Try to find user by normalized phone
+                let foundUser: any = null;
+                for (const u of users) {
+                    if (normalize(u.phone) === normPhone) {
+                        foundUser = u;
+                        break;
+                    }
+                }
+
+                usersList.push({
+                    name: foundUser?.name || 'Unknown',
+                    email: foundUser?.email || 'N/A',
+                    phone: phone, // Keep original
+                    isRegistered: !!foundUser
+                });
+            });
+            mappedUsers[coupon._id.toString()] = usersList;
+        }
+    });
+
+    // 5. Transform data for export
+    const exportData: any[] = [];
+    coupons.forEach(coupon => {
+        if (coupon.type === 'restricted') {
+            const usersList = mappedUsers[coupon._id.toString()] || [];
+            usersList.forEach(u => {
+                exportData.push({
+                    couponCode: coupon.code,
+                    couponType: 'restricted',
+                    appliesTo: coupon.appliesTo,
+                    discount: `${coupon.discountValue}%`,
+                    userName: u.name,
+                    userEmail: u.email,
+                    userPhone: u.phone,
+                    isRegistered: u.isRegistered
+                });
+            });
+        } else {
+            exportData.push({
+                couponCode: coupon.code,
+                couponType: 'public',
+                appliesTo: coupon.appliesTo,
+                discount: `${coupon.discountValue}%`,
+                userName: 'Public Use',
+                userEmail: 'N/A',
+                userPhone: 'N/A',
+                isRegistered: true
+            });
+        }
+    });
+
+    res.status(200).json({
+        success: true,
+        data: {
+            coupons,
+            exportData,
+            mappedUsers
+        }
     });
 });
 

@@ -15,6 +15,10 @@ export interface ICoupon extends Document {
     // If restricted, it's linked to numbers using allowedPhoneNumbers.
     usedCount: number;
     expiryDate?: Date;
+    usedBy: Array<{
+        userId: mongoose.Types.ObjectId;
+        usedAt: Date;
+    }>;
     isActive: boolean;
     createdAt: Date;
     updatedAt: Date;
@@ -79,6 +83,12 @@ const CouponSchema = new Schema<ICoupon>(
         expiryDate: {
             type: Date
         },
+        usedBy: [
+            {
+                userId: { type: Schema.Types.ObjectId, ref: 'User' },
+                usedAt: { type: Date, default: Date.now }
+            }
+        ],
         isActive: {
             type: Boolean,
             default: true
