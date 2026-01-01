@@ -24,7 +24,7 @@ import { BookingStatus } from '../constants/bookingStatus';
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
 let razorpay: any = null;
 
-const getRazorpayInstance = (): any => {
+export const getRazorpayInstance = (): any => {
   if (!razorpay) {
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_API_SECRET;

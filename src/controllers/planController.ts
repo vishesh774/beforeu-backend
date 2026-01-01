@@ -11,6 +11,7 @@ import Booking from '../models/Booking';
 import OrderItem from '../models/OrderItem';
 import mongoose from 'mongoose';
 import { getPlanPurchaseService } from '../utils/systemServices';
+import { getRazorpayInstance } from './paymentController';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -331,6 +332,151 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
       bookings
     }
   });
+});
+
+// @desc    Verify payment status for a pending plan transaction from Razorpay
+// @route   POST /api/admin/plan-transactions/:id/verify
+// @access  Private/Admin
+export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Response, next: any) => {
+  const { id } = req.params;
+
+  // 1. Find the transaction
+  const planTx = await PlanTransaction.findById(id);
+  if (!planTx) {
+    return next(new AppError('Transaction not found', 404));
+  }
+
+  if (planTx.status === 'completed') {
+    return res.status(200).json({
+      success: true,
+      message: 'Transaction is already completed',
+      data: planTx
+    });
+  }
+
+  if (!planTx.orderId) {
+    return next(new AppError('No order ID associated with this transaction', 400));
+  }
+
+  try {
+    const razorpay = getRazorpayInstance();
+
+    console.log(`[verifyPlanPaymentStatus] Verifying Razorpay Order ID: ${planTx.orderId} for Transaction: ${planTx.transactionId}`);
+
+    let payments;
+    try {
+      // 2. Fetch payments for this order from Razorpay
+      // This is the correct way to get payments linked specifically to an order
+      payments = await razorpay.orders.fetchPayments(planTx.orderId);
+    } catch (err: any) {
+      console.error(`[verifyPlanPaymentStatus] Razorpay API Error for Order ${planTx.orderId}:`, err);
+      return res.status(200).json({
+        success: false,
+        message: `Razorpay returned an error: ${err.description || err.message || 'Unknown error'}. This usually means the Order ID does not exist on the account associated with the current API keys.`,
+        data: { status: planTx.status, orderId: planTx.orderId, error: err.description }
+      });
+    }
+
+    console.log(`[verifyPlanPaymentStatus] Razorpay response count: ${payments.count || 0}`);
+
+    const items = payments.items || [];
+
+    if (items.length === 0) {
+      console.log(`[verifyPlanPaymentStatus] No payments found for Order ID: ${planTx.orderId}`);
+      return res.status(200).json({
+        success: false,
+        message: `No payments found for order ${planTx.orderId} on Razorpay. The order exists, but no successful payments were recorded for it.`,
+        data: { status: planTx.status, orderId: planTx.orderId }
+      });
+    }
+
+    // 3. Find a successful (captured) payment
+    const successfulPayment = items.find((p: any) => p.status === 'captured');
+
+    if (!successfulPayment) {
+      // If no captured payment, check if any is authorized (can be captured)
+      const authorizedPayment = items.find((p: any) => p.status === 'authorized');
+
+      console.log(`[verifyPlanPaymentStatus] No captured payment found. Razorpay status: ${items[0]?.status}`);
+
+      return res.status(200).json({
+        success: false,
+        message: authorizedPayment
+          ? 'Payment is authorized but not yet captured. Please capture it manually in Razorpay dashboard or wait for automatic capture.'
+          : `No successful (captured) payment found on Razorpay for order ${planTx.orderId}. Current status: ${items[0]?.status || 'unknown'}.`,
+        data: {
+          status: planTx.status,
+          razorpayStatus: items[0]?.status,
+          orderId: planTx.orderId
+        }
+      });
+    }
+
+    // 4. If successful payment found, activate the plan
+    const userId = planTx.userId;
+    const paymentId = successfulPayment.id;
+    console.log(`[verifyPlanPaymentStatus] Found captured payment: ${paymentId}. Proceeding with activation.`);
+
+    // Update Transaction
+    planTx.status = 'completed';
+    planTx.paymentId = paymentId;
+    planTx.paymentDetails = successfulPayment;
+    await planTx.save();
+
+    // Update Plan and Credits
+    const plan = await Plan.findById(planTx.planId);
+    if (plan) {
+      const expiryDate = new Date();
+      const validityDays = plan.validity || 365;
+      expiryDate.setDate(expiryDate.getDate() + validityDays);
+
+      let userPlan = await UserPlan.findOne({ userId });
+      if (!userPlan) {
+        await UserPlan.create({
+          userId,
+          activePlanId: plan._id.toString(),
+          expiresAt: expiryDate
+        });
+      } else {
+        userPlan.activePlanId = plan._id.toString();
+        userPlan.expiresAt = expiryDate;
+        await userPlan.save();
+      }
+
+      let userCredits = await UserCredits.findOne({ userId });
+      if (!userCredits) {
+        await UserCredits.create({ userId, credits: plan.totalCredits });
+      } else {
+        userCredits.credits += plan.totalCredits;
+        await userCredits.save();
+      }
+    }
+
+    // 5. Update associated Booking and OrderItem
+    // Plan purchases via purchasePlan create a booking with bookingId = planTx.orderId
+    const booking = await Booking.findOne({ bookingId: planTx.orderId });
+    if (booking) {
+      booking.paymentStatus = 'paid';
+      booking.paymentId = paymentId;
+      booking.status = 'confirmed';
+      await booking.save();
+
+      await OrderItem.updateMany(
+        { bookingId: booking._id },
+        { status: 'confirmed' }
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment verified and plan activated successfully',
+      data: planTx
+    });
+
+  } catch (error: any) {
+    console.error('[verifyPlanPaymentStatus] Error:', error);
+    return next(new AppError(error.message || 'Error verifying payment status', 500));
+  }
 });
 
 // @desc    Get single plan
