@@ -27,11 +27,25 @@ export const getAllServicePartners = asyncHandler(async (req: Request, res: Resp
 
   // Apply search filter (name, phone, email)
   if (searchQuery && searchQuery.trim()) {
-    filter.$or = [
-      { name: { $regex: searchQuery.trim(), $options: 'i' } },
-      { phone: { $regex: searchQuery.trim(), $options: 'i' } },
-      { email: { $regex: searchQuery.trim(), $options: 'i' } }
+    const trimmedQuery = searchQuery.trim();
+    // Escape special characters for regex
+    const escapedSearch = trimmedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const searchRegex = { $regex: escapedSearch, $options: 'i' };
+
+    const orConditions: any[] = [
+      { name: searchRegex },
+      { phone: searchRegex },
+      { email: searchRegex }
     ];
+
+    // If search looks like a phone number (last 10 digits)
+    const digitsOnly = trimmedQuery.replace(/\D/g, '');
+    if (digitsOnly.length >= 10) {
+      const last10 = digitsOnly.slice(-10);
+      orConditions.push({ phone: { $regex: last10 + '$' } });
+    }
+
+    filter.$or = orConditions;
   }
 
   // Apply isActive filter
@@ -206,7 +220,7 @@ export const createServicePartner = asyncHandler(async (req: Request, res: Respo
 
     // Commit transaction if everything succeeds
     await session.commitTransaction();
-    
+
     // Extract the created documents (create returns array when using session)
     const createdServicePartner = servicePartner[0];
 
@@ -231,14 +245,14 @@ export const createServicePartner = asyncHandler(async (req: Request, res: Respo
   } catch (error: any) {
     // Abort transaction on any error - this will rollback all changes
     await session.abortTransaction();
-    
+
     // Handle specific error types
     if (error.code === 11000) {
       // Duplicate key error
       const field = Object.keys(error.keyPattern || {})[0] || 'field';
       return next(new AppError(`${field.charAt(0).toUpperCase() + field.slice(1)} already exists`, 400));
     }
-    
+
     // Re-throw other errors to be handled by error handler
     throw error;
   } finally {
@@ -289,7 +303,7 @@ export const updateServicePartner = asyncHandler(async (req: Request, res: Respo
     const trimmedEmail = email.trim().toLowerCase();
     const partnerUser = await User.findOne({ phone: servicePartner.phone, role: 'ServicePartner' });
     // Check if email is already taken by another user (excluding current partner's user)
-    const existingEmailUser = await User.findOne({ 
+    const existingEmailUser = await User.findOne({
       email: trimmedEmail,
       _id: partnerUser ? { $ne: partnerUser._id } : { $exists: true }
     });
@@ -348,14 +362,14 @@ export const updateServicePartner = asyncHandler(async (req: Request, res: Respo
   } catch (error: any) {
     // Abort transaction on any error - this will rollback all changes
     await session.abortTransaction();
-    
+
     // Handle specific error types
     if (error.code === 11000) {
       // Duplicate key error
       const field = Object.keys(error.keyPattern || {})[0] || 'field';
       return next(new AppError(`${field.charAt(0).toUpperCase() + field.slice(1)} already exists`, 400));
     }
-    
+
     // Re-throw other errors to be handled by error handler
     throw error;
   } finally {

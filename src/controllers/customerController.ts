@@ -19,10 +19,14 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
   const isActiveFilter = req.query.isActive as string | undefined;
   const searchQuery = req.query.search as string | undefined;
 
-  // Build filter object - only customers
-  const filter: any = {
-    role: 'customer'
-  };
+  // Build filter object - only customers by default
+  const filter: any = {};
+
+  if (req.query.role === 'all') {
+    // No role filter
+  } else {
+    filter.role = 'customer';
+  }
 
   // Apply active/inactive filter
   if (isActiveFilter !== undefined) {
@@ -31,12 +35,25 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
 
   // Apply search filter (name, email, phone)
   if (searchQuery && searchQuery.trim()) {
-    const searchRegex = { $regex: searchQuery.trim(), $options: 'i' };
-    filter.$or = [
+    const trimmedSearch = searchQuery.trim();
+    // Escape special characters for regex
+    const escapedSearch = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const searchRegex = { $regex: escapedSearch, $options: 'i' };
+
+    const orConditions: any[] = [
       { name: searchRegex },
       { email: searchRegex },
       { phone: searchRegex }
     ];
+
+    // If search looks like a phone number (last 10 digits)
+    const digitsOnly = trimmedSearch.replace(/\D/g, '');
+    if (digitsOnly.length >= 10) {
+      const last10 = digitsOnly.slice(-10);
+      orConditions.push({ phone: { $regex: last10 + '$' } });
+    }
+
+    filter.$or = orConditions;
   }
 
   // Get total count for pagination
@@ -95,7 +112,7 @@ export const getCustomer = asyncHandler(async (req: Request, res: Response, next
   const { id } = req.params;
 
   const customer = await User.findById(id);
-  
+
   if (!customer) {
     return next(new AppError('Customer not found', 404));
   }
@@ -126,7 +143,7 @@ export const toggleCustomerStatus = asyncHandler(async (req: Request, res: Respo
   const { id } = req.params;
 
   const customer = await User.findById(id);
-  
+
   if (!customer) {
     return next(new AppError('Customer not found', 404));
   }

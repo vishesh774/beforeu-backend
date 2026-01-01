@@ -26,11 +26,11 @@ export const getAllServices = asyncHandler(async (req: Request, res: Response, _
     // Escape special regex characters in search query
     const escapedQuery = searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const searchRegex = { $regex: escapedQuery, $options: 'i' };
-    
+
     // Find services matching name
     const servicesByName = await Service.find({ name: searchRegex }).select('_id');
     const serviceIdsByName = servicesByName.map(s => s._id);
-    
+
     // Find services with matching variants
     const matchingVariants = await ServiceVariant.find({
       $or: [
@@ -39,10 +39,10 @@ export const getAllServices = asyncHandler(async (req: Request, res: Response, _
       ]
     }).select('serviceId');
     const serviceIdsFromVariants = matchingVariants.map(v => v.serviceId);
-    
+
     // Combine both sets of service IDs
     const allMatchingServiceIds = [...new Set([...serviceIdsByName, ...serviceIdsFromVariants])];
-    
+
     if (allMatchingServiceIds.length > 0) {
       filter._id = { $in: allMatchingServiceIds };
     } else {
@@ -70,19 +70,40 @@ export const getAllServices = asyncHandler(async (req: Request, res: Response, _
     .skip(skip)
     .limit(limit);
 
-  // Get variant counts for all services
+  // Get variant information if requested
+  const includeVariants = req.query.includeVariants === 'true';
   const serviceIds = services.map(s => s._id);
-  let variantCounts: any[] = [];
+
+  let variantMap: Record<string, any[]> = {};
+  let variantCountMap: Record<string, number> = {};
+
   if (serviceIds.length > 0) {
-    variantCounts = await ServiceVariant.aggregate([
-      { $match: { serviceId: { $in: serviceIds } } },
-      { $group: { _id: '$serviceId', count: { $sum: 1 } } }
-    ]);
+    if (includeVariants) {
+      const allVariants = await ServiceVariant.find({ serviceId: { $in: serviceIds } });
+      allVariants.forEach(v => {
+        const sid = v.serviceId.toString();
+        if (!variantMap[sid]) variantMap[sid] = [];
+        variantMap[sid].push({
+          id: v.id,
+          name: v.name,
+          finalPrice: v.finalPrice,
+          originalPrice: v.originalPrice,
+          creditValue: v.creditValue,
+          estimatedTimeMinutes: v.estimatedTimeMinutes,
+          customerVisitRequired: v.customerVisitRequired
+        });
+        variantCountMap[sid] = (variantCountMap[sid] || 0) + 1;
+      });
+    } else {
+      const variantCounts = await ServiceVariant.aggregate([
+        { $match: { serviceId: { $in: serviceIds } } },
+        { $group: { _id: '$serviceId', count: { $sum: 1 } } }
+      ]);
+      variantCounts.forEach(vc => {
+        variantCountMap[vc._id.toString()] = vc.count;
+      });
+    }
   }
-  const variantCountMap: Record<string, number> = {};
-  variantCounts.forEach(vc => {
-    variantCountMap[vc._id.toString()] = vc.count;
-  });
 
   res.status(200).json({
     success: true,
@@ -95,6 +116,7 @@ export const getAllServices = asyncHandler(async (req: Request, res: Response, _
         highlight: service.highlight,
         isActive: service.isActive,
         variantCount: variantCountMap[service._id.toString()] || 0,
+        variants: includeVariants ? variantMap[service._id.toString()] || [] : undefined,
         serviceRegions: service.serviceRegions || [],
         tags: service.tags || [],
         createdAt: service.createdAt,
@@ -288,12 +310,12 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
         customerVisitRequired: variantData.customerVisitRequired !== undefined ? variantData.customerVisitRequired : false,
         isActive: variantData.isActive !== undefined ? variantData.isActive : true
       };
-      
+
       // Only include icon if it has a value (not null, undefined, or empty string)
       if (variantData.icon !== null && variantData.icon !== undefined && String(variantData.icon).trim() !== '') {
         variantDoc.icon = String(variantData.icon).trim();
       }
-      
+
       return variantDoc;
     })
   );
@@ -437,7 +459,7 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
     for (const variant of variants) {
       // Remove any remarks field if present (legacy field, replaced by inclusions/exclusions)
       const { remarks, ...variantData } = variant as any;
-      
+
       const updateData: any = {
         serviceId: service._id,
         id: variantData.id,
@@ -458,7 +480,7 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
         customerVisitRequired: variantData.customerVisitRequired !== undefined ? variantData.customerVisitRequired : false,
         isActive: variantData.isActive
       };
-      
+
       // Handle optional icon field - only include if it has a value
       // Omit the field entirely if null, undefined, or empty string
       // The schema setter will handle normalization
@@ -467,7 +489,7 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
       }
       // If icon is null/empty/undefined, we don't include it in updateData
       // This means the field won't be updated (existing value remains) or will be omitted on create
-      
+
       await ServiceVariant.findOneAndUpdate(
         { serviceId: service._id, id: variantData.id },
         updateData,

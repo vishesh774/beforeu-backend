@@ -732,3 +732,386 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
   }
 });
 
+// @desc    Get Razorpay order/payment details for reconciliation
+// @route   GET /api/admin/payments/razorpay-order/:orderId
+// @access  Private/Admin
+export const getRazorpayOrderDetails = asyncHandler(async (req: any, res: Response, next: any) => {
+  const { orderId: id } = req.params; // Can be Order ID (order_...) or Payment ID (pay_...)
+
+  try {
+    const razorpay = getRazorpayInstance();
+    let order: any = null;
+    let payments: any[] = [];
+    let capturedPayment: any = null;
+    let orderId: string | null = null;
+
+    if (id.startsWith('pay_')) {
+      // It's a Payment ID
+      try {
+        capturedPayment = await razorpay.payments.fetch(id);
+        orderId = capturedPayment.order_id;
+        if (orderId) {
+          try {
+            order = await razorpay.orders.fetch(orderId);
+            const allPayments = await razorpay.orders.fetchPayments(orderId);
+            payments = allPayments.items;
+          } catch (e) {
+            // Order might not exist if it was a direct payment
+            payments = [capturedPayment];
+          }
+        } else {
+          payments = [capturedPayment];
+        }
+      } catch (err: any) {
+        return next(new AppError(`Razorpay Payment not found: ${err.description || err.message}`, 404));
+      }
+    } else {
+      // Assume it's an Order ID
+      orderId = id;
+      try {
+        order = await razorpay.orders.fetch(orderId);
+        const allPayments = await razorpay.orders.fetchPayments(orderId);
+        payments = allPayments.items;
+        capturedPayment = payments.find((p: any) => p.status === 'captured');
+      } catch (err: any) {
+        return next(new AppError(`Razorpay Order not found: ${err.description || err.message}`, 404));
+      }
+    }
+
+    // 3. Check if already linked in our system
+    // Search by both Order ID and Payment ID to be thorough
+    const query: any = { $or: [] };
+    if (orderId) query.$or.push({ orderId: orderId });
+    if (capturedPayment) query.$or.push({ paymentId: capturedPayment.id });
+
+    const existingPlanTx = query.$or.length > 0 ? await PlanTransaction.findOne(query) : null;
+    const existingBooking = query.$or.length > 0 ? await Booking.findOne(query) : null;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        order,
+        payments: payments,
+        capturedPayment,
+        isAlreadyLinked: !!(existingPlanTx || existingBooking),
+        linkedTo: existingPlanTx ? 'plan' : (existingBooking ? 'booking' : null)
+      }
+    });
+  } catch (error: any) {
+    console.error('[PaymentController] Error fetching Razorpay details:', error);
+    return next(new AppError(error.message || 'Failed to fetch Razorpay details', 500));
+  }
+});
+
+// @desc    Reconcile external payment manually
+// @route   POST /api/admin/payments/reconcile
+// @access  Private/Admin
+export const reconcileExternalPayment = asyncHandler(async (req: any, res: Response, next: any) => {
+  const {
+    userId,
+    orderId: providedId, // Can be Order ID or Payment ID
+    targetType, // 'plan' or 'service'
+    targetId,   // planId or booking configuration
+    allowAmountMismatch = false
+  } = req.body;
+
+  if (!userId || !providedId || !targetType || !targetId) {
+    return next(new AppError('User ID, ID (Order/Payment), Target Type and Target data are required', 400));
+  }
+
+  try {
+    const userIdObj = new mongoose.Types.ObjectId(userId);
+    const user = await User.findById(userIdObj);
+    if (!user) return next(new AppError('User not found', 404));
+
+    const razorpay = getRazorpayInstance();
+    let successfulPayment: any = null;
+    let finalOrderId: string | null = null;
+
+    // 1. Verify Razorpay Payment
+    if (providedId.startsWith('pay_')) {
+      successfulPayment = await razorpay.payments.fetch(providedId);
+      if (successfulPayment.status !== 'captured') {
+        return next(new AppError(`Payment ${providedId} is not captured. Status: ${successfulPayment.status}`, 400));
+      }
+      finalOrderId = successfulPayment.order_id;
+    } else {
+      const payments = await razorpay.orders.fetchPayments(providedId);
+      successfulPayment = payments.items.find((p: any) => p.status === 'captured');
+      finalOrderId = providedId;
+    }
+
+    if (!successfulPayment) {
+      return next(new AppError('No captured payment found for this ID on Razorpay', 400));
+    }
+
+    const payedAmountInRupees = successfulPayment.amount / 100;
+
+    // 2. Prevent duplication (only if not linking to an existing specific system ID)
+    const existingId = targetId.existingId;
+
+    if (!existingId) {
+      const query: any = { $or: [{ paymentId: successfulPayment.id }] };
+      if (finalOrderId) query.$or.push({ orderId: finalOrderId });
+
+      const alreadyReconciledPlanTx = await PlanTransaction.findOne(query);
+      const alreadyReconciledBooking = await Booking.findOne(query);
+      if (alreadyReconciledPlanTx || alreadyReconciledBooking) {
+        return next(new AppError('This payment/order is already reconciled in the system', 400));
+      }
+    }
+
+    const orderIdToStore = finalOrderId || `manual_${successfulPayment.id}`;
+
+    // 3. Handle Plan Reconcile
+    if (targetType === 'plan') {
+      let planTx;
+
+      if (existingId) {
+        planTx = await PlanTransaction.findById(existingId);
+        if (!planTx) return next(new AppError('Existing Plan Transaction not found', 404));
+        if (planTx.status === 'completed') return next(new AppError('This transaction is already completed', 400));
+
+        // Update existing
+        planTx.status = 'completed';
+        planTx.paymentId = successfulPayment.id;
+        planTx.paymentDetails = successfulPayment;
+        planTx.orderId = orderIdToStore;
+        await planTx.save();
+      } else {
+        const plan = await Plan.findById(targetId.planId);
+        if (!plan) return next(new AppError('Plan not found', 404));
+
+        // Calculate expected amount
+        let discountAmount = 0;
+        if (targetId.couponCode) {
+          const coupon = await Coupon.findOne({
+            code: targetId.couponCode.toUpperCase(),
+            isActive: true,
+            appliesTo: 'plan'
+          });
+          if (coupon) {
+            discountAmount = (plan.finalPrice * coupon.discountValue) / 100;
+          }
+        }
+
+        const checkoutFields = await getActiveCheckoutFields();
+        const calculation = await calculateCheckoutTotal(
+          plan.finalPrice,
+          checkoutFields,
+          discountAmount > 0 ? { amount: discountAmount, label: `Coupon (${targetId.couponCode!.toUpperCase()})` } : undefined
+        );
+
+        // Verify amount
+        if (Math.abs(calculation.total - payedAmountInRupees) > 1 && !allowAmountMismatch) {
+          return res.status(200).json({
+            success: false,
+            needsConfirmation: true,
+            message: `Amount mismatch! Razorpay: ₹${payedAmountInRupees}, Expected: ₹${calculation.total.toFixed(2)}`,
+            data: { razorpayAmount: payedAmountInRupees, expectedAmount: calculation.total }
+          });
+        }
+
+        const now = new Date();
+        const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+        const count = await PlanTransaction.countDocuments({
+          transactionId: { $regex: new RegExp(`^PTX-${dateStr}-`) }
+        });
+        const transactionId = `PTX-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+
+        const paymentBreakdown = calculation.breakdown.map((item: any) => {
+          const field = checkoutFields.find(f => f.fieldName === item.fieldName);
+          return {
+            fieldName: item.fieldName,
+            fieldDisplayName: item.fieldDisplayName,
+            chargeType: field?.chargeType || 'fixed',
+            value: field?.value || 0,
+            amount: item.amount
+          };
+        });
+
+        planTx = await PlanTransaction.create({
+          userId: userIdObj,
+          planId: plan._id,
+          orderId: orderIdToStore,
+          transactionId,
+          amount: payedAmountInRupees,
+          credits: plan.totalCredits,
+          planSnapshot: {
+            name: plan.planName,
+            originalPrice: plan.originalPrice,
+            finalPrice: plan.finalPrice
+          },
+          paymentId: successfulPayment.id,
+          paymentDetails: successfulPayment,
+          paymentBreakdown,
+          status: 'completed',
+          couponCode: targetId.couponCode?.toUpperCase(),
+          discountAmount
+        });
+      }
+
+      // Activation logic for plan
+      const planToActivate = await Plan.findById(planTx.planId);
+      if (!planToActivate) return next(new AppError('Associated Plan not found', 404));
+
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + (planToActivate.validity || 365));
+
+      let userPlan = await UserPlan.findOne({ userId: userIdObj });
+      if (!userPlan) {
+        await UserPlan.create({ userId: userIdObj, activePlanId: planToActivate._id.toString(), expiresAt: expiryDate });
+      } else {
+        userPlan.activePlanId = planToActivate._id.toString();
+        userPlan.expiresAt = expiryDate;
+        await userPlan.save();
+      }
+
+      let userCredits = await UserCredits.findOne({ userId: userIdObj });
+      if (!userCredits) {
+        await UserCredits.create({ userId: userIdObj, credits: planTx.credits });
+      } else {
+        userCredits.credits += planTx.credits;
+        await userCredits.save();
+      }
+
+      return res.status(200).json({ success: true, message: 'Plan reconciled and activated successfully', data: planTx });
+    }
+
+    // 4. Handle Service Reconcile
+    if (targetType === 'service') {
+      if (existingId) {
+        const booking = await Booking.findById(existingId);
+        if (!booking) return next(new AppError('Existing Booking not found', 404));
+        if (booking.paymentStatus === 'paid') return next(new AppError('This booking is already paid', 400));
+
+        // Update existing booking
+        booking.paymentStatus = 'paid';
+        booking.status = 'confirmed';
+        booking.paymentId = successfulPayment.id;
+        booking.paymentDetails = successfulPayment;
+        booking.orderId = orderIdToStore;
+        // Optionally update breakdown if we have a way to recalculate it or just store the final total
+        await booking.save();
+
+        await OrderItem.updateMany({ bookingId: booking._id }, { status: 'confirmed' });
+        await autoAssignServicePartner(booking, await OrderItem.find({ bookingId: booking._id }));
+
+        return res.status(200).json({ success: true, message: 'Existing booking reconciled successfully', data: booking });
+      }
+
+      const { items, addressId, bookingType, scheduledDate, scheduledTime, couponCode, useCredits } = targetId;
+
+      const address = await Address.findOne({ id: addressId, userId: userIdObj });
+      if (!address) return next(new AppError('Address not found', 404));
+
+      let totalAmount = 0;
+      let totalOriginalAmount = 0;
+      let orderItemsData = [];
+      let creditsToDeduct = 0;
+
+      for (const item of items) {
+        const service = await Service.findOne({ $or: [{ id: item.serviceId }, { name: item.serviceId }] });
+        const variant = await ServiceVariant.findOne({ $or: [{ id: item.variantId }, { name: item.variantId }] });
+        if (!service || !variant) return next(new AppError(`Service/variant not found: ${item.variantId}`, 404));
+
+        const qty = item.quantity || 1;
+        totalAmount += variant.finalPrice * qty;
+        totalOriginalAmount += variant.originalPrice * qty;
+
+        orderItemsData.push({
+          serviceId: service._id,
+          serviceVariantId: variant._id,
+          variantName: variant.name,
+          serviceName: service.name,
+          basePrice: variant.finalPrice,
+          originalPrice: variant.originalPrice,
+          finalPrice: variant.finalPrice,
+          quantity: qty,
+          creditValue: variant.creditValue || 0,
+          estimatedTimeMinutes: variant.estimatedTimeMinutes,
+          customerVisitRequired: variant.customerVisitRequired || false
+        });
+      }
+
+      if (useCredits) {
+        const uCredits = await UserCredits.findOne({ userId: userIdObj });
+        let tempCredits = uCredits?.credits || 0;
+        for (const item of orderItemsData) {
+          const cost = item.creditValue * item.quantity;
+          if (tempCredits >= cost && cost > 0) {
+            tempCredits -= cost;
+            creditsToDeduct += cost;
+            item.finalPrice = 0;
+            totalAmount -= item.basePrice * item.quantity;
+          }
+        }
+      }
+
+      let discountAmount = 0;
+      if (couponCode) {
+        const coupon = await Coupon.findOne({ code: couponCode.toUpperCase(), isActive: true, appliesTo: 'service' });
+        if (coupon) discountAmount = (totalAmount * coupon.discountValue) / 100;
+      }
+
+      const checkoutFields = await getActiveCheckoutFields();
+      const calculation = await calculateCheckoutTotal(totalAmount, checkoutFields, discountAmount > 0 ? { amount: discountAmount, label: `Coupon (${couponCode.toUpperCase()})` } : undefined);
+
+      if (Math.abs(calculation.total - payedAmountInRupees) > 1 && !allowAmountMismatch) {
+        return res.status(200).json({
+          success: false,
+          needsConfirmation: true,
+          message: `Amount mismatch! Razorpay: ₹${payedAmountInRupees}, Expected: ₹${calculation.total.toFixed(2)}`,
+          data: { razorpayAmount: payedAmountInRupees, expectedAmount: calculation.total }
+        });
+      }
+
+      const now = new Date();
+      const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+      const bCount = await Booking.countDocuments({ bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) } });
+      const bookingId = `BOOK-${dateStr}-${String(bCount + 1).padStart(3, '0')}`;
+
+      const booking = await Booking.create({
+        userId: userIdObj,
+        bookingId,
+        addressId: address.id,
+        address: { label: address.label, fullAddress: address.fullAddress, area: address.area, coordinates: address.coordinates },
+        bookingType: bookingType || 'ASAP',
+        scheduledDate: scheduledDate ? new Date(scheduledDate) : new Date(),
+        scheduledTime: scheduledTime || 'ASAP',
+        totalAmount: calculation.total,
+        itemTotal: totalAmount,
+        totalOriginalAmount,
+        creditsUsed: creditsToDeduct,
+        couponCode: couponCode?.toUpperCase(),
+        discountAmount,
+        paymentStatus: 'paid',
+        paymentId: successfulPayment.id,
+        paymentDetails: successfulPayment,
+        status: 'confirmed',
+        orderId: orderIdToStore,
+        paymentBreakdown: calculation.breakdown
+      });
+
+      await OrderItem.insertMany(orderItemsData.map(item => ({ ...item, bookingId: booking._id, status: 'confirmed' })));
+
+      if (creditsToDeduct > 0) {
+        const uCredits = await UserCredits.findOne({ userId: userIdObj });
+        if (uCredits) {
+          uCredits.credits = Math.max(0, uCredits.credits - creditsToDeduct);
+          await uCredits.save();
+        }
+      }
+
+      await autoAssignServicePartner(booking, await OrderItem.find({ bookingId: booking._id }));
+
+      return res.status(200).json({ success: true, message: 'Service booking reconciled successfully', data: booking });
+    }
+
+    return next(new AppError('Invalid target type', 400));
+  } catch (error: any) {
+    console.error('[PaymentController] Error in reconcileExternalPayment:', error);
+    return next(new AppError(error.message || 'Reconciliation failed', 500));
+  }
+});
+

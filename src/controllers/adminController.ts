@@ -10,7 +10,7 @@ import { initializeUserRecords } from '../utils/userHelpers';
 // @access  Private/Admin
 export const getAllUsers = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
   const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
-  
+
   // Pagination parameters
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 10;
@@ -38,12 +38,25 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response, _nex
 
   // Apply search filter (name, email, phone)
   if (searchQuery && searchQuery.trim()) {
-    const searchRegex = { $regex: searchQuery.trim(), $options: 'i' };
-    filter.$or = [
+    const trimmedQuery = searchQuery.trim();
+    // Escape special characters for regex
+    const escapedSearch = trimmedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const searchRegex = { $regex: escapedSearch, $options: 'i' };
+
+    const orConditions: any[] = [
       { name: searchRegex },
       { email: searchRegex },
       { phone: searchRegex }
     ];
+
+    // If search looks like a phone number (last 10 digits)
+    const digitsOnly = trimmedQuery.replace(/\D/g, '');
+    if (digitsOnly.length >= 10) {
+      const last10 = digitsOnly.slice(-10);
+      orConditions.push({ phone: { $regex: last10 + '$' } });
+    }
+
+    filter.$or = orConditions;
   }
 
   // Get total count for pagination
@@ -87,7 +100,7 @@ export const getUser = asyncHandler(async (req: Request, res: Response, next: Ne
   const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
 
   const user = await User.findById(id).select('-password');
-  
+
   if (!user) {
     return next(new AppError('User not found', 404));
   }

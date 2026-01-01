@@ -89,6 +89,7 @@ import {
   toggleCheckoutFieldStatus
 } from '../controllers/checkoutConfigController';
 import { updateAppConfig } from '../controllers/configController';
+import { getRazorpayOrderDetails, reconcileExternalPayment } from '../controllers/paymentController';
 import { requireAdmin } from '../middleware/adminAuth';
 
 const router = express.Router();
@@ -212,6 +213,10 @@ router.patch('/checkout-config/:id/toggle-status', toggleCheckoutFieldStatus);
 
 // Global App Config
 router.put('/config', updateAppConfig);
+
+// Payment reconciliation routes
+router.get('/payments/razorpay-order/:orderId', getRazorpayOrderDetails);
+router.post('/payments/reconcile', reconcileExternalPayment);
 
 export default router;
 

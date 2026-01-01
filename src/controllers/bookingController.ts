@@ -1057,24 +1057,35 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
 
   // Customer specific filters
   if (customerName && customerName.trim()) {
-    customerMatch['customer.name'] = { $regex: customerName.trim(), $options: 'i' };
+    const escapedName = customerName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    customerMatch['customer.name'] = { $regex: escapedName, $options: 'i' };
   }
   if (customerPhone && customerPhone.trim()) {
-    customerMatch['customer.phone'] = { $regex: customerPhone.trim(), $options: 'i' };
+    const escapedPhone = customerPhone.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    customerMatch['customer.phone'] = { $regex: escapedPhone, $options: 'i' };
   }
   if (customerEmail && customerEmail.trim()) {
-    customerMatch['customer.email'] = { $regex: customerEmail.trim(), $options: 'i' };
+    const escapedEmail = customerEmail.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    customerMatch['customer.email'] = { $regex: escapedEmail, $options: 'i' };
   }
 
   // General Search (Booking ID or Customer Details)
   if (searchQuery && searchQuery.trim()) {
-    const escapedQuery = searchQuery.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const trimmedQuery = searchQuery.trim();
+    const escapedQuery = trimmedQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const searchRegex = { $regex: escapedQuery, $options: 'i' };
 
     searchMatch.push({ 'booking.bookingId': searchRegex });
     searchMatch.push({ 'customer.name': searchRegex });
     searchMatch.push({ 'customer.phone': searchRegex });
     searchMatch.push({ 'customer.email': searchRegex });
+
+    // If search looks like a phone number (last 10 digits)
+    const digitsOnly = trimmedQuery.replace(/\D/g, '');
+    if (digitsOnly.length >= 10) {
+      const last10 = digitsOnly.slice(-10);
+      searchMatch.push({ 'customer.phone': { $regex: last10 + '$' } });
+    }
   }
 
   if (Object.keys(customerMatch).length > 0) {
