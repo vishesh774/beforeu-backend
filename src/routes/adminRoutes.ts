@@ -90,6 +90,8 @@ import {
 } from '../controllers/checkoutConfigController';
 import { updateAppConfig } from '../controllers/configController';
 import { getRazorpayOrderDetails, reconcileExternalPayment } from '../controllers/paymentController';
+import { getCompanySettings, updateCompanySettings } from '../controllers/companySettingsController';
+import { generateInvoicePDF } from '../controllers/invoiceController';
 import { requireAdmin } from '../middleware/adminAuth';
 
 const router = express.Router();
@@ -217,6 +219,14 @@ router.put('/config', updateAppConfig);
 // Payment reconciliation routes
 router.get('/payments/razorpay-order/:orderId', getRazorpayOrderDetails);
 router.post('/payments/reconcile', reconcileExternalPayment);
+
+// Company Settings routes
+router.get('/company-settings', getCompanySettings);
+router.put('/company-settings', updateCompanySettings);
+
+// Invoice routes
+router.get('/invoices/booking/:id', generateInvoicePDF);
+router.get('/invoices/plan-transaction/:id', generateInvoicePDF);
 
 export default router;
 
