@@ -83,21 +83,31 @@ export const getBookingSlots = asyncHandler(async (_req: Request, res: Response)
   };
 
   // 2. Logic to generate slots
+  // 2. Logic to generate slots
   const slots = [];
+
+  // Helper to get time in IST
+  const getISTTime = (date: Date = new Date()) => {
+    return new Date(date.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  };
+
+  const now = new Date(); // Server time
+  const nowIST = getISTTime(now); // Current time in IST
+
   const baseDate = new Date(config.startDate);
-  const now = new Date(); // To filter out past slots if baseDate is today
+  // We assume config.startDate is provided in a way that aligns with IST or we treat it as such?
+  // If baseDate is just a date string "2024-01-01", 'new Date' creates it in UTC usually.
+  // Let's create `effectiveStartDate` relative to IST "Today"
+  const todayIST = new Date(nowIST);
+  todayIST.setHours(0, 0, 0, 0);
 
-  // Reset baseDate time to 00:00:00 for clean day iteration if it's a future date, 
-  // BUT if startDate is *today*, we might want to respect current time? 
-  // Actually, usually "startDate" implies the day. 
-  baseDate.setHours(0, 0, 0, 0);
-  // If admin chose a past date, effectively it starts today.
-  // If admin chose a future date, it starts then.
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-
-  const effectiveStartDate = baseDate.getTime() < todayStart.getTime() ? todayStart : baseDate;
-  effectiveStartDate.setHours(0, 0, 0, 0);
+  // If config.startDate is "older" than today, start from today
+  // We need to compare just dates.
+  // Making baseDate relative to IST?
+  // Let's just iterate from 0 to bookingWindowDays relative to "Today IST".
+  // And if config.startDate is in future, we skip until then? 
+  // For simplicity, assuming startDate is usually "active from now".
+  const effectiveStartDate = todayIST; // Simpler assumption for "Active" slots
 
   for (let i = 0; i < config.bookingWindowDays; i++) {
     const currentDate = new Date(effectiveStartDate);
@@ -115,13 +125,32 @@ export const getBookingSlots = asyncHandler(async (_req: Request, res: Response)
     endTimeDate.setHours(endHour, endMin, 0, 0);
 
     while (currentSlotTime < endTimeDate) {
-      // For today, only show future time slots (+buffer?)
-      // Simple interaction: if currentDate is today, check if slot > now
-      if (currentDate.toDateString() === now.toDateString()) {
-        if (currentSlotTime > now) {
-          slotLabels.push(currentSlotTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }));
-        }
-      } else {
+      // Logic:
+      // If currentDate is same day as nowIST...
+      // Check if currentSlotTime (which is set to 09:00 on that day) is > nowIST
+
+      // We need to compare timestamps. 
+      // currentSlotTime is created from currentDate (which is based on todayIST).
+      // So currentSlotTime is in the same "reference frame" (shifted local time represented as Date objects).
+      // e.g. todayIST is "2024-01-02 00:00:00" (the object values reflect 2nd Jan).
+      // currentSlotTime becomes "2024-01-02 09:00:00".
+      // nowIST is "2024-01-02 14:00:00".
+      // 09:00 < 14:00.
+
+      // Also add a buffer, e.g. 60 mins
+      const bufferMs = 60 * 60 * 1000;
+
+      // Use numeric comparison
+      if (currentSlotTime.getTime() > nowIST.getTime() + bufferMs) {
+        slotLabels.push(currentSlotTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }));
+      } else if (currentSlotTime.getDate() !== nowIST.getDate()) {
+        // Future dates: always add (since we loop from today forward)
+        // Actually, "currentDate" loop covers this.
+        // If i > 0, it is a future date.
+        // Wait, currentSlotTime is constructed from currentDate.
+        // If i=1 (tomorrow), currentSlotTime > nowIST is definitively true.
+        // But we need to make sure we don't filter out 9am tomorrow just because 9am < 14pm today?
+        // No, getTime() handles full timestamp.
         slotLabels.push(currentSlotTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }));
       }
 
