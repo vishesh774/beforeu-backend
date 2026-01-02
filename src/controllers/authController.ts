@@ -467,3 +467,45 @@ export const deleteFamilyMember = asyncHandler(async (req: AuthRequest, res: Res
   });
 });
 
+// @desc    Delete user account (Soft delete with anonymization)
+// @route   DELETE /api/auth/delete-account
+// @access  Private
+export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  // Convert userId string to ObjectId
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  const user = await User.findById(userIdObj);
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  // 1. Delete all addresses
+  await Address.deleteMany({ userId: userIdObj });
+
+  // 2. Delete all family members
+  await FamilyMember.deleteMany({ userId: userIdObj });
+
+  // 3. Anonymize and deactivate user
+  // We append timestamp to phone/email to allow re-registration with same credentials
+  const timestamp = Date.now();
+
+  user.isActive = false;
+  user.isDeleted = true;
+  user.phone = `deleted_${timestamp}_${user.phone}`;
+  if (user.email) {
+    user.email = `deleted_${timestamp}_${user.email}`;
+  }
+
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Account deleted successfully'
+  });
+});

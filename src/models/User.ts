@@ -10,6 +10,7 @@ export interface IUser extends Document {
   password: string;
   role: UserRole;
   isActive: boolean;
+  isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -32,7 +33,7 @@ const UserSchema = new Schema<IUser>(
       lowercase: true,
       trim: true,
       validate: {
-        validator: function(v: string) {
+        validator: function (v: string) {
           // Allow null/undefined, but if provided, must be valid email
           if (!v) return true; // Allow null/undefined/empty
           return /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(v);
@@ -63,6 +64,10 @@ const UserSchema = new Schema<IUser>(
       type: Boolean,
       default: true,
       required: true
+    },
+    isDeleted: {
+      type: Boolean,
+      default: false
     }
   },
   {
