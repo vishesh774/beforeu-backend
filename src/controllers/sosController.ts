@@ -201,9 +201,24 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => {
         await alert.save();
 
         // Sync with Booking
-        if (alert.bookingId) {
-            await OrderItem.updateMany({ bookingId: alert.bookingId }, { status: 'cancelled' });
-            await syncBookingStatus(alert.bookingId);
+        // Sync with Booking
+        let bookingIdToUse = alert.bookingId;
+
+        if (!bookingIdToUse) {
+            const foundBooking = await Booking.findOne({
+                userId: alert.user,
+                bookingType: 'SOS'
+            }).sort({ createdAt: -1 });
+
+            if (foundBooking) {
+                bookingIdToUse = foundBooking._id;
+                alert.bookingId = foundBooking._id;
+            }
+        }
+
+        if (bookingIdToUse) {
+            await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'cancelled' });
+            await syncBookingStatus(bookingIdToUse);
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
@@ -243,9 +258,24 @@ export const acknowledgeSOS = async (req: AuthRequest, res: Response) => {
         await alert.save();
 
         // Sync with Booking
-        if (alert.bookingId) {
-            await OrderItem.updateMany({ bookingId: alert.bookingId }, { status: 'assigned' });
-            await syncBookingStatus(alert.bookingId);
+        // Sync with Booking
+        let bookingIdToUse = alert.bookingId;
+
+        if (!bookingIdToUse) {
+            const foundBooking = await Booking.findOne({
+                userId: alert.user,
+                bookingType: 'SOS'
+            }).sort({ createdAt: -1 });
+
+            if (foundBooking) {
+                bookingIdToUse = foundBooking._id;
+                alert.bookingId = foundBooking._id;
+            }
+        }
+
+        if (bookingIdToUse) {
+            await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'assigned' });
+            await syncBookingStatus(bookingIdToUse);
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
@@ -295,9 +325,28 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => {
         await alert.save();
 
         // Sync with Booking
-        if (alert.bookingId) {
-            await OrderItem.updateMany({ bookingId: alert.bookingId }, { status: 'completed' });
-            await syncBookingStatus(alert.bookingId);
+        // Sync with Booking
+        let bookingIdToUse = alert.bookingId;
+
+        // Fallback: If no bookingId on alert, try to find a recent SOS booking for this user
+        if (!bookingIdToUse) {
+            const foundBooking = await Booking.findOne({
+                userId: alert.user,
+                bookingType: 'SOS'
+            }).sort({ createdAt: -1 });
+
+            if (foundBooking) {
+                console.log(`[resolveSOS] Found unlinked SOS booking for resolution: ${foundBooking.bookingId}`);
+                bookingIdToUse = foundBooking._id;
+
+                // Link it for future references
+                alert.bookingId = foundBooking._id;
+            }
+        }
+
+        if (bookingIdToUse) {
+            await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'completed' });
+            await syncBookingStatus(bookingIdToUse);
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
