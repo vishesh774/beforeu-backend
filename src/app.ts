@@ -38,9 +38,19 @@ const app: Application = express();
 app.use(helmet());
 
 // CORS configuration - Allow both customer platform and admin panel
+const defaultOrigins = [
+  'https://beforeu-customer-platform.vercel.app',
+  'https://beforeu-admin-dashboard.vercel.app',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:19000', // Expo
+  'http://localhost:8081'   // React Native/Metro
+];
+
 const allowedOrigins = process.env.CORS_ORIGIN
   ? process.env.CORS_ORIGIN.split(',').map(origin => origin.trim())
-  : ['https://beforeu-customer-platform.vercel.app', 'https://beforeu-admin-dashboard.vercel.app']; // Customer platform and admin panel
+  : defaultOrigins;
 
 // In production, log allowed origins for debugging
 if (process.env.NODE_ENV === 'production') {
@@ -69,6 +79,7 @@ const corsOptions = {
   credentials: true,
   optionsSuccessStatus: 200
 };
+
 app.use(cors(corsOptions));
 
 // Body parser middleware

@@ -84,6 +84,29 @@ export const getPlanHolderId = async (userId: string | mongoose.Types.ObjectId):
 };
 
 /**
+ * Get all user IDs in the family group (Shared Pool)
+ */
+export const getFamilyGroupIds = async (planHolderId: string | mongoose.Types.ObjectId): Promise<mongoose.Types.ObjectId[]> => {
+  const planHolder = await User.findById(planHolderId);
+  if (!planHolder) return [new mongoose.Types.ObjectId(planHolderId)];
+
+  // Find all family members added by this primary user
+  const familyMembers = await FamilyMember.find({ userId: planHolderId });
+
+  // Also find any Users that have the same phone as these family members
+  // This is how we link family member records to actual User accounts
+  const familyPhones = familyMembers.map(fm => fm.phone);
+  const secondaryUsers = await User.find({ phone: { $in: familyPhones } });
+
+  const allIds = [
+    planHolder._id,
+    ...secondaryUsers.map(u => u._id)
+  ];
+
+  return allIds;
+};
+
+/**
  * Aggregate user data from multiple collections
  */
 export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId): Promise<AggregatedUserData | null> => {
