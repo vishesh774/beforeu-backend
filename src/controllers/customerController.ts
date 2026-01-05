@@ -4,7 +4,7 @@ import { AppError } from '../middleware/errorHandler';
 import User from '../models/User';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
-import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
+import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
 
 // @desc    Get all customers with pagination and filters
 // @route   GET /api/admin/customers
@@ -67,34 +67,36 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
     .limit(limit);
 
   // Get credits and plans for all customers in parallel
-  const customerIds = customers.map(c => c._id);
-  const [creditsMap, plansMap] = await Promise.all([
-    UserCredits.find({ userId: { $in: customerIds } }).then(credits => {
-      const map: Record<string, number> = {};
-      credits.forEach(c => { map[c.userId.toString()] = c.credits; });
-      return map;
-    }),
-    UserPlan.find({ userId: { $in: customerIds } }).then(plans => {
-      const map: Record<string, string | undefined> = {};
-      plans.forEach(p => { map[p.userId.toString()] = p.activePlanId || undefined; });
-      return map;
-    })
-  ]);
+  // For each customer, we need to know their effective plan holder
+  const customerDetailPromises = customers.map(async (customer) => {
+    const planHolderId = await getPlanHolderId(customer._id);
+    const isSharedPlan = planHolderId.toString() !== customer._id.toString();
+
+    const [credits, userPlan] = await Promise.all([
+      UserCredits.findOne({ userId: planHolderId }),
+      UserPlan.findOne({ userId: planHolderId })
+    ]);
+
+    return {
+      id: customer._id.toString(),
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone,
+      isActive: customer.isActive,
+      credits: credits?.credits || 0,
+      activePlanId: userPlan?.activePlanId,
+      isSharedPlan,
+      createdAt: customer.createdAt,
+      updatedAt: customer.updatedAt
+    };
+  });
+
+  const resolvedCustomers = await Promise.all(customerDetailPromises);
 
   res.status(200).json({
     success: true,
     data: {
-      customers: customers.map(customer => ({
-        id: customer._id.toString(),
-        name: customer.name,
-        email: customer.email,
-        phone: customer.phone,
-        isActive: customer.isActive,
-        credits: creditsMap[customer._id.toString()] || 0,
-        activePlanId: plansMap[customer._id.toString()],
-        createdAt: customer.createdAt,
-        updatedAt: customer.updatedAt
-      })),
+      customers: resolvedCustomers,
       pagination: {
         page,
         limit,

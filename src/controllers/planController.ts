@@ -12,6 +12,7 @@ import OrderItem from '../models/OrderItem';
 import mongoose from 'mongoose';
 import { getPlanPurchaseService } from '../utils/systemServices';
 import { getRazorpayInstance } from './paymentController';
+import { getFamilyGroupIds } from '../utils/userHelpers';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -314,10 +315,21 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
   const userCredits = await UserCredits.findOne({ userId });
   const remainingCredits = userCredits?.credits || 0;
 
-  // Fetch Booking History
-  const bookings = await Booking.find({ userId })
+  // Fetch Booking History for the entire family group
+  const familyIds = await getFamilyGroupIds(userId);
+  const bookings = await Booking.find({ userId: { $in: familyIds } })
     .sort({ createdAt: -1 })
-    .select('bookingId createdAt totalAmount creditsUsed status paymentStatus items');
+    .populate('userId', 'name')
+    .select('bookingId createdAt totalAmount creditsUsed status paymentStatus items userId');
+
+  // Map bookings to include userName at the top level for the frontend
+  const mappedBookings = bookings.map(b => {
+    const bookingObj = b.toObject();
+    return {
+      ...bookingObj,
+      userName: (bookingObj.userId as any)?.name || 'Unknown'
+    };
+  });
 
   res.status(200).json({
     success: true,
@@ -329,7 +341,7 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
         remainingCredits,
         expiryDate: userPlan?.expiresAt || 'Lifetime'
       },
-      bookings
+      bookings: mappedBookings
     }
   });
 });

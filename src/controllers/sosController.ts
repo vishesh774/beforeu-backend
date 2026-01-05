@@ -7,14 +7,40 @@ import { socketService } from '../services/socketService';
 import { AuthRequest } from '../middleware/auth';
 import { getSOSService } from '../utils/systemServices';
 import { syncBookingStatus, autoAssignServicePartner } from '../services/bookingService';
+import { getPlanHolderId } from '../utils/userHelpers';
+import UserPlan from '../models/UserPlan';
+import UserCredits from '../models/UserCredits';
+import Plan from '../models/Plan';
 
 export const triggerSOS = async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user?.id;
         const { location, familyMemberId, serviceId } = req.body;
 
-        if (!userId || !location || !location.latitude || !location.longitude) {
-            res.status(400).json({ success: false, error: 'User ID and Location are required' });
+        // Identify the plan holder (Primary account owner) for credits/plan verification
+        const userIdObj = new mongoose.Types.ObjectId(userId);
+        const planHolderId = await getPlanHolderId(userIdObj);
+
+        // 1. Verify Plan and SOS allowance
+        const userPlan = await UserPlan.findOne({ userId: planHolderId });
+        if (!userPlan?.activePlanId) {
+            res.status(403).json({ success: false, error: 'SOS is only available for users with an active plan.' });
+            return;
+        }
+
+        const plan = await Plan.findById(userPlan.activePlanId);
+        if (!plan || !plan.allowSOS) {
+            res.status(403).json({ success: false, error: 'Your current plan does not support SOS emergency features.' });
+            return;
+        }
+
+        // 2. Check for sufficient credits in the plan holder's account
+        const { service, variant } = await getSOSService();
+        const creditsNeeded = variant.creditValue || 0;
+
+        const userCredits = await UserCredits.findOne({ userId: planHolderId });
+        if (!userCredits || (creditsNeeded > 0 && userCredits.credits < creditsNeeded)) {
+            res.status(403).json({ success: false, error: `Insufficient credits to trigger SOS. Need ${creditsNeeded} credits.` });
             return;
         }
 
@@ -79,24 +105,24 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 action: 'TRIGGERED',
                 timestamp: new Date(),
                 performedBy: userId,
-                details: 'User initiated SOS'
+                details: `User initiated SOS${planHolderId.toString() !== userId ? ' (Family Plan)' : ''}`
             }]
         });
 
         // --- NEW: Create Booking and OrderItem for SOS ---
         try {
-            const { service, variant } = await getSOSService();
+            // We already fetched service/variant above
 
             // Generate booking ID
             const now = new Date();
             const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
-            const count = await Booking.countDocuments({
+            const bCount = await Booking.countDocuments({
                 bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) }
             });
-            const bIdStr = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+            const bIdStr = `BOOK-${dateStr}-${String(bCount + 1).padStart(3, '0')}`;
 
             const booking = await Booking.create({
-                userId: new mongoose.Types.ObjectId(userId),
+                userId: userIdObj,
                 bookingId: bIdStr,
                 addressId: 'SOS_LOCATION',
                 address: {
@@ -108,9 +134,10 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                     }
                 },
                 bookingType: 'SOS',
-                itemTotal: 0,
-                totalAmount: 0,
-                totalOriginalAmount: 0,
+                itemTotal: variant.finalPrice || 0,
+                totalAmount: variant.finalPrice || 0,
+                totalOriginalAmount: variant.originalPrice || 0,
+                creditsUsed: creditsNeeded,
                 status: 'confirmed',
                 paymentStatus: 'paid',
                 notes: `SOS ALERT: ${location.emergencyType || 'General Emergency'}`
@@ -126,16 +153,23 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 serviceName: service.name,
                 variantName: variant.name,
                 quantity: 1,
-                originalPrice: 0,
-                finalPrice: 0,
-                creditValue: 0,
-                estimatedTimeMinutes: 30,
+                originalPrice: variant.originalPrice,
+                finalPrice: variant.finalPrice,
+                creditValue: creditsNeeded,
+                estimatedTimeMinutes: variant.estimatedTimeMinutes || 30,
                 customerVisitRequired: true,
-                paidWithCredits: false,
+                paidWithCredits: creditsNeeded > 0,
                 status: 'confirmed',
                 startJobOtp: 'NONE', // Special case for SOS
                 endJobOtp: generatedOtp, // Use the SOS OTP as the completion OTP
             });
+
+            // 3. Deduct Credits from Plan Holder
+            if (creditsNeeded > 0 && userCredits) {
+                userCredits.credits = Math.max(0, userCredits.credits - creditsNeeded);
+                await userCredits.save();
+                console.log(`[triggerSOS] Deducted ${creditsNeeded} credits from plan holder ${planHolderId}`);
+            }
 
             // Trigger auto-assignment for SOS
             console.log(`[triggerSOS] Triggering auto-assignment for SOS booking ${bIdStr}`);
