@@ -9,7 +9,7 @@ import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
 import UserPlan from '../models/UserPlan';
 import Plan from '../models/Plan';
-import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
+import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
 
 interface SignupRequest extends Request {
   body: {
@@ -400,31 +400,35 @@ export const addFamilyMember = asyncHandler(async (req: AuthRequest, res: Respon
   // Convert userId string to ObjectId
   const userIdObj = new mongoose.Types.ObjectId(userId);
 
-  // Check plan limits
-  const userPlan = await UserPlan.findOne({ userId: userIdObj });
+  // Identify the plan holder (Primary account owner)
+  const planHolderId = await getPlanHolderId(userIdObj);
+
+  // Check plan limits for the shared pool
+  const userPlan = await UserPlan.findOne({ userId: planHolderId });
   if (userPlan?.activePlanId) {
     const plan = await Plan.findById(userPlan.activePlanId);
     if (plan) {
-      const currentMemberCount = await FamilyMember.countDocuments({ userId: userIdObj });
+      // Count total members added by the Plan Holder
+      const currentMemberCount = await FamilyMember.countDocuments({ userId: planHolderId });
       // totalMembers includes the primary user
       if (currentMemberCount + 1 >= plan.totalMembers) {
-        return next(new AppError(`You have reached the limit of ${plan.totalMembers} members (including yourself) for your current plan.`, 400));
+        return next(new AppError(`The plan limit of ${plan.totalMembers} members (including primary) has been reached.`, 400));
       }
     }
   } else {
     // Default limit for users without a plan
-    const currentMemberCount = await FamilyMember.countDocuments({ userId: userIdObj });
-    if (currentMemberCount >= 5) { // Arbitrary default limit for free users
-      return next(new AppError('You can add up to 5 family members without a plan.', 400));
+    const currentMemberCount = await FamilyMember.countDocuments({ userId: planHolderId });
+    if (currentMemberCount >= 5) {
+      return next(new AppError('The limit of 5 family members has been reached.', 400));
     }
   }
 
   // Generate unique family member ID
   const memberId = `fam-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
-  // Create the family member
+  // Create the family member under the Plan Holder's account
   const familyMember = await FamilyMember.create({
-    userId: userIdObj,
+    userId: planHolderId,
     id: memberId,
     name,
     relation,
@@ -432,7 +436,7 @@ export const addFamilyMember = asyncHandler(async (req: AuthRequest, res: Respon
     email: email || undefined
   });
 
-  // Aggregate updated user data
+  // Aggregate updated user data for the current user
   const userData = await aggregateUserData(userIdObj);
 
   res.status(201).json({
@@ -467,11 +471,19 @@ export const deleteFamilyMember = asyncHandler(async (req: AuthRequest, res: Res
 
   // Convert userId string to ObjectId
   const userIdObj = new mongoose.Types.ObjectId(userId);
+  const planHolderId = await getPlanHolderId(userIdObj);
 
-  // Find the family member and verify it belongs to the user
-  const familyMember = await FamilyMember.findOne({ userId: userIdObj, id });
+  // Find the family member and verify it belongs to the plan holder's group
+  const familyMember = await FamilyMember.findOne({ userId: planHolderId, id });
   if (!familyMember) {
-    return next(new AppError('Family member not found', 404));
+    return next(new AppError('Family member not found in your group', 404));
+  }
+
+  // Safety: Prevent user from deleting their own entry if they are a family member
+  // (They would lose access to the shared plan)
+  const currentUser = await User.findById(userIdObj);
+  if (currentUser && currentUser.phone === familyMember.phone) {
+    return next(new AppError('You cannot remove yourself from the shared plan. Please contact the primary account holder.', 400));
   }
 
   // Delete the family member

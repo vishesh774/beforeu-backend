@@ -60,8 +60,15 @@ export const getPlanHolderId = async (userId: string | mongoose.Types.ObjectId):
     return new mongoose.Types.ObjectId(userId);
   }
 
-  // Check if this user is a family member of someone who has an active plan
-  // We prioritize the primary user if they have an active plan
+  // 1. Check if the user has their own active plan first
+  const myPlan = await UserPlan.findOne({ userId: user._id });
+  if (myPlan?.activePlanId) {
+    if (!myPlan.expiresAt || new Date() < myPlan.expiresAt) {
+      return user._id;
+    }
+  }
+
+  // 2. Check if this user is a family member of someone who has an active plan
   const familyRef = await FamilyMember.findOne({ phone: user.phone });
   if (familyRef) {
     const primaryPlan = await UserPlan.findOne({ userId: familyRef.userId });
@@ -87,16 +94,44 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
 
   // Find the primary user if this user is a family member sharing a plan
   const planHolderId = await getPlanHolderId(user._id);
+  const isSharedPlan = planHolderId.toString() !== user._id.toString();
+
+  // Fetch plan holder user details if different from current user
+  let planHolderUser = user;
+  if (isSharedPlan) {
+    const ph = await User.findById(planHolderId);
+    if (ph) planHolderUser = ph;
+  }
 
   // Fetch related data
-  // Family members and addresses are always SPECIFIC to the user
-  // Credits and Plans can be SHARED from the primary
+  // Family members and addresses are always SHARED if plan is shared?
+  // User says: "On the family page, we should be able to see all the family members on the family page."
+  // This implies the list is shared.
   const [familyMembers, addresses, userCredits, userPlan] = await Promise.all([
-    FamilyMember.find({ userId: user._id }).sort({ createdAt: 1 }),
-    Address.find({ userId: user._id }).sort({ createdAt: 1 }),
-    UserCredits.findOne({ userId: planHolderId }), // Use planHolderId for credits
-    UserPlan.findOne({ userId: planHolderId })     // Use planHolderId for plan
+    FamilyMember.find({ userId: planHolderId }).sort({ createdAt: 1 }), // Shared list
+    Address.find({ userId: user._id }).sort({ createdAt: 1 }),          // Addresses remain specific to the user?
+    UserCredits.findOne({ userId: planHolderId }),
+    UserPlan.findOne({ userId: planHolderId })
   ]);
+
+  // Map family members
+  const mappedFamilyMembers = familyMembers.map(fm => ({
+    id: fm.id,
+    name: fm.name,
+    relation: fm.relation,
+    phone: fm.phone,
+    email: fm.email
+  }));
+
+  // Add the Plan Holder to the family members list as 'Primary'
+  // Only if they aren't already included (which they aren't, as they are the userId)
+  mappedFamilyMembers.unshift({
+    id: 'primary-' + planHolderUser._id.toString(),
+    name: planHolderUser.name + ' (Primary)',
+    relation: 'Primary Account',
+    phone: planHolderUser.phone,
+    email: planHolderUser.email
+  });
 
   // Fetch active plan details if activePlanId exists
   let activePlan = undefined;
@@ -130,13 +165,7 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
     credits: userCredits?.credits || 0,
     activePlanId: userPlan?.activePlanId || undefined,
     activePlan,
-    familyMembers: familyMembers.map(fm => ({
-      id: fm.id,
-      name: fm.name,
-      relation: fm.relation,
-      phone: fm.phone,
-      email: fm.email
-    })),
+    familyMembers: mappedFamilyMembers,
     addresses: addresses.map(addr => ({
       id: addr.id,
       label: addr.label,
