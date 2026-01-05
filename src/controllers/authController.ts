@@ -7,6 +7,8 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { generateToken } from '../utils/generateToken';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
+import UserPlan from '../models/UserPlan';
+import Plan from '../models/Plan';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
 
 interface SignupRequest extends Request {
@@ -397,6 +399,25 @@ export const addFamilyMember = asyncHandler(async (req: AuthRequest, res: Respon
 
   // Convert userId string to ObjectId
   const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Check plan limits
+  const userPlan = await UserPlan.findOne({ userId: userIdObj });
+  if (userPlan?.activePlanId) {
+    const plan = await Plan.findById(userPlan.activePlanId);
+    if (plan) {
+      const currentMemberCount = await FamilyMember.countDocuments({ userId: userIdObj });
+      // totalMembers includes the primary user
+      if (currentMemberCount + 1 >= plan.totalMembers) {
+        return next(new AppError(`You have reached the limit of ${plan.totalMembers} members (including yourself) for your current plan.`, 400));
+      }
+    }
+  } else {
+    // Default limit for users without a plan
+    const currentMemberCount = await FamilyMember.countDocuments({ userId: userIdObj });
+    if (currentMemberCount >= 5) { // Arbitrary default limit for free users
+      return next(new AppError('You can add up to 5 family members without a plan.', 400));
+    }
+  }
 
   // Generate unique family member ID
   const memberId = `fam-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;

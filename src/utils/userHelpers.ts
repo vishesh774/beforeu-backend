@@ -52,6 +52,31 @@ export interface AggregatedUserData {
 }
 
 /**
+ * Find the primary user ID if the current user is a family member of an active plan holder
+ */
+export const getPlanHolderId = async (userId: string | mongoose.Types.ObjectId): Promise<mongoose.Types.ObjectId> => {
+  const user = await User.findById(userId);
+  if (!user) {
+    return new mongoose.Types.ObjectId(userId);
+  }
+
+  // Check if this user is a family member of someone who has an active plan
+  // We prioritize the primary user if they have an active plan
+  const familyRef = await FamilyMember.findOne({ phone: user.phone });
+  if (familyRef) {
+    const primaryPlan = await UserPlan.findOne({ userId: familyRef.userId });
+    if (primaryPlan?.activePlanId) {
+      // Ensure the plan is not expired
+      if (!primaryPlan.expiresAt || new Date() < primaryPlan.expiresAt) {
+        return familyRef.userId;
+      }
+    }
+  }
+
+  return user._id;
+};
+
+/**
  * Aggregate user data from multiple collections
  */
 export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId): Promise<AggregatedUserData | null> => {
@@ -60,12 +85,17 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
     return null;
   }
 
-  // Fetch related data in parallel
+  // Find the primary user if this user is a family member sharing a plan
+  const planHolderId = await getPlanHolderId(user._id);
+
+  // Fetch related data
+  // Family members and addresses are always SPECIFIC to the user
+  // Credits and Plans can be SHARED from the primary
   const [familyMembers, addresses, userCredits, userPlan] = await Promise.all([
     FamilyMember.find({ userId: user._id }).sort({ createdAt: 1 }),
     Address.find({ userId: user._id }).sort({ createdAt: 1 }),
-    UserCredits.findOne({ userId: user._id }),
-    UserPlan.findOne({ userId: user._id })
+    UserCredits.findOne({ userId: planHolderId }), // Use planHolderId for credits
+    UserPlan.findOne({ userId: planHolderId })     // Use planHolderId for plan
   ]);
 
   // Fetch active plan details if activePlanId exists

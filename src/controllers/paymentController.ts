@@ -20,6 +20,7 @@ import Coupon from '../models/Coupon';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
 import { autoAssignServicePartner } from '../services/bookingService';
 import { BookingStatus } from '../constants/bookingStatus';
+import { getPlanHolderId } from '../utils/userHelpers';
 
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
 let razorpay: any = null;
@@ -315,7 +316,8 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       // 2. Handle Credits (Deduct from amount calculation, not current balance yet)
       let creditsUsed = 0;
       if (bookingData.useCredits) {
-        const userCredits = await UserCredits.findOne({ userId: userIdObj });
+        const planHolderId = await getPlanHolderId(userIdObj);
+        const userCredits = await UserCredits.findOne({ userId: planHolderId });
         if (userCredits && userCredits.credits > 0) {
           // Credits apply to item total
           // We assume credits cover full item cost if available
@@ -485,7 +487,8 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         if (amount === 0) {
           // Deduct Credits if used
           if (booking.creditsUsed > 0) {
-            const userCredits = await UserCredits.findOne({ userId: userIdObj });
+            const planHolderId = await getPlanHolderId(userIdObj);
+            const userCredits = await UserCredits.findOne({ userId: planHolderId });
             if (userCredits) {
               userCredits.credits = Math.max(0, userCredits.credits - booking.creditsUsed);
               await userCredits.save();
@@ -664,11 +667,12 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
 
       // 1. Deduct Credits
       if (booking.creditsUsed > 0) {
-        const userCredits = await UserCredits.findOne({ userId: userIdObj });
+        const planHolderId = await getPlanHolderId(userIdObj);
+        const userCredits = await UserCredits.findOne({ userId: planHolderId });
         if (userCredits) {
           userCredits.credits = Math.max(0, userCredits.credits - booking.creditsUsed);
           await userCredits.save();
-          console.log(`[PaymentController] Deducted ${booking.creditsUsed} credits from user ${userIdObj}`);
+          console.log(`[PaymentController] Deducted ${booking.creditsUsed} credits from plan holder ${planHolderId} (user: ${userIdObj})`);
         }
       }
 
@@ -1035,7 +1039,8 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
       }
 
       if (useCredits) {
-        const uCredits = await UserCredits.findOne({ userId: userIdObj });
+        const planHolderId = await getPlanHolderId(userIdObj);
+        const uCredits = await UserCredits.findOne({ userId: planHolderId });
         let tempCredits = uCredits?.credits || 0;
         for (const item of orderItemsData) {
           const cost = item.creditValue * item.quantity;
@@ -1096,7 +1101,8 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
       await OrderItem.insertMany(orderItemsData.map(item => ({ ...item, bookingId: booking._id, status: 'confirmed' })));
 
       if (creditsToDeduct > 0) {
-        const uCredits = await UserCredits.findOne({ userId: userIdObj });
+        const planHolderId = await getPlanHolderId(userIdObj);
+        const uCredits = await UserCredits.findOne({ userId: planHolderId });
         if (uCredits) {
           uCredits.credits = Math.max(0, uCredits.credits - creditsToDeduct);
           await uCredits.save();
