@@ -94,7 +94,7 @@ export const getBookingSlots = asyncHandler(async (_req: Request, res: Response)
   const now = new Date(); // Server time
   const nowIST = getISTTime(now); // Current time in IST
 
-  const baseDate = new Date(config.startDate);
+  // const baseDate = new Date(config.startDate);
   // We assume config.startDate is provided in a way that aligns with IST or we treat it as such?
   // If baseDate is just a date string "2024-01-01", 'new Date' creates it in UTC usually.
   // Let's create `effectiveStartDate` relative to IST "Today"

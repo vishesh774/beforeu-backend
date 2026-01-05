@@ -4,7 +4,7 @@ import { AppError } from '../middleware/errorHandler';
 import User from '../models/User';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
-import { aggregateUserData } from '../utils/userHelpers';
+import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
 
 // @desc    Get all customers with pagination and filters
 // @route   GET /api/admin/customers
@@ -172,3 +172,76 @@ export const toggleCustomerStatus = asyncHandler(async (req: Request, res: Respo
   });
 });
 
+// @desc    Add a new customer
+// @route   POST /api/admin/customers
+// @access  Private/Admin
+export const addCustomer = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { name, phone, email } = req.body;
+
+  if (!name || !phone) {
+    return next(new AppError('Name and phone number are required', 400));
+  }
+
+  // Format phone number: ensure country code is present (default +91)
+  // Strict validation: Must extract exactly 10 digits
+  let cleanPhone = phone.replace(/[^0-9+]/g, ''); // Keep + for check
+
+  // Normalize to 10 digits
+  if (cleanPhone.startsWith('+91')) {
+    cleanPhone = cleanPhone.slice(3);
+  } else if (cleanPhone.startsWith('91') && cleanPhone.length === 12) {
+    cleanPhone = cleanPhone.slice(2);
+  }
+
+  // Final check: must be exactly 10 digits
+  if (!/^\d{10}$/.test(cleanPhone)) {
+    return next(new AppError('Phone number must be exactly 10 digits', 400));
+  }
+
+  let formattedPhone = '+91' + cleanPhone;
+
+  // Check if phone already exists
+  const existingPhone = await User.findOne({ phone: formattedPhone });
+  if (existingPhone) {
+    return next(new AppError(`Customer with phone ${formattedPhone} already exists`, 400));
+  }
+
+  // Check if email already exists (if provided)
+  if (email) {
+    const existingEmail = await User.findOne({ email: email.toLowerCase() });
+    if (existingEmail) {
+      return next(new AppError(`Customer with email ${email} already exists`, 400));
+    }
+  }
+
+  // Create user
+  // Password is required by model, but for admin-created customers who login via OTP,
+  // we can set a random strong password that they won't know/need.
+  const randomPassword = Math.random().toString(36).slice(-8) + 'Aa1@';
+
+  const user = await User.create({
+    name,
+    phone: formattedPhone,
+    email: email ? email.toLowerCase() : undefined,
+    password: randomPassword,
+    role: 'customer',
+    isActive: true
+  });
+
+  // Initialize credits and plan records
+  await initializeUserRecords(user._id);
+
+  // Aggregate customer data
+  const userData = await aggregateUserData(user._id);
+  if (!userData) {
+    return next(new AppError('Failed to create customer data', 500));
+  }
+
+  res.status(201).json({
+    success: true,
+    message: 'Customer added successfully',
+    data: {
+      customer: userData
+    }
+  });
+});

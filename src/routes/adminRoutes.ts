@@ -25,7 +25,8 @@ import {
 import {
   getAllCustomers,
   getCustomer,
-  toggleCustomerStatus
+  toggleCustomerStatus,
+  addCustomer
 } from '../controllers/customerController';
 import {
   getAllBookings,
@@ -149,6 +150,7 @@ router.patch('/service-locations/:id/toggle-status', toggleServiceLocationStatus
 
 // Customer management routes
 router.get('/customers', getAllCustomers);
+router.post('/customers', addCustomer);
 router.get('/customers/:id', getCustomer);
 router.patch('/customers/:id/toggle-status', toggleCustomerStatus);
 
