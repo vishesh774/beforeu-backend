@@ -95,15 +95,10 @@ export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Respo
         role: 'customer'
     }).select('name email phone');
 
-    // Create a map for quick lookup
-    const userMapByPhone = new Map<string, any>();
+    // Create a map for quick lookup by normalized phone
+    const userMapByNormPhone = new Map<string, any>();
     users.forEach(u => {
-        userMapByPhone.set(u.phone, u);
-        if (u.phone.startsWith('+91')) {
-            userMapByPhone.set(u.phone.replace('+91', ''), u);
-        } else {
-            userMapByPhone.set('+91' + u.phone, u);
-        }
+        userMapByNormPhone.set(normalizePhone(u.phone), u);
     });
 
     const mappedUsers: Record<string, any[]> = {};
@@ -113,14 +108,7 @@ export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Respo
             const usersList: any[] = [];
             coupon.allowedPhoneNumbers.forEach(phone => {
                 const normPhone = normalizePhone(phone);
-                // Try to find user by normalized phone
-                let foundUser: any = null;
-                for (const u of users) {
-                    if (normalizePhone(u.phone) === normPhone) {
-                        foundUser = u;
-                        break;
-                    }
-                }
+                const foundUser = userMapByNormPhone.get(normPhone);
 
                 usersList.push({
                     name: foundUser?.name || 'Unknown',
@@ -346,6 +334,74 @@ export const appendPhoneNumbers = asyncHandler(async (req: Request, res: Respons
     res.status(200).json({
         success: true,
         message: `${newNumbers.length} phone numbers added successfully`,
+        data: coupon
+    });
+});
+// @desc    Get coupon by ID
+// @route   GET /api/coupons/:id
+// @access  Admin
+export const getCouponById = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const coupon = await Coupon.findById(req.params.id);
+
+    if (!coupon) {
+        return next(new AppError('Coupon not found', 404));
+    }
+
+    res.status(200).json({
+        success: true,
+        data: coupon
+    });
+});
+
+// @desc    Update coupon
+// @route   PUT /api/coupons/:id
+// @access  Admin
+export const updateCoupon = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+    const {
+        code,
+        description,
+        type,
+        discountValue,
+        appliesTo,
+        serviceId,
+        allowedPhoneNumbers,
+        maxUses,
+        expiryDate,
+        isActive
+    } = req.body;
+
+    const coupon = await Coupon.findById(req.params.id);
+
+    if (!coupon) {
+        return next(new AppError('Coupon not found', 404));
+    }
+
+    // If code is being changed, check if new code already exists
+    if (code && code.toUpperCase() !== coupon.code) {
+        const couponExists = await Coupon.findOne({ code: code.toUpperCase() });
+        if (couponExists) {
+            return next(new AppError('Coupon code already exists', 400));
+        }
+        coupon.code = code.toUpperCase();
+    }
+
+    if (description !== undefined) coupon.description = description;
+    if (type !== undefined) coupon.type = type;
+    if (discountValue !== undefined) coupon.discountValue = discountValue;
+    if (appliesTo !== undefined) coupon.appliesTo = appliesTo;
+    if (serviceId !== undefined) coupon.serviceId = serviceId;
+    if (maxUses !== undefined) coupon.maxUses = maxUses;
+    if (expiryDate !== undefined) coupon.expiryDate = expiryDate;
+    if (isActive !== undefined) coupon.isActive = isActive;
+
+    if (allowedPhoneNumbers !== undefined && Array.isArray(allowedPhoneNumbers)) {
+        coupon.allowedPhoneNumbers = allowedPhoneNumbers.map(p => normalizePhone(p));
+    }
+
+    await coupon.save();
+
+    res.status(200).json({
+        success: true,
         data: coupon
     });
 });

@@ -6,7 +6,9 @@ import {
     getApplicableCoupons,
     validateCoupon,
     appendPhoneNumbers,
-    getCouponsWithUsers
+    getCouponsWithUsers,
+    getCouponById,
+    updateCoupon
 } from '../controllers/couponController';
 import { protect } from '../middleware/auth';
 import { requireAdmin } from '../middleware/adminAuth';
@@ -28,6 +30,8 @@ router.get('/with-users', requireAdmin, getCouponsWithUsers);
 router.post('/:id/append-phones', requireAdmin, appendPhoneNumbers);
 
 router.route('/:id')
+    .get(requireAdmin, getCouponById)
+    .put(requireAdmin, updateCoupon)
     .delete(requireAdmin, deleteCoupon);
 
 export default router;
