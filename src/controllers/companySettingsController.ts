@@ -31,7 +31,7 @@ export const getCompanySettings = asyncHandler(async (_req: AdminRequest, res: R
 // @route   PUT /api/admin/company-settings
 // @access  Private/Admin
 export const updateCompanySettings = asyncHandler(async (req: AdminRequest, res: Response) => {
-    const { name, address, phone, email, gstNumber, logoUrl, invoicePrefix } = req.body;
+    const { name, address, phone, email, gstNumber, logoUrl, invoicePrefix, eula, privacyPolicy } = req.body;
 
     let settings = await CompanySettings.findOne();
 
@@ -46,6 +46,8 @@ export const updateCompanySettings = asyncHandler(async (req: AdminRequest, res:
     if (gstNumber !== undefined) settings.gstNumber = gstNumber;
     if (logoUrl !== undefined) settings.logoUrl = logoUrl;
     if (invoicePrefix !== undefined) settings.invoicePrefix = invoicePrefix;
+    if (eula !== undefined) settings.eula = eula;
+    if (privacyPolicy !== undefined) settings.privacyPolicy = privacyPolicy;
 
     await settings.save();
 

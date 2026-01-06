@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import CheckoutField from '../models/CheckoutField';
 import AppConfig from '../models/AppConfig';
+import CompanySettings from '../models/CompanySettings';
 import { AdminRequest } from '../middleware/adminAuth';
 
 // @desc    Get app configuration (public endpoint)
@@ -22,7 +23,10 @@ export const getAppConfig = asyncHandler(async (_req: Request, res: Response) =>
   }));
 
   // Get AppConfig (singleton)
-  const appConfig = await AppConfig.findOne();
+  const [appConfig, companySettings] = await Promise.all([
+    AppConfig.findOne(),
+    CompanySettings.findOne()
+  ]);
 
   // Generic config response structure - can be extended with more keys in the future
   res.status(200).json({
@@ -32,7 +36,15 @@ export const getAppConfig = asyncHandler(async (_req: Request, res: Response) =>
       // Add bookingStartDate
       bookingStartDate: appConfig?.bookingStartDate || null,
       latestVersion: appConfig?.latestVersion || 1,
-      minSupportedVersion: appConfig?.minSupportedVersion || 1
+      minSupportedVersion: appConfig?.minSupportedVersion || 1,
+      company: companySettings ? {
+        name: companySettings.name,
+        address: companySettings.address,
+        phone: companySettings.phone,
+        email: companySettings.email,
+        eula: companySettings.eula,
+        privacyPolicy: companySettings.privacyPolicy
+      } : null
       // Future keys can be added here
     }
   });

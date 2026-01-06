@@ -4,6 +4,8 @@ import { AppError } from '../middleware/errorHandler';
 import Coupon from '../models/Coupon';
 import User from '../models/User';
 
+const normalizePhone = (p: string) => p.replace(/\D/g, '').slice(-10);
+
 // @desc    Create a new coupon
 // @route   POST /api/coupons
 // @access  Admin
@@ -40,7 +42,7 @@ export const createCoupon = asyncHandler(async (req: Request, res: Response, nex
         discountValue,
         appliesTo,
         serviceId,
-        allowedPhoneNumbers,
+        allowedPhoneNumbers: allowedPhoneNumbers ? allowedPhoneNumbers.map((p: string) => normalizePhone(p)) : [],
         maxUses: maxUses || -1,
         expiryDate,
         isActive: isActive !== undefined ? isActive : true
@@ -104,20 +106,17 @@ export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Respo
         }
     });
 
-    // 4. Create a robust normalization function for matching
-    const normalize = (p: string) => p.replace(/\D/g, '').slice(-10);
-
     const mappedUsers: Record<string, any[]> = {};
 
     coupons.forEach(coupon => {
         if (coupon.type === 'restricted' && coupon.allowedPhoneNumbers) {
             const usersList: any[] = [];
             coupon.allowedPhoneNumbers.forEach(phone => {
-                const normPhone = normalize(phone);
+                const normPhone = normalizePhone(phone);
                 // Try to find user by normalized phone
                 let foundUser: any = null;
                 for (const u of users) {
-                    if (normalize(u.phone) === normPhone) {
+                    if (normalizePhone(u.phone) === normPhone) {
                         foundUser = u;
                         break;
                     }
@@ -218,9 +217,7 @@ export const getApplicableCoupons = asyncHandler(async (req: any, res: Response,
                     { type: 'public' },
                     {
                         type: 'restricted',
-                        allowedPhoneNumbers: {
-                            $in: [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`]
-                        }
+                        allowedPhoneNumbers: normalizePhone(userPhone)
                     }
                 ]
             },
@@ -270,8 +267,8 @@ export const validateCoupon = asyncHandler(async (req: any, res: Response, next:
 
     // Check Restricted
     if (coupon.type === 'restricted') {
-        const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
-        const isAllowed = phoneVariants.some(variant => coupon.allowedPhoneNumbers.includes(variant));
+        const normUserPhone = normalizePhone(userPhone);
+        const isAllowed = coupon.allowedPhoneNumbers.some(p => normalizePhone(p) === normUserPhone);
 
         if (!isAllowed) {
             return next(new AppError('This coupon is not available for your account', 400));
@@ -334,8 +331,12 @@ export const appendPhoneNumbers = asyncHandler(async (req: Request, res: Respons
         return next(new AppError('Phone numbers array is required', 400));
     }
 
-    // Filter out numbers that are already in the list to avoid duplicates
-    const newNumbers = phoneNumbers.filter(phone => !coupon.allowedPhoneNumbers.includes(phone));
+    // Normalize all incoming numbers
+    const incomingNormalized = phoneNumbers.map((p: string) => normalizePhone(p));
+
+    // Filter out numbers that are already in the list to avoid duplicates (comparing normalized)
+    const existingNormalized = coupon.allowedPhoneNumbers.map(p => normalizePhone(p));
+    const newNumbers = incomingNormalized.filter(phone => !existingNormalized.includes(phone));
 
     if (newNumbers.length > 0) {
         coupon.allowedPhoneNumbers.push(...newNumbers);

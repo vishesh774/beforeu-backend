@@ -8,6 +8,8 @@ export interface ICompanySettings extends Document {
     gstNumber?: string;
     logoUrl?: string; // Base64 or URL
     invoicePrefix: string;
+    eula?: string;
+    privacyPolicy?: string;
     createdAt: Date;
     updatedAt: Date;
 }
@@ -42,6 +44,14 @@ const CompanySettingsSchema = new Schema<ICompanySettings>(
         invoicePrefix: {
             type: String,
             default: "BU"
+        },
+        eula: {
+            type: String,
+            default: ""
+        },
+        privacyPolicy: {
+            type: String,
+            default: ""
         }
     },
     {
