@@ -13,6 +13,7 @@ import mongoose from 'mongoose';
 import { getPlanPurchaseService } from '../utils/systemServices';
 import { getRazorpayInstance } from './paymentController';
 import { getFamilyGroupIds } from '../utils/userHelpers';
+import FamilyMember from '../models/FamilyMember';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -317,6 +318,10 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
 
   // Fetch Booking History for the entire family group
   const familyIds = await getFamilyGroupIds(userId);
+
+  // Fetch Family Members
+  const familyMembers = await FamilyMember.find({ userId });
+
   const bookings = await Booking.find({ userId: { $in: familyIds } })
     .sort({ createdAt: -1 })
     .populate('userId', 'name')
@@ -341,6 +346,7 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
         remainingCredits,
         expiryDate: userPlan?.expiresAt || 'Lifetime'
       },
+      familyMembers,
       bookings: mappedBookings
     }
   });
