@@ -1,7 +1,7 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import bcrypt from 'bcryptjs';
 
-export type UserRole = 'customer' | 'Admin' | 'Supervisor' | 'Incharge' | 'ServicePartner';
+export type UserRole = 'customer' | 'Admin' | 'Supervisor' | 'Incharge' | 'ServicePartner' | 'GuestCare';
 
 export interface IUser extends Document {
   name: string;
@@ -9,6 +9,7 @@ export interface IUser extends Document {
   phone: string;
   password: string;
   role: UserRole;
+  crmId?: string; // ID from the CRM system
   isActive: boolean;
   isDeleted: boolean;
   createdAt: Date;
@@ -56,9 +57,15 @@ const UserSchema = new Schema<IUser>(
     },
     role: {
       type: String,
-      enum: ['customer', 'Admin', 'Supervisor', 'Incharge', 'ServicePartner'],
+      enum: ['customer', 'Admin', 'Supervisor', 'Incharge', 'ServicePartner', 'GuestCare'],
       default: 'customer',
       required: true
+    },
+    crmId: {
+      type: String,
+      required: false,
+      trim: true,
+      description: 'ID of the user in the AutomateBusiness CRM'
     },
     isActive: {
       type: Boolean,

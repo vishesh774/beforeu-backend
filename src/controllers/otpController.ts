@@ -3,6 +3,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { createAndSendOTP, verifyOTP } from '../services/otpService';
 import { sendWelcomeMessage } from '../services/whatsappService';
+import { createCRMLead } from '../services/crmService';
 import User, { UserRole } from '../models/User';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
@@ -197,6 +198,21 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   // We don't await this so it runs in the background
   sendWelcomeMessage(user.phone, user.name).catch(err =>
     console.error('[WhatsApp] Background welcome message failed:', err)
+  );
+
+  // Create CRM Lead (Non-blocking)
+  const nameParts = user.name.split(' ');
+  const firstName = nameParts[0];
+  const lastName = nameParts.slice(1).join(' '); // Rejoin remaining parts as last name
+
+  createCRMLead({
+    firstName,
+    lastName,
+    email: user.email || '',
+    phone: user.phone,
+    description: 'New user registration via mobile app'
+  }).catch(err =>
+    console.error('[CRM] Background lead creation failed:', err)
   );
 
   // Generate token

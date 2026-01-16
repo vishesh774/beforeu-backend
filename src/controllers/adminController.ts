@@ -9,7 +9,7 @@ import { initializeUserRecords } from '../utils/userHelpers';
 // @route   GET /api/admin/users
 // @access  Private/Admin
 export const getAllUsers = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
+  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
 
   // Pagination parameters
   const page = parseInt(req.query.page as string) || 1;
@@ -27,7 +27,7 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response, _nex
   };
 
   // Apply role filter
-  if (roleFilter && adminRoles.includes(roleFilter as 'Admin' | 'Supervisor' | 'Incharge')) {
+  if (roleFilter && adminRoles.includes(roleFilter as any)) {
     filter.role = roleFilter;
   }
 
@@ -139,9 +139,9 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
   }
 
   // Validate role
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
+  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
   if (!adminRoles.includes(role)) {
-    return next(new AppError('Invalid role. Must be Admin, Supervisor, or Incharge', 400));
+    return next(new AppError('Invalid role. Must be Admin, Supervisor, Incharge or GuestCare', 400));
   }
 
   // Check if user already exists
@@ -192,7 +192,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
 // @access  Private/Admin
 export const updateUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
-  const { name, email, phone, role, password } = req.body;
+  const { name, email, phone, role, password, crmId } = req.body;
 
   const user = await User.findById(id);
   if (!user) {
@@ -200,13 +200,14 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
   }
 
   // Check if user is an admin user (not a customer)
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
-  if (!adminRoles.includes(user.role as 'Admin' | 'Supervisor' | 'Incharge')) {
+  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
+  if (!adminRoles.includes(user.role as any)) {
     return next(new AppError('Cannot update customer users through this endpoint', 400));
   }
 
   // Update fields
   if (name) user.name = name;
+  if (crmId) user.crmId = crmId;
   if (email) {
     // Check if email is already taken by another user
     const existingUser = await User.findOne({ email, _id: { $ne: id } });
@@ -225,7 +226,7 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
   }
   if (role) {
     if (!adminRoles.includes(role)) {
-      return next(new AppError('Invalid role. Must be Admin, Supervisor, or Incharge', 400));
+      return next(new AppError('Invalid role. Must be Admin, Supervisor, Incharge or GuestCare', 400));
     }
     user.role = role;
   }
@@ -271,8 +272,8 @@ export const deactivateUser = asyncHandler(async (req: Request, res: Response, n
   }
 
   // Check if user is an admin user (not a customer)
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
-  if (!adminRoles.includes(user.role as 'Admin' | 'Supervisor' | 'Incharge')) {
+  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
+  if (!adminRoles.includes(user.role as any)) {
     return next(new AppError('Cannot deactivate customer users through this endpoint', 400));
   }
 

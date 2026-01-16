@@ -14,6 +14,7 @@ import { getPlanPurchaseService } from '../utils/systemServices';
 import { getRazorpayInstance } from './paymentController';
 import { getFamilyGroupIds } from '../utils/userHelpers';
 import FamilyMember from '../models/FamilyMember';
+import { assignCRMTask } from '../services/crmTaskService';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -468,6 +469,48 @@ export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Re
         userCredits.credits += plan.totalCredits;
         await userCredits.save();
       }
+
+      // --- Task Assignment Logic ---
+      try {
+        // 1. Find potential assignees (GuestCare role with valid CRM ID)
+        const guestCareUsers = await User.find({
+          role: 'GuestCare',
+          crmId: { $exists: true, $ne: '' },
+          isActive: true
+        });
+
+        if (guestCareUsers.length > 0) {
+          // 2. Pick one randomly
+          const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
+          const assigneeCrmId = assignee.crmId;
+
+          if (assigneeCrmId) {
+            // 3. User info for task description
+            const buyer = await User.findById(userId);
+
+            // 4. Create Task
+            // assigned_by_id: We need a valid ID. For now, we can reuse the assignee's ID (assign to self) 
+            // or use a system 'admin' ID if configured in env. 
+            // Let's assume the assignee assigns it to themselves or use a fallback.
+            const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
+
+            assignCRMTask({
+              title: `New Plan Purchase: verified - ${buyer?.name}`,
+              description: `User ${buyer?.name} (${buyer?.phone}) has purchased the plan "${plan.planName}". Please initiate the welcome call.`,
+              assignedById: adminAssignerId,
+              assignedToId: assigneeCrmId,
+              priority: 'High',
+              targetDate: new Date().toISOString().split('T')[0]
+            }).catch(err => console.error('[PlanController] Background task assignment failed:', err));
+          }
+        } else {
+          console.log('[PlanController] No GuestCare users with CRM ID found. Skipping task assignment.');
+        }
+      } catch (taskError) {
+        console.error('[PlanController] Error in task assignment block:', taskError);
+      }
+      // -----------------------------
+
     }
 
     // 5. Update associated Booking and OrderItem
