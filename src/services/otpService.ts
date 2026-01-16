@@ -105,7 +105,7 @@ const sendOTPViaPinnacle = async (phone: string, otp: string): Promise<boolean> 
   try {
     const apiKey = process.env.PINNACLE_API_KEY; // 6a57a4-555b60-0601c6-12f1dc-eb579a
     const sender = process.env.PINNACLE_SENDER || 'BFOURU'; // BFOURU
-    const entityId = process.env.PINNACLE_ENTITY_ID; // Not used in example URL but good to have if needed later
+    // const entityId = process.env.PINNACLE_ENTITY_ID; // Not used in example URL but good to have if needed later
     const dltTempId = process.env.PINNACLE_DLT_TEMP_ID || '1707176476476794172';
 
     if (!apiKey) {
