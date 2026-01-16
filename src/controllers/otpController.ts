@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { createAndSendOTP, verifyOTP } from '../services/otpService';
+import { sendWelcomeMessage } from '../services/whatsappService';
 import User, { UserRole } from '../models/User';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
@@ -191,6 +192,12 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   if (!userData) {
     return next(new AppError('Failed to load user data', 500));
   }
+
+  // Send WhatsApp Welcome Message (Non-blocking)
+  // We don't await this so it runs in the background
+  sendWelcomeMessage(user.phone, user.name).catch(err =>
+    console.error('[WhatsApp] Background welcome message failed:', err)
+  );
 
   // Generate token
   const token = generateToken({
