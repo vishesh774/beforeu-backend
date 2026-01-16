@@ -23,6 +23,8 @@ import ServiceLocation from '../models/ServiceLocation';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus } from '../services/bookingService';
 import { BookingStatus, COMPLETED_BOOKING_STATUSES, ONGOING_BOOKING_STATUSES } from '../constants/bookingStatus';
+import { sendPushNotification } from '../services/pushNotificationService';
+import User from '../models/User';
 
 // @desc    Get all active services (without location requirement)
 // @route   GET /api/services/all
@@ -1475,6 +1477,35 @@ export const assignServicePartner = asyncHandler(async (req: Request, res: Respo
   await orderItem.save();
   await syncBookingStatus(booking._id);
 
+  // Send Push Notification to Partner
+  if (partner.pushToken) {
+    try {
+      const isSOS = booking.bookingType === 'SOS';
+      const title = isSOS ? '🚨 SOS ALERT ASSIGNED!' : 'New Task Assigned';
+      const body = isSOS
+        ? `URGENT! SOS assigned at ${booking.address?.fullAddress || 'Unknown location'}. Check app immediately!`
+        : `You have been assigned ${orderItem.variantName || 'a new service'} for ${booking.scheduledDate ? new Date(booking.scheduledDate).toLocaleDateString() : 'Today'}.`;
+
+      await sendPushNotification({
+        pushToken: partner.pushToken,
+        title,
+        body,
+        data: {
+          bookingId: booking._id,
+          itemId: orderItem._id,
+          screen: 'BookingDetails',
+          type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
+        },
+        sound: isSOS ? 'default' : 'default',
+        channelId: isSOS ? 'high_priority' : 'default',
+        priority: isSOS ? 'high' : 'normal'
+      });
+      console.log(`[assignServicePartner] Notification sent to partner ${partner.name}`);
+    } catch (notifError) {
+      console.error('[assignServicePartner] Error sending partner notification:', notifError);
+    }
+  }
+
   // Get updated order item with populated partner
   const updatedOrderItem = await OrderItem.findById(orderItem._id)
     .populate('assignedPartnerId', 'name phone email');
@@ -1567,6 +1598,30 @@ export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Resp
   // Update status
   orderItem.status = newStatus;
   await orderItem.save();
+
+  // Notification Logic for Customer
+  try {
+    const user = await User.findById(booking.userId);
+    if (user && user.pushToken) {
+      if (newStatus === BookingStatus.REACHED) {
+        await sendPushNotification({
+          pushToken: user.pushToken,
+          title: 'Service Partner Arrived',
+          body: `Our service partner has reached your location for ${orderItem.variantName || 'your service'}.`,
+          data: { bookingId: booking.bookingId, screen: 'BookingDetails' }
+        });
+      } else if (newStatus === BookingStatus.COMPLETED) {
+        await sendPushNotification({
+          pushToken: user.pushToken,
+          title: 'Service Completed',
+          body: `Your service ${orderItem.variantName || ''} is completed. Please rate your experience!`,
+          data: { bookingId: booking.bookingId, screen: 'RateService', itemId: orderItem._id }
+        });
+      }
+    }
+  } catch (notifError) {
+    console.error('Error sending customer notification:', notifError);
+  }
 
   // Handle Plan Activation for PLAN_PURCHASE bookings
   if (newStatus === BookingStatus.COMPLETED && booking.bookingType === 'PLAN_PURCHASE') {

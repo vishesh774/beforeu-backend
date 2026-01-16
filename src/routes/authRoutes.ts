@@ -1,5 +1,5 @@
 import express from 'express';
-import { signup, login, adminLogin, getMe, addAddress, updateAddress, deleteAddress, addFamilyMember, deleteFamilyMember, deleteAccount } from '../controllers/authController';
+import { signup, login, adminLogin, getMe, addAddress, updateAddress, deleteAddress, addFamilyMember, deleteFamilyMember, deleteAccount, updatePushToken } from '../controllers/authController';
 import { sendOTP, verifyOTPController, completeProfile } from '../controllers/otpController';
 import { getAllPlans, purchasePlan } from '../controllers/planController';
 import { getAllFAQs } from '../controllers/faqController';
@@ -38,6 +38,7 @@ router.delete('/addresses/:id', protect, deleteAddress);
 router.post('/family-members', protect, addFamilyMember);
 router.delete('/family-members/:id', protect, deleteFamilyMember);
 router.delete('/delete-account', protect, deleteAccount);
+router.post('/push-token', protect, updatePushToken);
 
 export default router;
 

@@ -628,3 +628,26 @@ export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response
     message: 'Account deleted successfully'
   });
 });
+
+// @desc    Update push token
+// @route   POST /api/auth/push-token
+// @access  Private
+// @ts-ignore
+export const updatePushToken = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { pushToken } = req.body;
+
+  if (!req.user || !req.user.id) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  if (!pushToken) {
+    return next(new AppError('Push token is required', 400));
+  }
+
+  await User.findByIdAndUpdate(req.user.id, { pushToken });
+
+  res.status(200).json({
+    success: true,
+    message: 'Push token updated successfully'
+  });
+});

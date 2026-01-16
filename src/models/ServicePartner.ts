@@ -18,6 +18,7 @@ export interface IServicePartner extends Document {
   rating: number;
   ratingCount: number;
   lastAssignedAt?: Date;
+  pushToken?: string; // Add pushToken field
   createdAt: Date;
   updatedAt: Date;
 }
@@ -108,6 +109,10 @@ const ServicePartnerSchema = new Schema<IServicePartner>(
     },
     lastAssignedAt: {
       type: Date
+    },
+    pushToken: {
+      type: String,
+      trim: true
     }
   },
   {

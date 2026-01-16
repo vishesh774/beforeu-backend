@@ -5,6 +5,8 @@ import User from '../models/User';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
+import { sendPushNotification } from '../services/pushNotificationService';
+import FamilyMember from '../models/FamilyMember';
 
 // @desc    Get all customers with pagination and filters
 // @route   GET /api/admin/customers
@@ -268,5 +270,74 @@ export const addCustomer = asyncHandler(async (req: Request, res: Response, next
     data: {
       customer: userData
     }
+  });
+});
+// @desc    Add a family member to a customer
+// @route   POST /api/admin/customers/:id/family-members
+// @access  Private/Admin
+export const addFamilyMember = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { id } = req.params; // Primary Customer ID
+  const { name, phone, email, relationship } = req.body;
+
+  if (!name || !phone || !relationship) {
+    return next(new AppError('Name, phone number, and relationship are required', 400));
+  }
+
+  // Verify Primary Customer
+  const primaryCustomer = await User.findById(id);
+  if (!primaryCustomer || primaryCustomer.role !== 'customer') {
+    return next(new AppError('Primary customer not found', 404));
+  }
+
+  // Format phone
+  let cleanPhone = phone.replace(/[^0-9+]/g, '');
+  if (cleanPhone.startsWith('+91')) {
+    cleanPhone = cleanPhone.slice(3);
+  } else if (cleanPhone.startsWith('91') && cleanPhone.length === 12) {
+    cleanPhone = cleanPhone.slice(2);
+  }
+
+  if (!/^\d{10}$/.test(cleanPhone)) {
+    return next(new AppError('Phone number must be exactly 10 digits', 400));
+  }
+
+  let formattedPhone = '+91' + cleanPhone;
+
+  // Check if family member already exists in THIS user's family
+  const existingFamilyMember = await FamilyMember.findOne({ userId: primaryCustomer._id, phone: formattedPhone });
+  if (existingFamilyMember) {
+    return next(new AppError('Family member with this phone number already exists for this customer', 400));
+  }
+
+  // Create FamilyMember document
+  // Generate Custom ID
+  const fmId = `FM-${Math.random().toString(36).substr(2, 6).toUpperCase()}`;
+
+  await FamilyMember.create({
+    userId: primaryCustomer._id,
+    id: fmId,
+    name,
+    phone: formattedPhone,
+    email: email ? email.toLowerCase() : undefined,
+    relation: relationship
+  });
+
+  // Notify Primary Customer
+  if (primaryCustomer.pushToken) {
+    try {
+      await sendPushNotification({
+        pushToken: primaryCustomer.pushToken,
+        title: 'Family Member Added',
+        body: `${name} has been added to your family list by admin.`,
+        data: { screen: 'FamilyMembers' }
+      });
+    } catch (error) {
+      console.error('Error sending push notification:', error);
+    }
+  }
+
+  res.status(201).json({
+    success: true,
+    message: 'Family member added successfully'
   });
 });

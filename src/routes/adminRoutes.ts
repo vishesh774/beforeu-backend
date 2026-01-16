@@ -26,7 +26,8 @@ import {
   getAllCustomers,
   getCustomer,
   toggleCustomerStatus,
-  addCustomer
+  addCustomer,
+  addFamilyMember
 } from '../controllers/customerController';
 import {
   getAllBookings,
@@ -154,6 +155,7 @@ router.get('/customers', getAllCustomers);
 router.post('/customers', addCustomer);
 router.get('/customers/:id', getCustomer);
 router.patch('/customers/:id/toggle-status', toggleCustomerStatus);
+router.post('/customers/:id/family-members', addFamilyMember);
 
 // Booking management routes
 router.get('/bookings', getAllBookings);

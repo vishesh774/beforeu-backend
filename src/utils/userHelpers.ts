@@ -38,6 +38,7 @@ export interface AggregatedUserData {
     phone: string;
     email?: string;
   }>;
+  pushToken?: string;
   addresses: Array<{
     id: string;
     label: string;
@@ -246,6 +247,7 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
     activePlanId: userPlan?.activePlanId || undefined,
     activePlan,
     familyMembers: mappedFamilyMembers,
+    pushToken: user.pushToken,
     addresses: addresses.map(addr => ({
       id: addr.id,
       label: addr.label,
