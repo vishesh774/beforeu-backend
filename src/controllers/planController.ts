@@ -847,6 +847,34 @@ export const deletePlan = asyncHandler(async (req: Request, res: Response, next:
   });
 });
 
+// @desc    Toggle plan status
+// @route   PATCH /api/admin/plans/:id/toggle-status
+// @access  Private/Admin
+export const togglePlanStatus = asyncHandler(async (req: Request, res: Response, next: any) => {
+  const { id } = req.params;
+
+  const plan = await Plan.findById(id);
+
+  if (!plan) {
+    return next(new AppError('Plan not found', 404));
+  }
+
+  // Toggle status
+  plan.planStatus = plan.planStatus === 'active' ? 'inactive' : 'active';
+  await plan.save();
+
+  res.status(200).json({
+    success: true,
+    data: {
+      plan: {
+        ...plan.toObject(),
+        id: plan._id.toString()
+      }
+    },
+    message: `Plan ${plan.planStatus === 'active' ? 'activated' : 'deactivated'} successfully`
+  });
+});
+
 // @desc    Purchase a plan
 // @route   POST /api/auth/plans/purchase
 // @access  Private

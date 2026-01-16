@@ -14,6 +14,7 @@ import sosRoutes from './routes/sosRoutes';
 import configRoutes from './routes/configRoutes';
 import couponRoutes from './routes/couponRoutes';
 import roleRoutes from './routes/roleRoutes';
+import reviewRoutes from './routes/reviewRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
 
@@ -130,6 +131,7 @@ app.use('/api/provider', providerRoutes);
 app.use('/api/sos', sosRoutes);
 app.use('/api', configRoutes);
 app.use('/api/coupons', couponRoutes);
+app.use('/api/reviews', reviewRoutes);
 console.log('✅ Routes registered successfully');
 
 // 404 handler

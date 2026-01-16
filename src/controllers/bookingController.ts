@@ -14,6 +14,7 @@ import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
 import Plan from '../models/Plan';
 import PlanTransaction from '../models/PlanTransaction';
+import Review from '../models/Review';
 import { SOSAlert, SOSStatus } from '../models/SOSAlert';
 import { socketService } from '../services/socketService';
 import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checkoutUtils';
@@ -599,11 +600,15 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
         .populate('serviceId', 'name icon')
         .populate('serviceVariantId', 'name icon');
 
+      const review = await Review.findOne({ bookingId: booking._id });
+
       // Split multi-item bookings into individual booking entries
       if (items.length > 0) {
         return items.map((item, index) => ({
           id: `${booking.bookingId}-${index + 1}`, // Unique ID for frontend list
+          _id: booking._id.toString(), // Needed for review linking
           bookingId: booking.bookingId,
+          userReview: review ? { rating: review.rating, comment: review.comment } : undefined,
           // Only include the specific item for this "split" booking
           items: [{
             serviceId: (item.serviceId as any)?.id || (item.serviceId as any)?._id?.toString() || item.serviceId.toString(),
@@ -642,7 +647,9 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
         // Fallback for SOS bookings with no items yet (healing will happen when details are viewed)
         return [{
           id: `${booking.bookingId}-1`,
+          _id: booking._id.toString(),
           bookingId: booking.bookingId,
+          userReview: review ? { rating: review.rating, comment: review.comment } : undefined,
           items: [],
           totalAmount: 0,
           taxAmount: 0,

@@ -79,7 +79,8 @@ import {
   getUserPlans,
   getPlanTransactions,
   getPlanTransactionDetails,
-  verifyPlanPaymentStatus
+  verifyPlanPaymentStatus,
+  togglePlanStatus
 } from '../controllers/planController';
 import {
   getAllCheckoutFields,
@@ -201,6 +202,7 @@ router.get('/plans', getAllPlans);
 router.get('/plans/:id', getPlan);
 router.post('/plans', createPlan);
 router.put('/plans/:id', updatePlan);
+router.patch('/plans/:id/toggle-status', togglePlanStatus);
 router.delete('/plans/:id', deletePlan);
 router.get('/user-plans', getUserPlans);
 router.get('/plan-transactions', getPlanTransactions);
@@ -234,6 +236,9 @@ router.put('/customer-app-settings', updateCustomerAppSettings);
 // Invoice routes
 router.get('/invoices/booking/:id', generateInvoicePDF);
 router.get('/invoices/plan-transaction/:id', generateInvoicePDF);
-
+// Reviews routes
+import { getAllReviews, publishReview } from '../controllers/reviewController';
+router.get('/reviews', getAllReviews);
+router.put('/reviews/:id/publish', publishReview);
 export default router;
 

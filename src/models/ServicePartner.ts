@@ -15,6 +15,8 @@ export interface IServicePartner extends Document {
   serviceRegions: string[]; // Array of service region IDs
   availability: IAvailability[]; // Array of availability for each day
   isActive: boolean;
+  rating: number;
+  ratingCount: number;
   lastAssignedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -95,6 +97,14 @@ const ServicePartnerSchema = new Schema<IServicePartner>(
       type: Boolean,
       default: true,
       required: true
+    },
+    rating: {
+      type: Number,
+      default: 0
+    },
+    ratingCount: {
+      type: Number,
+      default: 0
     },
     lastAssignedAt: {
       type: Date
