@@ -22,6 +22,9 @@ import { autoAssignServicePartner } from '../services/bookingService';
 import { BookingStatus } from '../constants/bookingStatus';
 import { getPlanHolderId } from '../utils/userHelpers';
 import { assignCRMTask } from '../services/crmTaskService';
+import { notifyAccountsTeamOnPlanPurchase } from '../services/emailService';
+import { generateInvoiceBuffer } from '../utils/pdfGenerator';
+import CompanySettings from '../models/CompanySettings';
 
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
 let razorpay: any = null;
@@ -195,7 +198,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         };
       });
 
-      await PlanTransaction.create({
+      const planTx = await PlanTransaction.create({
         userId: userIdObj,
         planId: plan._id,
         orderId: orderId,
@@ -240,7 +243,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           await userCredits.save();
         }
 
-        // --- CRM Task Integration (Non-blocking) ---
+        // --- CRM Task & Email Integration (Non-blocking) ---
         (async () => {
           try {
             const guestCareUsers = await User.find({
@@ -249,25 +252,74 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
               isActive: true
             });
 
-            if (guestCareUsers.length > 0) {
-              const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
-              const assigneeCrmId = assignee.crmId;
-              const buyer = await User.findById(userIdObj);
+            const buyer = await User.findById(userIdObj);
+            if (buyer) {
+              if (guestCareUsers.length > 0) {
+                const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
+                const assigneeCrmId = assignee.crmId;
 
-              if (assigneeCrmId && buyer) {
-                const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
-                await assignCRMTask({
-                  title: `New Plan Purchase (Free): ${plan.planName} - ${buyer.name}`,
-                  description: `User ${buyer.name} (${buyer.phone}) has activated the free plan "${plan.planName}". Please initiate the welcome call.`,
-                  assignedById: adminAssignerId,
-                  assignedToId: assigneeCrmId,
-                  priority: 'High',
-                  targetDate: new Date().toISOString().split('T')[0]
+                if (assigneeCrmId) {
+                  const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
+                  await assignCRMTask({
+                    title: `New Plan Purchase (Free): ${plan.planName} - ${buyer.name}`,
+                    description: `User ${buyer.name} (${buyer.phone}) has activated the free plan "${plan.planName}". Please initiate the welcome call.`,
+                    assignedById: adminAssignerId,
+                    assignedToId: assigneeCrmId,
+                    priority: 'High',
+                    targetDate: new Date().toISOString().split('T')[0]
+                  });
+                }
+              }
+
+              // --- NEW: Email Notification for Free Plan ---
+              try {
+                const companySettings = (await CompanySettings.findOne()) || {
+                  invoicePrefix: "BU"
+                };
+                const settings = companySettings as any;
+                const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+
+                const invoiceDataForEmail = {
+                  invoiceNumber,
+                  date: planTx.createdAt,
+                  customerName: buyer.name,
+                  customerPhone: buyer.phone,
+                  customerEmail: buyer.email || 'N/A',
+                  customerAddress: "N/A",
+                  items: [{
+                    description: `Plan Purchase: ${plan.planName}`,
+                    quantity: 1,
+                    price: plan.finalPrice,
+                    total: plan.finalPrice
+                  }],
+                  subtotal: plan.finalPrice,
+                  discount: planTx.discountAmount || 0,
+                  creditsUsed: 0,
+                  taxBreakdown: planTx.paymentBreakdown || [],
+                  total: planTx.amount || 0,
+                  paymentStatus: 'paid',
+                  paymentId: 'FREE',
+                  paymentMethod: 'Credits/Discount'
+                };
+
+                const pdfBuffer = await generateInvoiceBuffer(invoiceDataForEmail as any);
+
+                await notifyAccountsTeamOnPlanPurchase({
+                  customerName: buyer.name,
+                  customerPhone: buyer.phone,
+                  customerEmail: buyer.email || 'N/A',
+                  planName: plan.planName,
+                  amount: planTx.amount,
+                  invoiceNumber,
+                  purchaseDate: planTx.createdAt,
+                  pdfBuffer
                 });
+              } catch (emailError) {
+                console.error('[PaymentController] Error in free plan email notification:', emailError);
               }
             }
           } catch (err) {
-            console.error('[PaymentController] CRM Task assignment failed for free plan:', err);
+            console.error('[PaymentController] CRM/Email failed for free plan:', err);
           }
         })();
       }
@@ -684,6 +736,53 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
                   priority: 'High',
                   targetDate: new Date().toISOString().split('T')[0]
                 });
+
+                // --- NEW: Email Notification to Accounts Team ---
+                try {
+                  const companySettings = (await CompanySettings.findOne()) || {
+                    invoicePrefix: "BU"
+                  };
+                  const settings = companySettings as any;
+                  const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+
+                  const invoiceDataForEmail = {
+                    invoiceNumber,
+                    date: planTx.createdAt,
+                    customerName: buyer.name,
+                    customerPhone: buyer.phone,
+                    customerEmail: buyer.email || 'N/A',
+                    customerAddress: "N/A",
+                    items: [{
+                      description: `Plan Purchase: ${plan.planName}`,
+                      quantity: 1,
+                      price: plan.finalPrice,
+                      total: plan.finalPrice
+                    }],
+                    subtotal: plan.finalPrice,
+                    discount: planTx.discountAmount || 0,
+                    creditsUsed: 0,
+                    taxBreakdown: planTx.paymentBreakdown || [],
+                    total: planTx.amount || 0,
+                    paymentStatus: 'completed',
+                    paymentId: planTx.paymentId,
+                    paymentMethod: 'Online' // In verifyPayment it's usually online
+                  };
+
+                  const pdfBuffer = await generateInvoiceBuffer(invoiceDataForEmail as any);
+
+                  await notifyAccountsTeamOnPlanPurchase({
+                    customerName: buyer.name,
+                    customerPhone: buyer.phone,
+                    customerEmail: buyer.email || 'N/A',
+                    planName: plan.planName,
+                    amount: planTx.amount,
+                    invoiceNumber,
+                    purchaseDate: planTx.createdAt,
+                    pdfBuffer
+                  });
+                } catch (emailError) {
+                  console.error('[PaymentController] Error in email notification:', emailError);
+                }
               }
             }
           } catch (err) {

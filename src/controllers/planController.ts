@@ -17,6 +17,9 @@ import { sendPlanPurchaseMessage, sendInternalPlanPurchaseNotification } from '.
 import { scheduleWhatsAppMessage } from '../services/schedulerService';
 import FamilyMember from '../models/FamilyMember';
 import { assignCRMTask } from '../services/crmTaskService';
+import { notifyAccountsTeamOnPlanPurchase } from '../services/emailService';
+import { generateInvoiceBuffer } from '../utils/pdfGenerator';
+import CompanySettings from '../models/CompanySettings';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -529,6 +532,57 @@ export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Re
         console.error('[PlanController] Error preparing WhatsApp msg:', waError);
       }
       // ---------------------------------------------
+
+      // --- NEW: Email Notification to Accounts Team ---
+      try {
+        const userForEmail = await User.findById(userId);
+        if (userForEmail) {
+          const companySettings = (await CompanySettings.findOne()) || {
+            invoicePrefix: "BU"
+          };
+          const settings = companySettings as any;
+          const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+
+          const invoiceDataForEmail = {
+            invoiceNumber,
+            date: planTx.createdAt,
+            customerName: userForEmail.name,
+            customerPhone: userForEmail.phone,
+            customerEmail: userForEmail.email || 'N/A',
+            customerAddress: "N/A",
+            items: [{
+              description: `Plan Purchase: ${plan.planName}`,
+              quantity: 1,
+              price: plan.finalPrice,
+              total: plan.finalPrice
+            }],
+            subtotal: plan.finalPrice,
+            discount: planTx.discountAmount || 0,
+            creditsUsed: 0,
+            taxBreakdown: planTx.paymentBreakdown || [],
+            total: planTx.amount || 0,
+            paymentStatus: 'completed',
+            paymentId: planTx.paymentId,
+            paymentMethod: successfulPayment.method || 'Online'
+          };
+
+          const pdfBuffer = await generateInvoiceBuffer(invoiceDataForEmail as any);
+
+          notifyAccountsTeamOnPlanPurchase({
+            customerName: userForEmail.name,
+            customerPhone: userForEmail.phone,
+            customerEmail: userForEmail.email || 'N/A',
+            planName: plan.planName,
+            amount: planTx.amount,
+            invoiceNumber,
+            purchaseDate: planTx.createdAt,
+            pdfBuffer
+          }).catch(err => console.error('[PlanController] Email notification failed:', err));
+        }
+      } catch (emailError) {
+        console.error('[PlanController] Error preparing Email notification:', emailError);
+      }
+      // ------------------------------------------------
 
       // --- Task Assignment Logic ---
       try {
