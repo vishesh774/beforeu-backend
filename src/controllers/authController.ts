@@ -10,6 +10,10 @@ import { AuthRequest } from '../middleware/auth';
 import UserPlan from '../models/UserPlan';
 import Plan from '../models/Plan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
+import { sendAddedAsFamilyMessage } from '../services/whatsappService';
+import Role from '../models/Role';
+import { createCRMLead } from '../services/crmService';
+import { assignCRMTask } from '../services/crmTaskService';
 
 interface SignupRequest extends Request {
   body: {
@@ -55,6 +59,56 @@ export const signup = asyncHandler(async (req: SignupRequest, res: Response, nex
   if (!userData) {
     return next(new AppError('Failed to create user data', 500));
   }
+
+  // --- CRM & Task Integration ---
+  try {
+    // 1. Create Lead in CRM
+    const nameParts = name.trim().split(' ');
+    const firstName = nameParts[0];
+    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+
+    await createCRMLead({
+      firstName,
+      lastName,
+      email,
+      phone,
+      description: 'New user signed up via mobile app',
+      companyName: 'B2C Customer'
+    });
+
+    // 2. Assign Verification Task to GuestCare Agent
+    const guestCareUsers = await User.find({
+      role: 'GuestCare',
+      crmId: { $exists: true, $ne: '' },
+      isActive: true
+    });
+
+    if (guestCareUsers.length > 0) {
+      // Round-robin or random assignment
+      const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
+      const assigneeCrmId = assignee.crmId; // Typed as string usually
+
+      if (assigneeCrmId) {
+        // Use configured admin ID or fallback to assignee themselves
+        const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
+
+        await assignCRMTask({
+          title: `New Signup Verification: ${name}`,
+          description: `A new customer ${name} (${phone}) has just signed up. Please verify and welcome them.`,
+          assignedById: adminAssignerId,
+          assignedToId: assigneeCrmId,
+          priority: 'High',
+          targetDate: new Date().toISOString().split('T')[0]
+        });
+      }
+    } else {
+      console.log('[AuthController] No GuestCare users found for CRM task assignment.');
+    }
+  } catch (error) {
+    console.error('[AuthController] CRM integration failed:', error);
+    // We suppress this error to ensure signup success
+  }
+  // ------------------------------
 
   // Generate token
   const token = generateToken({
@@ -126,7 +180,6 @@ export const login = asyncHandler(async (req: Request, res: Response, next: Next
 
 // @desc    Admin login (for Admin, Supervisor, Incharge roles only)
 // @route   POST /api/auth/admin/login
-// @access  Public
 export const adminLogin = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { email, password } = req.body;
 
@@ -141,9 +194,30 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
     return next(new AppError('Invalid credentials', 401));
   }
 
-  // Check if user has admin role
+  // Check if user has admin role or custom role
+  let permissions: any = {};
+  let roleName: string = user.role;
+
+  if (user.roleId) {
+    const customRole = await Role.findById(user.roleId);
+    if (customRole) {
+      roleName = customRole.name;
+      permissions = customRole.permissions.reduce((acc: any, p: any) => {
+        acc[p.resource] = { read: p.read, write: p.write, export: p.export };
+        return acc;
+      }, {});
+    } else {
+      // Role ID exists but role not found? Treat as no role?
+    }
+  }
+
   const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
-  if (!adminRoles.includes(user.role as 'Admin' | 'Supervisor' | 'Incharge')) {
+
+  // Access Check: Must have a custom role OR be in legacy adminRoles
+  const hasCustomRole = !!user.roleId;
+  const isLegacyAdmin = adminRoles.includes(user.role as any);
+
+  if (!hasCustomRole && !isLegacyAdmin) {
     return next(new AppError('Access denied. Admin privileges required.', 403));
   }
 
@@ -170,7 +244,11 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
     success: true,
     message: 'Admin login successful',
     data: {
-      user: userData,
+      user: {
+        ...userData,
+        role: roleName as any, // Override role with custom role name if compatible
+        permissions     // Add permissions map
+      },
       token
     }
   });
@@ -438,6 +516,14 @@ export const addFamilyMember = asyncHandler(async (req: AuthRequest, res: Respon
 
   // Aggregate updated user data for the current user
   const userData = await aggregateUserData(userIdObj);
+
+  // --- WhatsApp Notification (Added as Family) ---
+  const referrer = await User.findById(userIdObj).select('name');
+  if (referrer && referrer.name) {
+    sendAddedAsFamilyMessage(familyMember.phone, familyMember.name, referrer.name)
+      .catch(err => console.error('[AuthController] WhatsApp added as family msg failed:', err));
+  }
+  // ---------------------------------------------
 
   res.status(201).json({
     success: true,

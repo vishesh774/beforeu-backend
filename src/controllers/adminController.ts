@@ -65,6 +65,7 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response, _nex
   // Get paginated users
   const users = await User.find(filter)
     .select('-password')
+    .populate('roleId', 'name')
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);
@@ -72,12 +73,13 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response, _nex
   res.status(200).json({
     success: true,
     data: {
-      users: users.map(user => ({
+      users: users.map((user: any) => ({
         id: user._id,
         name: user.name,
         email: user.email,
         phone: user.phone,
-        role: user.role,
+        role: user.roleId?.name || user.role,
+        roleId: user.roleId?._id || user.roleId,
         isActive: user.isActive,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
@@ -97,16 +99,17 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response, _nex
 // @access  Private/Admin
 export const getUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
+  /* removed adminRoles redeclaration */
 
-  const user = await User.findById(id).select('-password');
+  const user = await User.findById(id).select('-password').populate('roleId', 'name');
 
   if (!user) {
     return next(new AppError('User not found', 404));
   }
 
   // Check if user is an admin user (not a customer)
-  if (!adminRoles.includes(user.role as 'Admin' | 'Supervisor' | 'Incharge')) {
+  const adminRoles = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
+  if (!adminRoles.includes(user.role as any)) {
     return next(new AppError('User not found', 404));
   }
 
@@ -118,7 +121,8 @@ export const getUser = asyncHandler(async (req: Request, res: Response, next: Ne
         name: user.name,
         email: user.email,
         phone: user.phone,
-        role: user.role,
+        role: (user as any).roleId?.name || user.role,
+        roleId: (user as any).roleId?._id || (user as any).roleId,
         isActive: user.isActive,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
@@ -131,7 +135,7 @@ export const getUser = asyncHandler(async (req: Request, res: Response, next: Ne
 // @route   POST /api/admin/users
 // @access  Private/Admin
 export const createUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { name, email, phone, password, role } = req.body;
+  const { name, email, phone, password, role, roleId } = req.body;
 
   // Validate required fields
   if (!name || !email || !phone || !password || !role) {
@@ -142,6 +146,16 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
   const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
   if (!adminRoles.includes(role)) {
     return next(new AppError('Invalid role. Must be Admin, Supervisor, Incharge or GuestCare', 400));
+  }
+
+  // Validate roleId if provided
+  if (roleId) {
+    // Import Role dynamically if needed or assume it's imported at top (I will add import)
+    const RoleModel = require('../models/Role').default;
+    const validRole = await RoleModel.findById(roleId);
+    if (!validRole) {
+      return next(new AppError('Invalid Role ID provided', 400));
+    }
   }
 
   // Check if user already exists
@@ -163,6 +177,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
     phone,
     password,
     role,
+    roleId: roleId || undefined,
     isActive: true
   });
 
@@ -179,6 +194,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
         email: user.email,
         phone: user.phone,
         role: user.role,
+        roleId: user.roleId,
         isActive: user.isActive,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt
@@ -192,7 +208,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
 // @access  Private/Admin
 export const updateUser = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
-  const { name, email, phone, role, password, crmId } = req.body;
+  const { name, email, phone, role, password, crmId, roleId } = req.body;
 
   const user = await User.findById(id);
   if (!user) {
@@ -230,6 +246,20 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
     }
     user.role = role;
   }
+
+  if (roleId !== undefined) {
+    if (roleId === null || roleId === '') {
+      user.roleId = undefined;
+    } else {
+      const RoleModel = require('../models/Role').default;
+      const validRole = await RoleModel.findById(roleId);
+      if (!validRole) {
+        return next(new AppError('Invalid Role ID provided', 400));
+      }
+      user.roleId = roleId;
+    }
+  }
+
   if (password) {
     user.password = password; // Will be hashed by pre-save hook
   }
@@ -246,6 +276,7 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
         email: user.email,
         phone: user.phone,
         role: user.role,
+        roleId: user.roleId,
         isActive: user.isActive,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt

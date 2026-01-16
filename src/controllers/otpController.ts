@@ -4,6 +4,7 @@ import { AppError } from '../middleware/errorHandler';
 import { createAndSendOTP, verifyOTP } from '../services/otpService';
 import { sendWelcomeMessage } from '../services/whatsappService';
 import { createCRMLead } from '../services/crmService';
+import { assignCRMTask } from '../services/crmTaskService';
 import User, { UserRole } from '../models/User';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
@@ -200,20 +201,51 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
     console.error('[WhatsApp] Background welcome message failed:', err)
   );
 
-  // Create CRM Lead (Non-blocking)
-  const nameParts = user.name.split(' ');
-  const firstName = nameParts[0];
-  const lastName = nameParts.slice(1).join(' '); // Rejoin remaining parts as last name
+  // --- CRM & Task Integration (Non-blocking) ---
+  (async () => {
+    try {
+      const nameParts = user.name.split(' ');
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(' ');
 
-  createCRMLead({
-    firstName,
-    lastName,
-    email: user.email || '',
-    phone: user.phone,
-    description: 'New user registration via mobile app'
-  }).catch(err =>
-    console.error('[CRM] Background lead creation failed:', err)
-  );
+      // 1. Create Lead
+      await createCRMLead({
+        firstName,
+        lastName,
+        email: user.email || '',
+        phone: user.phone,
+        description: 'New user registration via mobile app'
+      });
+
+      // 2. Assign Verification Task
+      const guestCareUsers = await User.find({
+        role: 'GuestCare',
+        crmId: { $exists: true, $ne: '' },
+        isActive: true
+      });
+
+      if (guestCareUsers.length > 0) {
+        // Round-robin or random assignment
+        const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
+        const assigneeCrmId = assignee.crmId;
+
+        if (assigneeCrmId) {
+          const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
+
+          await assignCRMTask({
+            title: `New Signup Verification: ${user.name}`,
+            description: `A new customer ${user.name} (${user.phone}) has just signed up via mobile app. Please verify and welcome them.`,
+            assignedById: adminAssignerId,
+            assignedToId: assigneeCrmId,
+            priority: 'High',
+            targetDate: new Date().toISOString().split('T')[0]
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[CRM] Background integration failed:', err);
+    }
+  })();
 
   // Generate token
   const token = generateToken({

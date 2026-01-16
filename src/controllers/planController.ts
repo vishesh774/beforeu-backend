@@ -13,6 +13,8 @@ import mongoose from 'mongoose';
 import { getPlanPurchaseService } from '../utils/systemServices';
 import { getRazorpayInstance } from './paymentController';
 import { getFamilyGroupIds } from '../utils/userHelpers';
+import { sendPlanPurchaseMessage, sendInternalPlanPurchaseNotification } from '../services/whatsappService';
+import { scheduleWhatsAppMessage } from '../services/schedulerService';
 import FamilyMember from '../models/FamilyMember';
 import { assignCRMTask } from '../services/crmTaskService';
 
@@ -469,6 +471,64 @@ export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Re
         userCredits.credits += plan.totalCredits;
         await userCredits.save();
       }
+
+      // --- WhatsApp Notification (Plan Purchase) ---
+      try {
+        const userForMsg = await User.findById(userId);
+        if (userForMsg) {
+          let homeRepairCount: number | string = 0;
+          let advisoryCount: number | string = 0;
+          let repairUnlimited = false;
+          let advisoryUnlimited = false;
+
+          if (plan.services && Array.isArray(plan.services)) {
+            for (const s of plan.services) {
+              const name = s.subServiceName || '';
+              const isRepair = ['Electrician', 'Plumber', 'Carpenter'].some(t => name.includes(t));
+              const isAdvisory = ['Advocate', 'Doctor', 'Physician', 'Medical'].some(t => name.includes(t));
+
+              if (isRepair) {
+                if (s.totalCountLimit === undefined || s.totalCountLimit === null) repairUnlimited = true;
+                else if (typeof homeRepairCount === 'number') homeRepairCount += s.totalCountLimit;
+              }
+              if (isAdvisory) {
+                if (s.totalCountLimit === undefined || s.totalCountLimit === null) advisoryUnlimited = true;
+                else if (typeof advisoryCount === 'number') advisoryCount += s.totalCountLimit;
+              }
+            }
+          }
+          if (repairUnlimited) homeRepairCount = "Unlimited";
+          if (advisoryUnlimited) advisoryCount = "Unlimited";
+
+          const sosCount = plan.allowSOS ? "Unlimited" : "0";
+
+          sendPlanPurchaseMessage({
+            phone: userForMsg.phone,
+            userName: userForMsg.name,
+            planName: plan.planName,
+            membersCount: plan.totalMembers,
+            validity: plan.validity,
+            sosCount,
+            homeRepairCount,
+            advisoryCount
+          }).catch(err => console.error('[PlanController] WhatsApp plan msg failed:', err));
+
+          // Schedule "Add Family Member" prompt (8 hours delay)
+          scheduleWhatsAppMessage(userForMsg.phone, 'add_family_member', [], 8)
+            .catch(err => console.error('[PlanController] WhatsApp schedule family msg failed:', err));
+
+          // Notify Admins
+          sendInternalPlanPurchaseNotification(
+            userForMsg.name,
+            userForMsg.phone,
+            plan.planName,
+            plan.finalPrice
+          ).catch(err => console.error('[PlanController] WhatsApp internal notify failed:', err));
+        }
+      } catch (waError) {
+        console.error('[PlanController] Error preparing WhatsApp msg:', waError);
+      }
+      // ---------------------------------------------
 
       // --- Task Assignment Logic ---
       try {

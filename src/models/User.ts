@@ -9,6 +9,7 @@ export interface IUser extends Document {
   phone: string;
   password: string;
   role: UserRole;
+  roleId?: mongoose.Types.ObjectId;
   crmId?: string; // ID from the CRM system
   isActive: boolean;
   isDeleted: boolean;
@@ -60,6 +61,10 @@ const UserSchema = new Schema<IUser>(
       enum: ['customer', 'Admin', 'Supervisor', 'Incharge', 'ServicePartner', 'GuestCare'],
       default: 'customer',
       required: true
+    },
+    roleId: {
+      type: Schema.Types.ObjectId,
+      ref: 'Role'
     },
     crmId: {
       type: String,

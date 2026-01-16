@@ -21,6 +21,7 @@ import { calculateCheckoutTotal, getActiveCheckoutFields } from '../utils/checko
 import { autoAssignServicePartner } from '../services/bookingService';
 import { BookingStatus } from '../constants/bookingStatus';
 import { getPlanHolderId } from '../utils/userHelpers';
+import { assignCRMTask } from '../services/crmTaskService';
 
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
 let razorpay: any = null;
@@ -238,6 +239,37 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           userCredits.credits += plan.totalCredits;
           await userCredits.save();
         }
+
+        // --- CRM Task Integration (Non-blocking) ---
+        (async () => {
+          try {
+            const guestCareUsers = await User.find({
+              role: 'GuestCare',
+              crmId: { $exists: true, $ne: '' },
+              isActive: true
+            });
+
+            if (guestCareUsers.length > 0) {
+              const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
+              const assigneeCrmId = assignee.crmId;
+              const buyer = await User.findById(userIdObj);
+
+              if (assigneeCrmId && buyer) {
+                const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
+                await assignCRMTask({
+                  title: `New Plan Purchase (Free): ${plan.planName} - ${buyer.name}`,
+                  description: `User ${buyer.name} (${buyer.phone}) has activated the free plan "${plan.planName}". Please initiate the welcome call.`,
+                  assignedById: adminAssignerId,
+                  assignedToId: assigneeCrmId,
+                  priority: 'High',
+                  targetDate: new Date().toISOString().split('T')[0]
+                });
+              }
+            }
+          } catch (err) {
+            console.error('[PaymentController] CRM Task assignment failed for free plan:', err);
+          }
+        })();
       }
 
       res.status(200).json({
@@ -626,6 +658,38 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           userCredits.credits += plan.totalCredits;
           await userCredits.save();
         }
+
+        // --- CRM Task Integration (Non-blocking) ---
+        (async () => {
+          try {
+            const guestCareUsers = await User.find({
+              role: 'GuestCare',
+              crmId: { $exists: true, $ne: '' },
+              isActive: true
+            });
+
+            if (guestCareUsers.length > 0) {
+              const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
+              const assigneeCrmId = assignee.crmId;
+              // We already have userIdObj
+              const buyer = await User.findById(userIdObj);
+
+              if (assigneeCrmId && buyer) {
+                const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
+                await assignCRMTask({
+                  title: `New Plan Purchase: ${plan.planName} - ${buyer.name}`,
+                  description: `User ${buyer.name} (${buyer.phone}) has purchased the plan "${plan.planName}". Please initiate the welcome call.`,
+                  assignedById: adminAssignerId,
+                  assignedToId: assigneeCrmId,
+                  priority: 'High',
+                  targetDate: new Date().toISOString().split('T')[0]
+                });
+              }
+            }
+          } catch (err) {
+            console.error('[PaymentController] CRM Task assignment failed:', err);
+          }
+        })();
       }
 
       // Return success
