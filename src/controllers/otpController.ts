@@ -87,6 +87,11 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
     return;
   }
 
+  // Check if user is active
+  if (!user.isActive) {
+    return next(new AppError('Your account has been deactivated. Please contact support.', 403));
+  }
+
   // Enforce role check if provided
   if (role && user.role !== role) {
     return next(new AppError('User is not authorized to access this application', 403));
@@ -134,6 +139,11 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   let user = await User.findOne({ phone });
 
   if (user) {
+    // Check if user is active
+    if (!user.isActive) {
+      return next(new AppError('Your account has been deactivated. Please contact support.', 403));
+    }
+
     // Update existing user
     user.name = name;
     // Only set email if provided and not empty, otherwise unset the field to avoid unique constraint violation

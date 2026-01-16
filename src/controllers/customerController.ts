@@ -143,6 +143,7 @@ export const getCustomer = asyncHandler(async (req: Request, res: Response, next
 // @access  Private/Admin
 export const toggleCustomerStatus = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
+  const { force } = req.body;
 
   const customer = await User.findById(id);
 
@@ -153,6 +154,28 @@ export const toggleCustomerStatus = asyncHandler(async (req: Request, res: Respo
   // Check if user is a customer
   if (customer.role !== 'customer') {
     return next(new AppError('User is not a customer', 404));
+  }
+
+  // If attempting to deactivate (currently active)
+  if (customer.isActive) {
+    // Check for active plan if not forced
+    if (!force) {
+      const planHolderId = await getPlanHolderId(customer._id);
+      const userPlan = await UserPlan.findOne({ userId: planHolderId });
+
+      if (userPlan && userPlan.activePlanId && userPlan.expiresAt && new Date(userPlan.expiresAt) > new Date()) {
+        // Active plan exists
+        return res.status(409).json({
+          success: false,
+          message: 'This user has an active plan. Deactivating them will cause them to lose access. Do you want to proceed?',
+          data: {
+            requiresConfirmation: true,
+            activePlanId: userPlan.activePlanId,
+            expiresAt: userPlan.expiresAt
+          }
+        });
+      }
+    }
   }
 
   // Toggle active status

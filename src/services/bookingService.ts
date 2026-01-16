@@ -187,7 +187,7 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
 
             console.log(`[autoAssignServicePartner] Processing item ${item._id}. Service: ${service.name} (${serviceIdString})`);
 
-            const eligiblePartners = await ServicePartner.find(partnerFilter);
+            const eligiblePartners = await ServicePartner.find(partnerFilter).sort({ lastAssignedAt: 1 });
             console.log(`[autoAssignServicePartner] Found ${eligiblePartners.length} eligible partners for service ${serviceIdString}`);
 
             if (eligiblePartners.length === 0) {
@@ -218,6 +218,10 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                     assignedPartnerId: assignedPartner._id,
                     status: [BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(item.status) ? BookingStatus.ASSIGNED : item.status
                 });
+
+                // Update partner's lastAssignedAt for cyclic assignment
+                await ServicePartner.findByIdAndUpdate(assignedPartner._id, { lastAssignedAt: new Date() });
+
                 console.log(`[autoAssignServicePartner] Assigned partner ${assignedPartner.name} to item ${item._id} (${service.name})`);
             } else {
                 console.log(`[autoAssignServicePartner] No available partners for item ${item._id} at requested time`);

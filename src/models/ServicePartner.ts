@@ -15,6 +15,7 @@ export interface IServicePartner extends Document {
   serviceRegions: string[]; // Array of service region IDs
   availability: IAvailability[]; // Array of availability for each day
   isActive: boolean;
+  lastAssignedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -68,7 +69,7 @@ const ServicePartnerSchema = new Schema<IServicePartner>(
       type: [String],
       required: true,
       validate: {
-        validator: function(services: string[]) {
+        validator: function (services: string[]) {
           return services && services.length > 0;
         },
         message: 'At least one service must be selected'
@@ -94,6 +95,9 @@ const ServicePartnerSchema = new Schema<IServicePartner>(
       type: Boolean,
       default: true,
       required: true
+    },
+    lastAssignedAt: {
+      type: Date
     }
   },
   {

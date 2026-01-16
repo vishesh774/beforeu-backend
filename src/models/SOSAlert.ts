@@ -72,6 +72,7 @@ const SOSAlertSchema = new Schema({
     otp: { type: String, required: true },
     resolvedAt: { type: Date },
     resolvedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    usedFreeQuota: { type: Boolean, default: false },
     logs: [SOSLogSchema]
 }, {
     timestamps: true

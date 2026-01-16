@@ -12,6 +12,8 @@ import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
 
+import CustomerAppSettings from '../models/CustomerAppSettings';
+
 export const triggerSOS = async (req: AuthRequest, res: Response) => {
     try {
         const userId = req.user?.id;
@@ -23,23 +25,40 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
 
         // 1. Verify Plan and SOS allowance
         const userPlan = await UserPlan.findOne({ userId: planHolderId });
-        if (!userPlan?.activePlanId) {
-            res.status(403).json({ success: false, error: 'SOS is only available for users with an active plan.' });
-            return;
+        let isFree = false;
+
+        const plan = userPlan?.activePlanId ? await Plan.findById(userPlan.activePlanId) : null;
+        const hasActivePlan = plan && plan.allowSOS;
+
+        if (!hasActivePlan) {
+            // Check Free Quota
+            const customerSettings = await CustomerAppSettings.findOne();
+            const maxFree = customerSettings?.maxFreeSosCount || 0;
+
+            if (maxFree <= 0) {
+                res.status(403).json({ success: false, error: 'SOS is only available for users with an active plan.' });
+                return;
+            }
+
+            const usedFreeCount = await SOSAlert.countDocuments({
+                user: userId,
+                usedFreeQuota: true
+            });
+
+            if (usedFreeCount >= maxFree) {
+                res.status(403).json({ success: false, error: 'You have exhausted your free SOS requests. Please purchase a plan.' });
+                return;
+            }
+
+            isFree = true;
         }
 
-        const plan = await Plan.findById(userPlan.activePlanId);
-        if (!plan || !plan.allowSOS) {
-            res.status(403).json({ success: false, error: 'Your current plan does not support SOS emergency features.' });
-            return;
-        }
-
-        // 2. Check for sufficient credits in the plan holder's account
+        // 2. Check for sufficient credits in the plan holder's account (Only if NOT free)
         const { service, variant } = await getSOSService();
         const creditsNeeded = variant.creditValue || 0;
 
         const userCredits = await UserCredits.findOne({ userId: planHolderId });
-        if (!userCredits || (creditsNeeded > 0 && userCredits.credits < creditsNeeded)) {
+        if (!isFree && (!userCredits || (creditsNeeded > 0 && userCredits.credits < creditsNeeded))) {
             res.status(403).json({ success: false, error: `Insufficient credits to trigger SOS. Need ${creditsNeeded} credits.` });
             return;
         }
@@ -101,6 +120,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
             familyMemberId,
             serviceId,
             status: SOSStatus.TRIGGERED,
+            usedFreeQuota: isFree,
             logs: [{
                 action: 'TRIGGERED',
                 timestamp: new Date(),
@@ -137,7 +157,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 itemTotal: variant.finalPrice || 0,
                 totalAmount: variant.finalPrice || 0,
                 totalOriginalAmount: variant.originalPrice || 0,
-                creditsUsed: creditsNeeded,
+                creditsUsed: isFree ? 0 : creditsNeeded,
                 status: 'confirmed',
                 paymentStatus: 'paid',
                 notes: `SOS ALERT: ${location.emergencyType || 'General Emergency'}`
@@ -155,17 +175,17 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 quantity: 1,
                 originalPrice: variant.originalPrice,
                 finalPrice: variant.finalPrice,
-                creditValue: creditsNeeded,
+                creditValue: isFree ? 0 : creditsNeeded,
                 estimatedTimeMinutes: variant.estimatedTimeMinutes || 30,
                 customerVisitRequired: true,
-                paidWithCredits: creditsNeeded > 0,
+                paidWithCredits: !isFree && creditsNeeded > 0,
                 status: 'confirmed',
                 startJobOtp: 'NONE', // Special case for SOS
                 endJobOtp: generatedOtp, // Use the SOS OTP as the completion OTP
             });
 
             // 3. Deduct Credits from Plan Holder
-            if (creditsNeeded > 0 && userCredits) {
+            if (!isFree && creditsNeeded > 0 && userCredits) {
                 userCredits.credits = Math.max(0, userCredits.credits - creditsNeeded);
                 await userCredits.save();
                 console.log(`[triggerSOS] Deducted ${creditsNeeded} credits from plan holder ${planHolderId}`);

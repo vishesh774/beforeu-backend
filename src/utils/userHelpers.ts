@@ -5,6 +5,8 @@ import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
 import Plan from '../models/Plan';
 import mongoose from 'mongoose';
+import { SOSAlert } from '../models/SOSAlert';
+import CustomerAppSettings from '../models/CustomerAppSettings';
 
 export interface AggregatedUserData {
   id: string;
@@ -49,6 +51,12 @@ export interface AggregatedUserData {
   }>;
   createdAt: Date;
   updatedAt: Date;
+  sosEligibility: {
+    allowed: boolean;
+    reason: 'PLAN' | 'FREE_QUOTA' | 'NO_PLAN';
+    remainingFree?: number;
+    maxFree?: number;
+  };
 }
 
 /**
@@ -178,7 +186,56 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
     }
   }
 
+  // Calculate SOS Eligibility
+  let sosEligibility: {
+    allowed: boolean;
+    reason: 'PLAN' | 'FREE_QUOTA' | 'NO_PLAN';
+    remainingFree?: number;
+    maxFree?: number;
+  } = {
+    allowed: false,
+    reason: 'NO_PLAN',
+    remainingFree: 0,
+    maxFree: 0
+  };
+
+  if (activePlan && activePlan.allowSOS) {
+    sosEligibility = {
+      allowed: true,
+      reason: 'PLAN',
+      remainingFree: 0,
+      maxFree: 0
+    };
+  } else {
+    const settings = await CustomerAppSettings.findOne();
+    const maxFree = settings?.maxFreeSosCount || 0;
+
+    if (maxFree > 0) {
+      const usedCount = await SOSAlert.countDocuments({
+        user: user._id,
+        usedFreeQuota: true
+      });
+      const remaining = Math.max(0, maxFree - usedCount);
+      if (remaining > 0) {
+        sosEligibility = {
+          allowed: true,
+          reason: 'FREE_QUOTA',
+          remainingFree: remaining,
+          maxFree
+        };
+      } else {
+        sosEligibility = {
+          allowed: false,
+          reason: 'NO_PLAN',
+          remainingFree: 0,
+          maxFree
+        };
+      }
+    }
+  }
+
   return {
+    sosEligibility,
     id: user._id.toString(),
     name: user.name,
     email: user?.email || '',

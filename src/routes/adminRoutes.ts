@@ -226,6 +226,11 @@ router.post('/payments/reconcile', reconcileExternalPayment);
 router.get('/company-settings', getCompanySettings);
 router.put('/company-settings', updateCompanySettings);
 
+// Customer App Settings routes
+import { getCustomerAppSettings, updateCustomerAppSettings } from '../controllers/customerAppSettingsController';
+router.get('/customer-app-settings', getCustomerAppSettings);
+router.put('/customer-app-settings', updateCustomerAppSettings);
+
 // Invoice routes
 router.get('/invoices/booking/:id', generateInvoicePDF);
 router.get('/invoices/plan-transaction/:id', generateInvoicePDF);
