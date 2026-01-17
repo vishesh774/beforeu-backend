@@ -13,6 +13,8 @@ import providerRoutes from './routes/providerRoutes';
 import sosRoutes from './routes/sosRoutes';
 import configRoutes from './routes/configRoutes';
 import couponRoutes from './routes/couponRoutes';
+import roleRoutes from './routes/roleRoutes';
+import reviewRoutes from './routes/reviewRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
 
@@ -121,6 +123,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/roles', roleRoutes);
 app.use('/api', bookingRoutes);
 app.use('/api', paymentRoutes);
 app.use('/api/partners', partnerRoutes);
@@ -128,6 +131,7 @@ app.use('/api/provider', providerRoutes);
 app.use('/api/sos', sosRoutes);
 app.use('/api', configRoutes);
 app.use('/api/coupons', couponRoutes);
+app.use('/api/reviews', reviewRoutes);
 console.log('✅ Routes registered successfully');
 
 // 404 handler
@@ -160,6 +164,7 @@ console.log(`✅ Found ${routes.length} middleware/routes registered`);
 
 import http from 'http';
 import { socketService } from './services/socketService';
+import { initScheduler } from './services/schedulerService';
 
 // Connect to database and then start server
 const startServer = async () => {
@@ -167,6 +172,9 @@ const startServer = async () => {
     console.log('🔄 Connecting to database...');
     await connectDB();
     console.log('✅ Database connection established');
+
+    // Initialize Scheduler
+    initScheduler();
 
     // Create HTTP server wrapping the Express app
     const server = http.createServer(app);

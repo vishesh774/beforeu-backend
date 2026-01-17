@@ -2,6 +2,9 @@ import { Request, Response, NextFunction } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { createAndSendOTP, verifyOTP } from '../services/otpService';
+import { sendWelcomeMessage } from '../services/whatsappService';
+import { createCRMLead } from '../services/crmService';
+import { assignCRMTask } from '../services/crmTaskService';
 import User, { UserRole } from '../models/User';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
@@ -84,6 +87,11 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
     return;
   }
 
+  // Check if user is active
+  if (!user.isActive) {
+    return next(new AppError('Your account has been deactivated. Please contact support.', 403));
+  }
+
   // Enforce role check if provided
   if (role && user.role !== role) {
     return next(new AppError('User is not authorized to access this application', 403));
@@ -131,6 +139,11 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   let user = await User.findOne({ phone });
 
   if (user) {
+    // Check if user is active
+    if (!user.isActive) {
+      return next(new AppError('Your account has been deactivated. Please contact support.', 403));
+    }
+
     // Update existing user
     user.name = name;
     // Only set email if provided and not empty, otherwise unset the field to avoid unique constraint violation
@@ -191,6 +204,58 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   if (!userData) {
     return next(new AppError('Failed to load user data', 500));
   }
+
+  // Send WhatsApp Welcome Message (Non-blocking)
+  // We don't await this so it runs in the background
+  sendWelcomeMessage(user.phone, user.name).catch(err =>
+    console.error('[WhatsApp] Background welcome message failed:', err)
+  );
+
+  // --- CRM & Task Integration (Non-blocking) ---
+  (async () => {
+    try {
+      const nameParts = user.name.split(' ');
+      const firstName = nameParts[0];
+      const lastName = nameParts.slice(1).join(' ');
+
+      // 1. Create Lead
+      await createCRMLead({
+        firstName,
+        lastName,
+        email: user.email || '',
+        phone: user.phone,
+        description: 'New user registration via mobile app'
+      });
+
+      // 2. Assign Verification Task
+      const guestCareUsers = await User.find({
+        role: 'GuestCare',
+        crmId: { $exists: true, $ne: '' },
+        isActive: true
+      });
+
+      if (guestCareUsers.length > 0) {
+        // Round-robin or random assignment
+        const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
+        const assigneeCrmId = assignee.crmId;
+
+        if (assigneeCrmId) {
+          const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
+
+          await assignCRMTask({
+            title: `New Signup Verification: ${user.name}`,
+            description: `A new customer ${user.name} (${user.phone}) has just signed up via mobile app. Please verify and welcome them.`,
+            assignedById: adminAssignerId,
+            assignedToId: assigneeCrmId,
+            priority: 'High',
+            targetDate: new Date().toISOString().split('T')[0]
+          });
+        }
+      }
+    } catch (err) {
+      console.error('[CRM] Background integration failed:', err);
+    }
+  })();
 
   // Generate token
   const token = generateToken({

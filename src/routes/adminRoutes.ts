@@ -26,7 +26,8 @@ import {
   getAllCustomers,
   getCustomer,
   toggleCustomerStatus,
-  addCustomer
+  addCustomer,
+  addFamilyMember
 } from '../controllers/customerController';
 import {
   getAllBookings,
@@ -36,7 +37,8 @@ import {
   assignServicePartner,
   rescheduleBooking,
   cancelBooking,
-  assignServiceLocation
+  assignServiceLocation,
+  triggerManualSOS
 } from '../controllers/bookingController';
 import {
   getAllPolicies,
@@ -79,7 +81,8 @@ import {
   getUserPlans,
   getPlanTransactions,
   getPlanTransactionDetails,
-  verifyPlanPaymentStatus
+  verifyPlanPaymentStatus,
+  togglePlanStatus
 } from '../controllers/planController';
 import {
   getAllCheckoutFields,
@@ -153,12 +156,14 @@ router.get('/customers', getAllCustomers);
 router.post('/customers', addCustomer);
 router.get('/customers/:id', getCustomer);
 router.patch('/customers/:id/toggle-status', toggleCustomerStatus);
+router.post('/customers/:id/family-members', addFamilyMember);
 
 // Booking management routes
 router.get('/bookings', getAllBookings);
 router.get('/bookings/:id', getBookingById);
 router.get('/bookings/:id/eligible-partners', getEligibleServicePartners);
 router.post('/bookings/:id/assign-partner', assignServicePartner);
+router.post('/bookings/manual-sos', triggerManualSOS);
 router.post('/bookings/:id/reschedule', rescheduleBooking);
 router.post('/bookings/:id/cancel', cancelBooking);
 router.post('/bookings/:bookingId/items/:itemId/assign-location', assignServiceLocation);
@@ -201,6 +206,7 @@ router.get('/plans', getAllPlans);
 router.get('/plans/:id', getPlan);
 router.post('/plans', createPlan);
 router.put('/plans/:id', updatePlan);
+router.patch('/plans/:id/toggle-status', togglePlanStatus);
 router.delete('/plans/:id', deletePlan);
 router.get('/user-plans', getUserPlans);
 router.get('/plan-transactions', getPlanTransactions);
@@ -226,9 +232,17 @@ router.post('/payments/reconcile', reconcileExternalPayment);
 router.get('/company-settings', getCompanySettings);
 router.put('/company-settings', updateCompanySettings);
 
+// Customer App Settings routes
+import { getCustomerAppSettings, updateCustomerAppSettings } from '../controllers/customerAppSettingsController';
+router.get('/customer-app-settings', getCustomerAppSettings);
+router.put('/customer-app-settings', updateCustomerAppSettings);
+
 // Invoice routes
 router.get('/invoices/booking/:id', generateInvoicePDF);
 router.get('/invoices/plan-transaction/:id', generateInvoicePDF);
-
+// Reviews routes
+import { getAllReviews, publishReview } from '../controllers/reviewController';
+router.get('/reviews', getAllReviews);
+router.put('/reviews/:id/publish', publishReview);
 export default router;
 

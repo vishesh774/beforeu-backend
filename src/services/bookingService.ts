@@ -5,6 +5,7 @@ import OrderItem from '../models/OrderItem';
 import Booking from '../models/Booking';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { BookingStatus } from '../constants/bookingStatus';
+import { sendPushNotification } from './pushNotificationService';
 
 /**
  * Helper function to check if a service partner is available at a given time
@@ -187,7 +188,7 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
 
             console.log(`[autoAssignServicePartner] Processing item ${item._id}. Service: ${service.name} (${serviceIdString})`);
 
-            const eligiblePartners = await ServicePartner.find(partnerFilter);
+            const eligiblePartners = await ServicePartner.find(partnerFilter).sort({ lastAssignedAt: 1 });
             console.log(`[autoAssignServicePartner] Found ${eligiblePartners.length} eligible partners for service ${serviceIdString}`);
 
             if (eligiblePartners.length === 0) {
@@ -218,7 +219,36 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                     assignedPartnerId: assignedPartner._id,
                     status: [BookingStatus.PENDING, BookingStatus.CONFIRMED].includes(item.status) ? BookingStatus.ASSIGNED : item.status
                 });
+
+                // Update partner's lastAssignedAt for cyclic assignment
+                await ServicePartner.findByIdAndUpdate(assignedPartner._id, { lastAssignedAt: new Date() });
+
                 console.log(`[autoAssignServicePartner] Assigned partner ${assignedPartner.name} to item ${item._id} (${service.name})`);
+
+                // Send Push Notification to Partner
+                if (assignedPartner.pushToken) {
+                    const isSOS = booking.bookingType === 'SOS';
+                    const title = isSOS ? '🚨 SOS ALERT ASSIGNED!' : 'New Service Assigned';
+                    const body = isSOS
+                        ? `URGENT! SOS assigned at ${booking.address?.fullAddress || 'Unknown location'}. Check app immediately!`
+                        : `You have been assigned ${service.name} for ${booking.scheduledDate ? new Date(booking.scheduledDate).toLocaleDateString() : 'Today'} ${booking.scheduledTime || ''}`;
+
+                    await sendPushNotification({
+                        pushToken: assignedPartner.pushToken,
+                        title,
+                        body,
+                        data: {
+                            bookingId: booking._id,
+                            itemId: item._id,
+                            screen: 'BookingDetails',
+                            type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
+                        },
+                        sound: isSOS ? 'default' : 'default', // Sound
+                        channelId: isSOS ? 'high_priority' : 'default', // Channel ID
+                        priority: isSOS ? 'high' : 'normal' // Priority
+                    });
+                    console.log(`[autoAssignServicePartner] Notification sent to partner ${assignedPartner.name}`);
+                }
             } else {
                 console.log(`[autoAssignServicePartner] No available partners for item ${item._id} at requested time`);
             }

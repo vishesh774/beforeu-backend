@@ -13,7 +13,13 @@ import mongoose from 'mongoose';
 import { getPlanPurchaseService } from '../utils/systemServices';
 import { getRazorpayInstance } from './paymentController';
 import { getFamilyGroupIds } from '../utils/userHelpers';
+import { sendPlanPurchaseMessage, sendInternalPlanPurchaseNotification } from '../services/whatsappService';
+import { scheduleWhatsAppMessage } from '../services/schedulerService';
 import FamilyMember from '../models/FamilyMember';
+import { assignCRMTask } from '../services/crmTaskService';
+import { notifyAccountsTeamOnPlanPurchase } from '../services/emailService';
+import { generateInvoiceBuffer } from '../utils/pdfGenerator';
+import CompanySettings from '../models/CompanySettings';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -468,6 +474,157 @@ export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Re
         userCredits.credits += plan.totalCredits;
         await userCredits.save();
       }
+
+      // --- WhatsApp Notification (Plan Purchase) ---
+      try {
+        const userForMsg = await User.findById(userId);
+        if (userForMsg) {
+          let homeRepairCount: number | string = 0;
+          let advisoryCount: number | string = 0;
+          let repairUnlimited = false;
+          let advisoryUnlimited = false;
+
+          if (plan.services && Array.isArray(plan.services)) {
+            for (const s of plan.services) {
+              const name = s.subServiceName || '';
+              const isRepair = ['Electrician', 'Plumber', 'Carpenter'].some(t => name.includes(t));
+              const isAdvisory = ['Advocate', 'Doctor', 'Physician', 'Medical'].some(t => name.includes(t));
+
+              if (isRepair) {
+                if (s.totalCountLimit === undefined || s.totalCountLimit === null) repairUnlimited = true;
+                else if (typeof homeRepairCount === 'number') homeRepairCount += s.totalCountLimit;
+              }
+              if (isAdvisory) {
+                if (s.totalCountLimit === undefined || s.totalCountLimit === null) advisoryUnlimited = true;
+                else if (typeof advisoryCount === 'number') advisoryCount += s.totalCountLimit;
+              }
+            }
+          }
+          if (repairUnlimited) homeRepairCount = "Unlimited";
+          if (advisoryUnlimited) advisoryCount = "Unlimited";
+
+          const sosCount = plan.allowSOS ? "Unlimited" : "0";
+
+          sendPlanPurchaseMessage({
+            phone: userForMsg.phone,
+            userName: userForMsg.name,
+            planName: plan.planName,
+            membersCount: plan.totalMembers,
+            validity: plan.validity,
+            sosCount,
+            homeRepairCount,
+            advisoryCount
+          }).catch(err => console.error('[PlanController] WhatsApp plan msg failed:', err));
+
+          // Schedule "Add Family Member" prompt (8 hours delay)
+          scheduleWhatsAppMessage(userForMsg.phone, 'add_family_member', [], 8)
+            .catch(err => console.error('[PlanController] WhatsApp schedule family msg failed:', err));
+
+          // Notify Admins
+          sendInternalPlanPurchaseNotification(
+            userForMsg.name,
+            userForMsg.phone,
+            plan.planName,
+            plan.finalPrice
+          ).catch(err => console.error('[PlanController] WhatsApp internal notify failed:', err));
+        }
+      } catch (waError) {
+        console.error('[PlanController] Error preparing WhatsApp msg:', waError);
+      }
+      // ---------------------------------------------
+
+      // --- NEW: Email Notification to Accounts Team ---
+      try {
+        const userForEmail = await User.findById(userId);
+        if (userForEmail) {
+          const companySettings = (await CompanySettings.findOne()) || {
+            invoicePrefix: "BU"
+          };
+          const settings = companySettings as any;
+          const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+
+          const invoiceDataForEmail = {
+            invoiceNumber,
+            date: planTx.createdAt,
+            customerName: userForEmail.name,
+            customerPhone: userForEmail.phone,
+            customerEmail: userForEmail.email || 'N/A',
+            customerAddress: "N/A",
+            items: [{
+              description: `Plan Purchase: ${plan.planName}`,
+              quantity: 1,
+              price: plan.finalPrice,
+              total: plan.finalPrice
+            }],
+            subtotal: plan.finalPrice,
+            discount: planTx.discountAmount || 0,
+            creditsUsed: 0,
+            taxBreakdown: planTx.paymentBreakdown || [],
+            total: planTx.amount || 0,
+            paymentStatus: 'completed',
+            paymentId: planTx.paymentId,
+            paymentMethod: successfulPayment.method || 'Online'
+          };
+
+          const pdfBuffer = await generateInvoiceBuffer(invoiceDataForEmail as any);
+
+          notifyAccountsTeamOnPlanPurchase({
+            customerName: userForEmail.name,
+            customerPhone: userForEmail.phone,
+            customerEmail: userForEmail.email || 'N/A',
+            planName: plan.planName,
+            amount: planTx.amount,
+            invoiceNumber,
+            purchaseDate: planTx.createdAt,
+            pdfBuffer
+          }).catch(err => console.error('[PlanController] Email notification failed:', err));
+        }
+      } catch (emailError) {
+        console.error('[PlanController] Error preparing Email notification:', emailError);
+      }
+      // ------------------------------------------------
+
+      // --- Task Assignment Logic ---
+      try {
+        // 1. Find potential assignees (GuestCare role with valid CRM ID)
+        const guestCareUsers = await User.find({
+          role: 'GuestCare',
+          crmId: { $exists: true, $ne: '' },
+          isActive: true
+        });
+
+        if (guestCareUsers.length > 0) {
+          // 2. Pick one randomly
+          const assignee = guestCareUsers[Math.floor(Math.random() * guestCareUsers.length)];
+          const assigneeCrmId = assignee.crmId;
+
+          if (assigneeCrmId) {
+            // 3. User info for task description
+            const buyer = await User.findById(userId);
+
+            // 4. Create Task
+            // assigned_by_id: We need a valid ID. For now, we can reuse the assignee's ID (assign to self) 
+            // or use a system 'admin' ID if configured in env. 
+            // Let's assume the assignee assigns it to themselves or use a fallback.
+            const adminAssignerId = process.env.CRM_ADMIN_ASSIGNER_ID || assigneeCrmId;
+
+            assignCRMTask({
+              title: `New Plan Purchase: verified - ${buyer?.name}`,
+              description: `User ${buyer?.name} (${buyer?.phone}) has purchased the plan "${plan.planName}". Please initiate the welcome call.`,
+              assignedById: adminAssignerId,
+              assignedToId: assigneeCrmId,
+              priority: 'High',
+              targetDate: new Date().toISOString().split('T')[0]
+            }).catch(err => console.error('[PlanController] Background task assignment failed:', err));
+          }
+        } else {
+          console.log('[PlanController] No GuestCare users with CRM ID found. Skipping task assignment.');
+        }
+      } catch (taskError) {
+        console.error('[PlanController] Error in task assignment block:', taskError);
+      }
+      // -----------------------------
+
     }
 
     // 5. Update associated Booking and OrderItem
@@ -741,6 +898,34 @@ export const deletePlan = asyncHandler(async (req: Request, res: Response, next:
   res.status(200).json({
     success: true,
     message: 'Plan deleted successfully'
+  });
+});
+
+// @desc    Toggle plan status
+// @route   PATCH /api/admin/plans/:id/toggle-status
+// @access  Private/Admin
+export const togglePlanStatus = asyncHandler(async (req: Request, res: Response, next: any) => {
+  const { id } = req.params;
+
+  const plan = await Plan.findById(id);
+
+  if (!plan) {
+    return next(new AppError('Plan not found', 404));
+  }
+
+  // Toggle status
+  plan.planStatus = plan.planStatus === 'active' ? 'inactive' : 'active';
+  await plan.save();
+
+  res.status(200).json({
+    success: true,
+    data: {
+      plan: {
+        ...plan.toObject(),
+        id: plan._id.toString()
+      }
+    },
+    message: `Plan ${plan.planStatus === 'active' ? 'activated' : 'deactivated'} successfully`
   });
 });
 

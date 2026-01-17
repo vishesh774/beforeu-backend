@@ -42,9 +42,11 @@ export const requireAdmin = async (
         return next(new AppError('Your account has been deactivated', 403));
       }
 
-      // Check if user has admin role
+      // Check if user has admin role or custom role
       const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
-      if (!adminRoles.includes(user.role as 'Admin' | 'Supervisor' | 'Incharge')) {
+      const hasCustomRole = !!user.roleId;
+
+      if (!adminRoles.includes(user.role as 'Admin' | 'Supervisor' | 'Incharge') && !hasCustomRole) {
         return next(new AppError('Admin privileges required', 403));
       }
 

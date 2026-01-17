@@ -7,10 +7,14 @@ import { socketService } from '../services/socketService';
 import { AuthRequest } from '../middleware/auth';
 import { getSOSService } from '../utils/systemServices';
 import { syncBookingStatus, autoAssignServicePartner } from '../services/bookingService';
-import { getPlanHolderId } from '../utils/userHelpers';
+import { getPlanHolderId, getFamilyGroupIds } from '../utils/userHelpers';
 import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
+import User from '../models/User';
+import { sendPushNotification } from '../services/pushNotificationService';
+
+import CustomerAppSettings from '../models/CustomerAppSettings';
 
 export const triggerSOS = async (req: AuthRequest, res: Response) => {
     try {
@@ -23,23 +27,40 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
 
         // 1. Verify Plan and SOS allowance
         const userPlan = await UserPlan.findOne({ userId: planHolderId });
-        if (!userPlan?.activePlanId) {
-            res.status(403).json({ success: false, error: 'SOS is only available for users with an active plan.' });
-            return;
+        let isFree = false;
+
+        const plan = userPlan?.activePlanId ? await Plan.findById(userPlan.activePlanId) : null;
+        const hasActivePlan = plan && plan.allowSOS;
+
+        if (!hasActivePlan) {
+            // Check Free Quota
+            const customerSettings = await CustomerAppSettings.findOne();
+            const maxFree = customerSettings?.maxFreeSosCount || 0;
+
+            if (maxFree <= 0) {
+                res.status(403).json({ success: false, error: 'SOS is only available for users with an active plan.' });
+                return;
+            }
+
+            const usedFreeCount = await SOSAlert.countDocuments({
+                user: userId,
+                usedFreeQuota: true
+            });
+
+            if (usedFreeCount >= maxFree) {
+                res.status(403).json({ success: false, error: 'You have exhausted your free SOS requests. Please purchase a plan.' });
+                return;
+            }
+
+            isFree = true;
         }
 
-        const plan = await Plan.findById(userPlan.activePlanId);
-        if (!plan || !plan.allowSOS) {
-            res.status(403).json({ success: false, error: 'Your current plan does not support SOS emergency features.' });
-            return;
-        }
-
-        // 2. Check for sufficient credits in the plan holder's account
+        // 2. Check for sufficient credits in the plan holder's account (Only if NOT free)
         const { service, variant } = await getSOSService();
         const creditsNeeded = variant.creditValue || 0;
 
         const userCredits = await UserCredits.findOne({ userId: planHolderId });
-        if (!userCredits || (creditsNeeded > 0 && userCredits.credits < creditsNeeded)) {
+        if (!isFree && (!userCredits || (creditsNeeded > 0 && userCredits.credits < creditsNeeded))) {
             res.status(403).json({ success: false, error: `Insufficient credits to trigger SOS. Need ${creditsNeeded} credits.` });
             return;
         }
@@ -101,6 +122,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
             familyMemberId,
             serviceId,
             status: SOSStatus.TRIGGERED,
+            usedFreeQuota: isFree,
             logs: [{
                 action: 'TRIGGERED',
                 timestamp: new Date(),
@@ -137,7 +159,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 itemTotal: variant.finalPrice || 0,
                 totalAmount: variant.finalPrice || 0,
                 totalOriginalAmount: variant.originalPrice || 0,
-                creditsUsed: creditsNeeded,
+                creditsUsed: isFree ? 0 : creditsNeeded,
                 status: 'confirmed',
                 paymentStatus: 'paid',
                 notes: `SOS ALERT: ${location.emergencyType || 'General Emergency'}`
@@ -155,17 +177,17 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 quantity: 1,
                 originalPrice: variant.originalPrice,
                 finalPrice: variant.finalPrice,
-                creditValue: creditsNeeded,
+                creditValue: isFree ? 0 : creditsNeeded,
                 estimatedTimeMinutes: variant.estimatedTimeMinutes || 30,
                 customerVisitRequired: true,
-                paidWithCredits: creditsNeeded > 0,
+                paidWithCredits: !isFree && creditsNeeded > 0,
                 status: 'confirmed',
                 startJobOtp: 'NONE', // Special case for SOS
                 endJobOtp: generatedOtp, // Use the SOS OTP as the completion OTP
             });
 
             // 3. Deduct Credits from Plan Holder
-            if (creditsNeeded > 0 && userCredits) {
+            if (!isFree && creditsNeeded > 0 && userCredits) {
                 userCredits.credits = Math.max(0, userCredits.credits - creditsNeeded);
                 await userCredits.save();
                 console.log(`[triggerSOS] Deducted ${creditsNeeded} credits from plan holder ${planHolderId}`);
@@ -186,6 +208,40 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
         // --- END: Create Booking ---
 
         await newAlert.save();
+
+        // --- NEW: Notify Family Members & Plan Holder ---
+        try {
+            const familyGroupIds = await getFamilyGroupIds(planHolderId);
+            // Filter out the sender
+            const recipientsIds = familyGroupIds.filter(id => id.toString() !== userId);
+
+            if (recipientsIds.length > 0) {
+                const recipients = await User.find({ _id: { $in: recipientsIds }, pushToken: { $exists: true, $ne: '' } });
+                const sender = await User.findById(userId);
+
+                for (const recipient of recipients) {
+                    if (recipient.pushToken) {
+                        await sendPushNotification({
+                            pushToken: recipient.pushToken,
+                            title: '🚨 Family SOS Alert!',
+                            body: `${sender?.name || 'Someone'} in your family group has triggered an SOS alert. Emergency Type: ${location.emergencyType || 'General Emergency'}`,
+                            data: {
+                                sosId: newAlert.sosId,
+                                userId: userId,
+                                type: 'FAMILY_SOS',
+                                screen: 'SOSDetails'
+                            },
+                            sound: 'default',
+                            channelId: 'high_priority',
+                            priority: 'high'
+                        });
+                    }
+                }
+                console.log(`[triggerSOS] Family notifications sent to ${recipients.length} members`);
+            }
+        } catch (notifError) {
+            console.error('[triggerSOS] Error sending family notifications:', notifError);
+        }
 
         // Populate user details for the frontend
         const populatedAlert = await newAlert.populate([

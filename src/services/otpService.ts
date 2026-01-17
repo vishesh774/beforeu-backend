@@ -18,76 +18,18 @@ export const sendOTPViaSMS = async (phone: string, otp: string): Promise<boolean
       console.log(`[OTP] Skipping SMS send for hardcoded test OTP ${otp} to ${phone}`);
       return true;
     }
-    const smsProvider = process.env.SMS_PROVIDER || 'smartping';
+    const smsProvider = process.env.SMS_PROVIDER;
 
     if (smsProvider === 'brevo') {
       return await sendOTPViaBrevo(phone, otp);
     }
 
-
-    // 1. Get Credentials from Env
-    const username = process.env.SMS_USERNAME;
-    const password = process.env.SMS_PASSWORD;
-    const senderId = process.env.SMS_SENDER_ID;
-    const templateId = process.env.SMS_OTP_TEMPLATE_ID;
-    const entityId = process.env.SMS_ENTITY_ID; // Principal Entity ID (for DLT)
-    const baseUrl = process.env.SMS_PROVIDER_URL || 'https://bulksmsapi.vispl.in/';
-
-    // 2. Validate Configuration
-    if (!username || !password || !senderId || !templateId) {
-      console.warn('SMS Configuration missing. OTP logged to console instead.');
-      console.log(`[DEV MODE] Sending OTP ${otp} to ${phone}`);
-      return true; // Return true in dev mode to allow flow to continue
+    if (smsProvider === 'pinnacle') {
+      return await sendOTPViaPinnacle(phone, otp);
     }
 
-    // 3. Prepare Message
-    // NOTE: This message MUST match your DLT approved template exactly.
-    // Ensure the placeholder {#var#} or equivalent matches your template.
-    // Example Template: "Your OTP for login to BeforeU is {#var#}. Valid for 10 mins. Do not share this with anyone."
-    let messageTemplate = process.env.SMS_OTP_MESSAGE_TEMPLATE || 'Your One Time Password is {otp} to complete your login process. Powered by BeforeU';
-    const message = messageTemplate.replace('{otp}', otp);
-
-    // 4. Construct URL with parameters
-    // VISPL API format: https://bulksmsapi.vispl.in/?username=...&password=...&messageType=text&mobile=...&senderId=...&ContentID=...&EntityID=...&message=...
-    const params = new URLSearchParams({
-      username: username,
-      password: password,
-      messageType: 'text',
-      mobile: phone,
-      senderId: senderId,
-      ContentID: templateId,
-      message: message,
-    });
-
-    if (entityId) {
-      params.append('EntityID', entityId);
-    }
-
-    const url = `${baseUrl}?${params.toString()}`;
-
-    // Debug log - safe for production logs if password suppressed
-    const debugParams = new URLSearchParams(params);
-    debugParams.set('password', '*****');
-    console.log(`[SMS DEBUG] URL: ${baseUrl}?${debugParams.toString()}`);
-
-    console.log(`[SMS] Sending OTP to ${phone.slice(-4)} via SmartPing`);
-
-    // 5. Send Request
-    const response = await fetch(url.toString(), {
-      method: 'GET'
-    });
-
-    const responseText = await response.text();
-
-    // 6. Check Response
-    // SmartPing usually returns "JobId=..." or "Success" or status code 200.
-    if (response.ok && (responseText.toLowerCase().includes('jobid') || responseText.toLowerCase().includes('success'))) {
-      console.log('[SMS] Sent successfully. Response:', responseText);
-      return true;
-    } else {
-      console.error('[SMS] Failed to send. Status:', response.status, 'Response:', responseText);
-      return false;
-    }
+    console.warn(`[SMS] Unknown SMS Provider: ${smsProvider}. OTP logged to console.`);
+    return false;
 
   } catch (error) {
     console.error('[SMS] Error sending SMS:', error);
@@ -152,6 +94,72 @@ const sendOTPViaBrevo = async (phone: string, otp: string): Promise<boolean> => 
 
   } catch (error) {
     console.error('[SMS-Brevo] Error sending SMS:', error);
+    return false;
+  }
+};
+
+/**
+ * Send OTP via Pinnacle
+ */
+const sendOTPViaPinnacle = async (phone: string, otp: string): Promise<boolean> => {
+  try {
+    const apiKey = process.env.PINNACLE_API_KEY; // 6a57a4-555b60-0601c6-12f1dc-eb579a
+    const sender = process.env.PINNACLE_SENDER || 'BFOURU'; // BFOURU
+    // const entityId = process.env.PINNACLE_ENTITY_ID; // Not used in example URL but good to have if needed later
+    const dltTempId = process.env.PINNACLE_DLT_TEMP_ID || '1707176476476794172';
+
+    if (!apiKey) {
+      console.warn('Pinnacle API Key missing. OTP logged to console instead.');
+      console.log(`[DEV MODE - Pinnacle] Sending OTP ${otp} to ${phone}`);
+      return true;
+    }
+
+    // Prepare phone number: Ensure it's 10 digits as per example (8888836963)
+    let formattedPhone = phone;
+    if (phone.startsWith('+91')) {
+      formattedPhone = phone.replace('+91', '');
+    } else if (phone.startsWith('91') && phone.length === 12) {
+      formattedPhone = phone.substring(2);
+    }
+
+    // Pinnacle Message format: Your One Time Password is {otp} to complete your account registration. Powered by BeforeU
+    // URL Encoded automatically by URLSearchParams
+    const message = `Your One Time Password is ${otp} to complete your account registration. Powered by BeforeU`;
+
+    const baseUrl = 'https://api.pinnacle.in/index.php/sms/urlsms';
+    const params = new URLSearchParams({
+      sender: sender,
+      numbers: formattedPhone,
+      messagetype: 'TXT',
+      message: message,
+      response: 'Y',
+      apikey: apiKey,
+      dlttempid: dltTempId
+    });
+
+    const url = `${baseUrl}?${params.toString()}`;
+
+    // Debug log (masking API key)
+    const debugParams = new URLSearchParams(params);
+    debugParams.set('apikey', '*****');
+    console.log(`[SMS-Pinnacle DEBUG] URL: ${baseUrl}?${debugParams.toString()}`);
+
+    const response = await fetch(url.toString(), {
+      method: 'GET'
+    });
+
+    const responseText = await response.text();
+
+    if (response.ok) {
+      console.log('[SMS-Pinnacle] Sent successfully. Response:', responseText);
+      return true;
+    } else {
+      console.error('[SMS-Pinnacle] Failed to send. Status:', response.status, 'Response:', responseText);
+      return false;
+    }
+
+  } catch (error) {
+    console.error('[SMS-Pinnacle] Error sending SMS:', error);
     return false;
   }
 };

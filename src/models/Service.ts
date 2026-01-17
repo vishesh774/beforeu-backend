@@ -6,6 +6,8 @@ export interface IService extends Document {
   icon: string; // LucideReact icon name (e.g., 'Shield', 'Wrench')
   description: string;
   highlight: string;
+  rating: number;
+  ratingCount: number;
   isActive: boolean;
   serviceRegions: string[]; // Array of service region IDs
   tags: string[]; // Array of service-level tags
@@ -49,6 +51,14 @@ const ServiceSchema = new Schema<IService>(
       default: '',
       maxlength: [100, 'Service highlight cannot exceed 100 characters']
     },
+    rating: {
+      type: Number,
+      default: 0
+    },
+    ratingCount: {
+      type: Number,
+      default: 0
+    },
     isActive: {
       type: Boolean,
       default: true,
@@ -58,7 +68,7 @@ const ServiceSchema = new Schema<IService>(
       type: [String],
       default: [],
       validate: {
-        validator: function(regions: string[]) {
+        validator: function (regions: string[]) {
           return regions.every(region => typeof region === 'string' && region.trim().length > 0);
         },
         message: 'All service region IDs must be non-empty strings'
@@ -68,7 +78,7 @@ const ServiceSchema = new Schema<IService>(
       type: [String],
       default: [],
       validate: {
-        validator: function(tags: string[]) {
+        validator: function (tags: string[]) {
           return tags.every(tag => typeof tag === 'string' && tag.trim().length > 0);
         },
         message: 'All tags must be non-empty strings'
