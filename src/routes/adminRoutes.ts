@@ -37,7 +37,8 @@ import {
   assignServicePartner,
   rescheduleBooking,
   cancelBooking,
-  assignServiceLocation
+  assignServiceLocation,
+  triggerManualSOS
 } from '../controllers/bookingController';
 import {
   getAllPolicies,
@@ -162,6 +163,7 @@ router.get('/bookings', getAllBookings);
 router.get('/bookings/:id', getBookingById);
 router.get('/bookings/:id/eligible-partners', getEligibleServicePartners);
 router.post('/bookings/:id/assign-partner', assignServicePartner);
+router.post('/bookings/manual-sos', triggerManualSOS);
 router.post('/bookings/:id/reschedule', rescheduleBooking);
 router.post('/bookings/:id/cancel', cancelBooking);
 router.post('/bookings/:bookingId/items/:itemId/assign-location', assignServiceLocation);

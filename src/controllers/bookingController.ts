@@ -25,6 +25,12 @@ import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus }
 import { BookingStatus, COMPLETED_BOOKING_STATUSES, ONGOING_BOOKING_STATUSES } from '../constants/bookingStatus';
 import { sendPushNotification } from '../services/pushNotificationService';
 import User from '../models/User';
+import { getSOSService } from '../utils/systemServices';
+import { getPlanHolderId, getFamilyGroupIds } from '../utils/userHelpers';
+import { sendBookingAssignmentMessage, sendSOSAlertToFamily } from '../services/whatsappService';
+import FamilyMember from '../models/FamilyMember';
+import CustomerAppSettings from '../models/CustomerAppSettings';
+
 
 // @desc    Get all active services (without location requirement)
 // @route   GET /api/services/all
@@ -1887,6 +1893,269 @@ export const assignServiceLocation = asyncHandler(async (req: AuthRequest, res: 
     data: {
       orderItem,
       message: 'Service location assigned successfully'
+    }
+  });
+});
+
+// @desc    Trigger a manual SOS booking (Admin)
+// @route   POST /api/admin/bookings/manual-sos
+// @access  Private/Admin
+export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { userId, addressId, customAddress, assignedPartnerId, familyMemberId, notes } = req.body;
+
+  if (!userId) {
+    return next(new AppError('Customer ID is required', 400));
+  }
+
+  // 1. Identify the plan holder for credit verification
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+  const planHolderId = await getPlanHolderId(userIdObj);
+
+  // 2. Fetch Customer and Plan Details
+  const [customer, userPlan, userCredits] = await Promise.all([
+    User.findById(userIdObj),
+    UserPlan.findOne({ userId: planHolderId }),
+    UserCredits.findOne({ userId: planHolderId })
+  ]);
+
+  if (!customer) {
+    return next(new AppError('Customer not found', 404));
+  }
+
+  const plan = userPlan?.activePlanId ? await Plan.findById(userPlan.activePlanId) : null;
+  const hasActivePlan = plan && plan.allowSOS;
+
+  // 3. Service details
+  const { service, variant } = await getSOSService();
+  const creditsNeeded = variant.creditValue || 1; // Default to 1 if not set
+
+  // 4. Validate SOS eligibility
+  let isFree = false;
+  if (!hasActivePlan) {
+    const customerSettings = await CustomerAppSettings.findOne();
+    const maxFree = customerSettings?.maxFreeSosCount || 0;
+
+    if (maxFree <= 0) {
+      return next(new AppError('SOS is only available for users with an active plan.', 403));
+    }
+
+    const usedFreeCount = await SOSAlert.countDocuments({
+      user: userId,
+      usedFreeQuota: true
+    });
+
+    if (usedFreeCount >= maxFree) {
+      return next(new AppError('Customer has exhausted their free SOS requests. Plan purchase required.', 403));
+    }
+
+    isFree = true;
+  }
+
+  // 5. Check Credits (if not free)
+  if (!isFree && (!userCredits || userCredits.credits < creditsNeeded)) {
+    return next(new AppError(`Customer has insufficient credits. Need ${creditsNeeded}, has ${userCredits?.credits || 0}.`, 403));
+  }
+
+  // 6. Handle Address
+  let targetAddress: any;
+  if (addressId && addressId !== 'new') {
+    targetAddress = await Address.findOne({ id: addressId });
+  } else if (customAddress) {
+    targetAddress = customAddress;
+  }
+
+  if (!targetAddress) {
+    return next(new AppError('Valid address or custom location is required', 400));
+  }
+
+  // 7. Verify Partner
+  let partner = null;
+  if (assignedPartnerId) {
+    partner = await ServicePartner.findById(assignedPartnerId);
+    if (!partner || !partner.isActive) {
+      return next(new AppError('Selected service partner is invalid or inactive', 400));
+    }
+  }
+
+  // 8. Generate System Identifiers
+  const now = new Date();
+  const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+  const [sosCount, bCount] = await Promise.all([
+    SOSAlert.countDocuments({ sosId: { $regex: new RegExp(`^SOS-${dateStr}-`) } }),
+    Booking.countDocuments({ bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) } })
+  ]);
+
+  const sosIdStr = `SOS-${dateStr}-${String(sosCount + 1).padStart(3, '0')}`;
+  const bIdStr = `BOOK-${dateStr}-${String(bCount + 1).padStart(3, '0')}`;
+  const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+
+  // 9. Create Booking
+  const booking = await Booking.create({
+    userId: userIdObj,
+    bookingId: bIdStr,
+    addressId: addressId || 'MANUAL_SOS',
+    address: {
+      label: targetAddress.label || 'SOS Emergency',
+      fullAddress: targetAddress.fullAddress,
+      area: targetAddress.area,
+      coordinates: targetAddress.coordinates
+    },
+    bookingType: 'SOS',
+    itemTotal: variant.finalPrice || 0,
+    totalAmount: variant.finalPrice || 0,
+    totalOriginalAmount: variant.originalPrice || 0,
+    creditsUsed: isFree ? 0 : creditsNeeded,
+    status: partner ? BookingStatus.ASSIGNED : BookingStatus.CONFIRMED,
+    paymentStatus: 'paid',
+    notes: `MANUAL SOS: ${notes || 'Triggered by Admin'}`
+  });
+
+  // 10. Create Order Item
+  const orderItem = await OrderItem.create({
+    bookingId: booking._id,
+    serviceId: service._id,
+    serviceVariantId: variant._id,
+    serviceName: service.name,
+    variantName: variant.name,
+    quantity: 1,
+    originalPrice: variant.originalPrice,
+    finalPrice: variant.finalPrice,
+    creditValue: isFree ? 0 : creditsNeeded,
+    estimatedTimeMinutes: variant.estimatedTimeMinutes || 30,
+    customerVisitRequired: true,
+    paidWithCredits: !isFree && creditsNeeded > 0,
+    status: partner ? 'assigned' : 'confirmed',
+    assignedPartnerId: partner ? partner._id : undefined,
+    startJobOtp: 'NONE',
+    endJobOtp: generatedOtp
+  });
+
+  // 11. Create SOS Alert
+  let fmObjectId = undefined;
+  if (familyMemberId) {
+    if (familyMemberId.startsWith('primary-')) {
+      // Primary user, no need for FM ID
+    } else {
+      const fm = await FamilyMember.findOne({ id: familyMemberId });
+      if (fm) fmObjectId = fm._id;
+    }
+  }
+
+  const newAlert = new SOSAlert({
+    user: userId,
+    sosId: sosIdStr,
+    otp: generatedOtp,
+    location: {
+      latitude: targetAddress.coordinates?.lat || 0,
+      longitude: targetAddress.coordinates?.lng || 0,
+      address: targetAddress.fullAddress,
+      emergencyType: 'Manual Admin Trigger'
+    },
+    familyMemberId: fmObjectId,
+    serviceId: service._id,
+    bookingId: booking._id,
+    status: partner ? SOSStatus.ACKNOWLEDGED : SOSStatus.TRIGGERED,
+    usedFreeQuota: isFree,
+    logs: [{
+      action: 'ADMIN_TRIGGERED',
+      timestamp: new Date(),
+      performedBy: req.user?.id as any,
+      details: `Admin manually initiated SOS for customer. Address: ${targetAddress.fullAddress}`
+    }]
+  });
+
+  if (partner) {
+    newAlert.logs.push({
+      action: 'ACKNOWLEDGED',
+      timestamp: new Date(),
+      performedBy: req.user?.id as any,
+      details: `Assigned partner ${partner.name} at creation.`
+    });
+  }
+
+  await newAlert.save();
+
+  // 12. Deduct Credits
+  if (!isFree && creditsNeeded > 0 && userCredits) {
+    userCredits.credits = Math.max(0, userCredits.credits - creditsNeeded);
+    await userCredits.save();
+  }
+
+  // 13. Notifications
+  try {
+    // A. Partner Push & WhatsApp
+    if (partner) {
+      // Push
+      if (partner.pushToken) {
+        await sendPushNotification({
+          pushToken: partner.pushToken,
+          title: '🚨 URGENT: Manual SOS Assigned',
+          body: `Admin assigned an SOS at ${targetAddress.fullAddress}. Respond immediately!`,
+          data: { bookingId: booking._id, itemId: orderItem._id, type: 'SOS_ASSIGNED', screen: 'BookingDetails' },
+          sound: 'default',
+          channelId: 'high_priority',
+          priority: 'high'
+        });
+      }
+      // WhatsApp
+      await sendBookingAssignmentMessage(
+        partner.phone,
+        partner.name,
+        customer.name,
+        customer.phone,
+        service.name,
+        targetAddress.fullAddress,
+        true
+      );
+    }
+
+    // B. Family Notifications (Always for SOS)
+    const familyGroupIds = await getFamilyGroupIds(planHolderId);
+    const relatives = await User.find({
+      _id: {
+        $in: familyGroupIds,
+        $ne: userIdObj
+      }
+    });
+
+    for (const relative of relatives) {
+      // Push
+      if (relative.pushToken) {
+        await sendPushNotification({
+          pushToken: relative.pushToken,
+          title: '🚨 Family SOS Alert!',
+          body: `An SOS has been triggered for ${customer.name}. Help is being organized.`,
+          data: { sosId: newAlert.sosId, screen: 'SOSDetails' },
+          sound: 'default',
+          channelId: 'high_priority',
+          priority: 'high'
+        });
+      }
+      // WhatsApp (If we have relative's name)
+      await sendSOSAlertToFamily(
+        relative.phone,
+        relative.name,
+        customer.name,
+        'SOS Emergency (Admin Assisted)',
+        targetAddress.fullAddress
+      ).catch(e => console.error(`Failed to send family WhatsApp to ${relative.phone}:`, e));
+    }
+
+    // C. Internal Admin Socket
+    socketService.emitToAdmin('sos:alert', await newAlert.populate('user', 'name phone email'));
+
+  } catch (notifErr) {
+    console.error('[triggerManualSOS] Notification pipeline error:', notifErr);
+  }
+
+  res.status(201).json({
+    success: true,
+    message: 'Manual SOS Booking created successfully',
+    data: {
+      bookingId: booking.bookingId,
+      sosId: newAlert.sosId,
+      customer: customer.name,
+      creditsUsed: booking.creditsUsed
     }
   });
 });

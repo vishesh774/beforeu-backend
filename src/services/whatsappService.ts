@@ -227,3 +227,62 @@ export const sendDailyBusinessReport = async (
             .catch(err => console.error(`[WhatsApp] Failed to send report to admin ${phone}:`, err))
     ));
 };
+
+/**
+ * Send a WhatsApp Message to a service partner about a new booking assignment
+ */
+export const sendBookingAssignmentMessage = async (
+    partnerPhone: string,
+    partnerName: string,
+    customerName: string,
+    customerPhone: string,
+    serviceName: string,
+    address: string,
+    isSOS: boolean = false
+): Promise<boolean> => {
+    const templateName = 'booking_assigned_partner';
+    const components = [
+        {
+            type: 'body',
+            parameters: [
+                { type: 'text', text: partnerName },
+                { type: 'text', text: isSOS ? 'URGENT SOS' : 'New Service' },
+                { type: 'text', text: serviceName },
+                { type: 'text', text: customerName },
+                { type: 'text', text: customerPhone },
+                { type: 'text', text: address }
+            ]
+        }
+    ];
+
+    console.log(`[WhatsApp] Sending ${isSOS ? 'SOS' : 'booking'} assignment to partner: ${partnerName}`);
+    return sendWhatsAppTemplate(partnerPhone, templateName, components, 'en');
+};
+
+/**
+ * Send a WhatsApp SOS Alert to family members
+ */
+export const sendSOSAlertToFamily = async (
+    familyPhone: string,
+    familyName: string,
+    senderName: string,
+    emergencyType: string,
+    location: string
+): Promise<boolean> => {
+    const templateName = 'family_sos_alert';
+    const components = [
+        {
+            type: 'body',
+            parameters: [
+                { type: 'text', text: familyName },
+                { type: 'text', text: senderName },
+                { type: 'text', text: emergencyType },
+                { type: 'text', text: location }
+            ]
+        }
+    ];
+
+    console.log(`[WhatsApp] Sending SOS alert to family member: ${familyName}`);
+    return sendWhatsAppTemplate(familyPhone, templateName, components, 'en');
+};
+
