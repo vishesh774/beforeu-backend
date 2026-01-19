@@ -43,10 +43,10 @@ export const requireAdmin = async (
       }
 
       // Check if user has admin role or custom role
-      const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
+      const isNotCustomer = user.role !== 'customer';
       const hasCustomRole = !!user.roleId;
 
-      if (!adminRoles.includes(user.role as 'Admin' | 'Supervisor' | 'Incharge') && !hasCustomRole) {
+      if (!isNotCustomer && !hasCustomRole) {
         return next(new AppError('Admin privileges required', 403));
       }
 

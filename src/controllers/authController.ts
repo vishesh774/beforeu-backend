@@ -189,7 +189,7 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
   }
 
   // Find user and include password
-  const user = await User.findOne({ email }).select('+password');
+  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
   if (!user) {
     return next(new AppError('Invalid credentials', 401));
   }
@@ -211,14 +211,17 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
     }
   }
 
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge'> = ['Admin', 'Supervisor', 'Incharge'];
-
-  // Access Check: Must have a custom role OR be in legacy adminRoles
+  // Access Check: Must have a custom role OR be any non-customer role
   const hasCustomRole = !!user.roleId;
-  const isLegacyAdmin = adminRoles.includes(user.role as any);
+  const isNotCustomer = user.role !== 'customer';
 
-  if (!hasCustomRole && !isLegacyAdmin) {
+  if (!hasCustomRole && !isNotCustomer) {
     return next(new AppError('Access denied. Admin privileges required.', 403));
+  }
+
+  // Check if user is active
+  if (!user.isActive) {
+    return next(new AppError('Your account has been deactivated. Please contact support.', 403));
   }
 
   // Check password
