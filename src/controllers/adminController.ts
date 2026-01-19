@@ -9,8 +9,6 @@ import { initializeUserRecords } from '../utils/userHelpers';
 // @route   GET /api/admin/users
 // @access  Private/Admin
 export const getAllUsers = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
-
   // Pagination parameters
   const page = parseInt(req.query.page as string) || 1;
   const limit = parseInt(req.query.limit as string) || 10;
@@ -21,13 +19,14 @@ export const getAllUsers = asyncHandler(async (req: Request, res: Response, _nex
   const isActiveFilter = req.query.isActive as string | undefined;
   const searchQuery = req.query.search as string | undefined;
 
-  // Build filter object
+  // Build filter object (Generic: All non-customer users)
   const filter: any = {
-    role: { $in: adminRoles }
+    role: { $ne: 'customer' }
   };
 
   // Apply role filter
-  if (roleFilter && adminRoles.includes(roleFilter as any)) {
+  // Apply role filter (Exclude customers by default)
+  if (roleFilter) {
     filter.role = roleFilter;
   }
 
@@ -108,8 +107,7 @@ export const getUser = asyncHandler(async (req: Request, res: Response, next: Ne
   }
 
   // Check if user is an admin user (not a customer)
-  const adminRoles = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
-  if (!adminRoles.includes(user.role as any)) {
+  if (user.role === 'customer') {
     return next(new AppError('User not found', 404));
   }
 
@@ -142,10 +140,9 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
     return next(new AppError('Name, email, phone, password, and role are required', 400));
   }
 
-  // Validate role
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
-  if (!adminRoles.includes(role)) {
-    return next(new AppError('Invalid role. Must be Admin, Supervisor, Incharge or GuestCare', 400));
+  // Validate role (Generic check: Must not be customer)
+  if (role === 'customer') {
+    return next(new AppError('Cannot create customer users through this endpoint', 400));
   }
 
   // Validate roleId if provided
@@ -216,8 +213,7 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
   }
 
   // Check if user is an admin user (not a customer)
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
-  if (!adminRoles.includes(user.role as any)) {
+  if (user.role === 'customer') {
     return next(new AppError('Cannot update customer users through this endpoint', 400));
   }
 
@@ -241,8 +237,8 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
     user.phone = phone;
   }
   if (role) {
-    if (!adminRoles.includes(role)) {
-      return next(new AppError('Invalid role. Must be Admin, Supervisor, Incharge or GuestCare', 400));
+    if (role === 'customer') {
+      return next(new AppError('Invalid role. Use the customer management endpoint.', 400));
     }
     user.role = role;
   }
@@ -303,8 +299,7 @@ export const deactivateUser = asyncHandler(async (req: Request, res: Response, n
   }
 
   // Check if user is an admin user (not a customer)
-  const adminRoles: Array<'Admin' | 'Supervisor' | 'Incharge' | 'GuestCare'> = ['Admin', 'Supervisor', 'Incharge', 'GuestCare'];
-  if (!adminRoles.includes(user.role as any)) {
+  if (user.role === 'customer') {
     return next(new AppError('Cannot deactivate customer users through this endpoint', 400));
   }
 
