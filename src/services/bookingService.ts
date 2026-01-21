@@ -74,7 +74,7 @@ export function isPartnerAvailableAtTime(
 }
 
 // Helper function to synchronize Booking status based on OrderItems
-export async function syncBookingStatus(bookingId: string | any): Promise<void> {
+export async function syncBookingStatus(bookingId: string | any, actor?: { id: any, name: string }): Promise<void> {
     try {
         const booking = await Booking.findById(bookingId);
         if (!booking) return;
@@ -124,45 +124,63 @@ export async function syncBookingStatus(bookingId: string | any): Promise<void> 
         if (oldStatus !== newStatus) {
             await Booking.findByIdAndUpdate(bookingId, { status: newStatus });
             console.log(`[syncBookingStatus] Updated Booking ${bookingId} status from ${oldStatus} to ${newStatus}`);
+        }
 
-            // If SOS booking, sync with SOSAlert
-            if (booking.bookingType === 'SOS') {
-                const alert = await SOSAlert.findOne({ bookingId: booking._id });
-                if (alert) {
-                    let logAction = newStatus.toUpperCase();
-                    let socketEvent = 'sos:active';
+        // If SOS booking, always sync with SOSAlert to ensure granular progress
+        if (booking.bookingType === 'SOS') {
+            const alert = await SOSAlert.findOne({ bookingId: booking._id });
+            if (alert) {
+                // Use the status of the first item for granular SOS status
+                const itemStatus = items[0].status;
+                let logAction = itemStatus.toUpperCase();
+                let socketEvent = 'sos:active';
 
-                    // Map common statuses to SOS enum actions if applicable
-                    if (newStatus === BookingStatus.ASSIGNED) logAction = 'PARTNER_ASSIGNED';
-
-                    if (newStatus === BookingStatus.COMPLETED) {
-                        alert.status = SOSStatus.RESOLVED;
-                        alert.resolvedAt = new Date();
-                        logAction = 'RESOLVED';
-                        socketEvent = 'sos:resolved';
-                    } else if (newStatus === BookingStatus.CANCELLED) {
-                        alert.status = SOSStatus.CANCELLED;
-                        logAction = 'CANCELLED';
-                        socketEvent = 'sos:cancelled';
+                if (itemStatus === BookingStatus.ASSIGNED) {
+                    alert.status = SOSStatus.PARTNER_ASSIGNED;
+                    logAction = 'PARTNER_ASSIGNED';
+                } else if (itemStatus === BookingStatus.EN_ROUTE) {
+                    alert.status = SOSStatus.EN_ROUTE;
+                    logAction = 'EN_ROUTE';
+                } else if (itemStatus === BookingStatus.REACHED) {
+                    alert.status = SOSStatus.REACHED;
+                    logAction = 'REACHED';
+                } else if (itemStatus === BookingStatus.IN_PROGRESS) {
+                    alert.status = SOSStatus.IN_PROGRESS;
+                    logAction = 'IN_PROGRESS';
+                } else if (itemStatus === BookingStatus.COMPLETED) {
+                    alert.status = SOSStatus.RESOLVED;
+                    alert.resolvedAt = new Date();
+                    if (actor) {
+                        alert.resolvedBy = actor.id;
                     }
-
-                    // Only add log if last log is different
-                    const lastLog = alert.logs[alert.logs.length - 1];
-                    if (!lastLog || lastLog.action !== logAction) {
-                        alert.logs.push({
-                            action: logAction,
-                            timestamp: new Date(),
-                            details: `Status synced with booking: ${newStatus}`
-                        });
-                    }
-
-                    await alert.save();
-
-                    // Emit to admins for real-time dashboard updates
-                    const populatedAlert = await alert.populate('user', 'name phone email');
-                    socketService.emitToAdmin(socketEvent, populatedAlert);
-                    console.log(`[syncBookingStatus] Synced SOSAlert ${alert.sosId} with status ${logAction} (${socketEvent})`);
+                    logAction = 'RESOLVED';
+                    socketEvent = 'sos:resolved';
+                } else if (itemStatus === BookingStatus.CANCELLED) {
+                    alert.status = SOSStatus.CANCELLED;
+                    logAction = 'CANCELLED';
+                    socketEvent = 'sos:cancelled';
                 }
+
+                // Only add log if last log is different
+                const lastLog = alert.logs[alert.logs.length - 1];
+                if (!lastLog || lastLog.action !== logAction) {
+                    alert.logs.push({
+                        action: logAction,
+                        timestamp: new Date(),
+                        performedBy: actor?.id,
+                        details: `Status synced with job: ${itemStatus}${actor ? ` by ${actor.name}` : ''}`
+                    });
+                }
+
+                await alert.save();
+
+                // Emit to admins for real-time dashboard updates
+                const populatedAlert = await alert.populate([
+                    { path: 'user', select: 'name phone email' },
+                    { path: 'resolvedBy', select: 'name' }
+                ]);
+                socketService.emitToAdmin(socketEvent, populatedAlert);
+                console.log(`[syncBookingStatus] Granular sync for SOSAlert ${alert.sosId} with item status ${itemStatus}${actor ? ` by ${actor.name}` : ''}`);
             }
         }
 

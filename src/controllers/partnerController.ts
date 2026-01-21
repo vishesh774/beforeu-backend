@@ -166,7 +166,7 @@ export const updateBookingStatus = async (req: Request, res: Response, next: Nex
         if ([BookingStatus.EN_ROUTE, BookingStatus.REACHED].includes(status)) {
             item.status = status as any;
             await item.save();
-            await syncBookingStatus(item.bookingId);
+            await syncBookingStatus(item.bookingId, { id: (req as any).user._id, name: (req as any).user.name });
         } else {
             return next(new AppError('Invalid status update via this endpoint. Use OTP endpoints for Start/Complete.', 400));
         }
@@ -209,7 +209,7 @@ export const verifyStartJobOtp = async (req: Request, res: Response, next: NextF
 
         item.status = BookingStatus.IN_PROGRESS;
         await item.save();
-        await syncBookingStatus(item.bookingId);
+        await syncBookingStatus(item.bookingId, { id: (req as any).user._id, name: (req as any).user.name });
 
         res.status(200).json({
             success: true,
@@ -247,7 +247,7 @@ export const verifyEndJobOtp = async (req: Request, res: Response, next: NextFun
 
         item.status = BookingStatus.COMPLETED;
         await item.save();
-        await syncBookingStatus(item.bookingId);
+        await syncBookingStatus(item.bookingId, { id: (req as any).user._id, name: (req as any).user.name });
 
         res.status(200).json({
             success: true,

@@ -68,7 +68,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
         // Check if there is already an active SOS for this user
         const existingAlert = await SOSAlert.findOne({
             user: userId,
-            status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] }
+            status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED, SOSStatus.PARTNER_ASSIGNED, SOSStatus.EN_ROUTE, SOSStatus.REACHED, SOSStatus.IN_PROGRESS] }
         });
 
         if (existingAlert) {
@@ -273,7 +273,7 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => {
         } else {
             alert = await SOSAlert.findOne({
                 user: userId,
-                status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] }
+                status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED, SOSStatus.PARTNER_ASSIGNED, SOSStatus.EN_ROUTE, SOSStatus.REACHED, SOSStatus.IN_PROGRESS] }
             });
         }
 
@@ -310,7 +310,7 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => {
 
         if (bookingIdToUse) {
             await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'cancelled' });
-            await syncBookingStatus(bookingIdToUse);
+            await syncBookingStatus(bookingIdToUse, { id: req.user?.id, name: req.user?.name || 'User' });
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
@@ -367,7 +367,7 @@ export const acknowledgeSOS = async (req: AuthRequest, res: Response) => {
 
         if (bookingIdToUse) {
             await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'assigned' });
-            await syncBookingStatus(bookingIdToUse);
+            await syncBookingStatus(bookingIdToUse, { id: req.user?.id, name: req.user?.name || 'Admin' });
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
@@ -438,7 +438,7 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => {
 
         if (bookingIdToUse) {
             await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'completed' });
-            await syncBookingStatus(bookingIdToUse);
+            await syncBookingStatus(bookingIdToUse, { id: req.user?.id, name: req.user?.name || 'Admin' });
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
@@ -454,7 +454,7 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => {
 export const getActiveSOS = async (_req: AuthRequest, res: Response) => {
     try {
         const activeAlerts = await SOSAlert.find({
-            status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] }
+            status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED, SOSStatus.PARTNER_ASSIGNED, SOSStatus.EN_ROUTE, SOSStatus.REACHED, SOSStatus.IN_PROGRESS] }
         })
             .populate('user', 'name phone email')
             .sort({ createdAt: -1 });

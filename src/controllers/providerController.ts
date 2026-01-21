@@ -170,7 +170,7 @@ export const updateJobStatus = asyncHandler(async (req: AuthRequest, res: Respon
     await job.save();
 
     // Sync parent booking status
-    await syncBookingStatus(job.bookingId);
+    await syncBookingStatus(job.bookingId, { id: user?.id, name: user?.name || '' });
 
     res.status(200).json({
         success: true,
@@ -213,7 +213,7 @@ export const startJob = asyncHandler(async (req: AuthRequest, res: Response, nex
     await job.save();
 
     // Sync parent booking status
-    await syncBookingStatus(job.bookingId);
+    await syncBookingStatus(job.bookingId, { id: user?.id, name: user?.name || '' });
 
     res.status(200).json({
         success: true,
@@ -251,7 +251,7 @@ export const endJob = asyncHandler(async (req: AuthRequest, res: Response, next:
     await job.save();
 
     // Sync parent booking status
-    await syncBookingStatus(job.bookingId);
+    await syncBookingStatus(job.bookingId, { id: user?.id, name: user?.name || '' });
 
     res.status(200).json({
         success: true,

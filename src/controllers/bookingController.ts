@@ -1441,7 +1441,7 @@ export const getEligibleServicePartners = asyncHandler(async (req: Request, res:
 // @desc    Assign a service partner to a booking order item
 // @route   POST /api/admin/bookings/:id/assign-partner
 // @access  Private/Admin
-export const assignServicePartner = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+export const assignServicePartner = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
   const { id } = req.params; // bookingId
   const { orderItemId, partnerId } = req.body;
 
@@ -1481,7 +1481,7 @@ export const assignServicePartner = asyncHandler(async (req: Request, res: Respo
     orderItem.status = 'assigned';
   }
   await orderItem.save();
-  await syncBookingStatus(booking._id);
+  await syncBookingStatus(booking._id, { id: req.user?.id, name: req.user?.name || 'Admin' });
 
   // Send Push Notification to Partner
   if (partner.pushToken) {
@@ -1537,7 +1537,7 @@ export const assignServicePartner = asyncHandler(async (req: Request, res: Respo
 // @desc    Update order item status
 // @route   PATCH /api/admin/bookings/:bookingId/items/:itemId/status
 // @access  Private/Admin
-export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+export const updateOrderItemStatus = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
   const { bookingId, itemId } = req.params;
   const { status } = req.body;
 
@@ -1671,7 +1671,7 @@ export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Resp
   }
 
   // Sync parent booking status
-  await syncBookingStatus(booking._id);
+  await syncBookingStatus(booking._id, { id: req.user?.id, name: req.user?.name || 'Admin' });
 
   res.status(200).json({
     success: true,
