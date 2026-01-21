@@ -30,8 +30,8 @@ interface SignupRequest extends Request {
 export const signup = asyncHandler(async (req: SignupRequest, res: Response, next: NextFunction) => {
   const { name, email, phone, password } = req.body;
 
-  // Check if user already exists
-  const existingUser = await User.findOne({ email });
+  // Check if user already exists (case-insensitive)
+  const existingUser = await User.findOne({ email: email.toLowerCase() });
   if (existingUser) {
     return next(new AppError('User already exists with this email', 400));
   }
@@ -138,8 +138,8 @@ export const login = asyncHandler(async (req: Request, res: Response, next: Next
     return next(new AppError('Please provide email and password', 400));
   }
 
-  // Find user and include password
-  const user = await User.findOne({ email }).select('+password');
+  // Find user and include password (case-insensitive)
+  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
   if (!user) {
     return next(new AppError('Invalid credentials', 401));
   }

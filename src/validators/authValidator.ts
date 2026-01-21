@@ -7,22 +7,21 @@ export const signupValidator = [
     .withMessage('Name is required')
     .isLength({ min: 2, max: 50 })
     .withMessage('Name must be between 2 and 50 characters'),
-  
+
   body('email')
     .trim()
     .notEmpty()
     .withMessage('Email is required')
     .isEmail()
-    .withMessage('Please provide a valid email')
-    .normalizeEmail(),
-  
+    .withMessage('Please provide a valid email'),
+
   body('phone')
     .trim()
     .notEmpty()
     .withMessage('Phone number is required')
     .matches(/^\+?[1-9]\d{1,14}$/)
     .withMessage('Please provide a valid phone number'),
-  
+
   body('password')
     .notEmpty()
     .withMessage('Password is required')
@@ -38,9 +37,8 @@ export const loginValidator = [
     .notEmpty()
     .withMessage('Email is required')
     .isEmail()
-    .withMessage('Please provide a valid email')
-    .normalizeEmail(),
-  
+    .withMessage('Please provide a valid email'),
+
   body('password')
     .notEmpty()
     .withMessage('Password is required')
