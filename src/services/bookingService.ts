@@ -6,6 +6,8 @@ import Booking from '../models/Booking';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { BookingStatus } from '../constants/bookingStatus';
 import { sendPushNotification } from './pushNotificationService';
+import { SOSAlert, SOSStatus } from '../models/SOSAlert';
+import { socketService } from './socketService';
 
 /**
  * Helper function to check if a service partner is available at a given time
@@ -74,10 +76,14 @@ export function isPartnerAvailableAtTime(
 // Helper function to synchronize Booking status based on OrderItems
 export async function syncBookingStatus(bookingId: string | any): Promise<void> {
     try {
+        const booking = await Booking.findById(bookingId);
+        if (!booking) return;
+
         const items = await OrderItem.find({ bookingId });
 
         if (items.length === 0) return;
 
+        const oldStatus = booking.status;
         let newStatus = BookingStatus.PENDING;
         const statuses = items.map(i => i.status);
 
@@ -98,15 +104,8 @@ export async function syncBookingStatus(bookingId: string | any): Promise<void> 
         } else if (allRefundInitiated) {
             newStatus = BookingStatus.REFUND_INITIATED;
         } else if (allTerminated) {
-            // If all items are terminated (mixed completed/cancelled), and we passed the specific checks above,
-            // then it's effectively Completed (the job is done/closed).
             newStatus = BookingStatus.COMPLETED;
         } else {
-            // Not fully terminated. Check for active states.
-            // Priority: IN_PROGRESS > REACHED > EN_ROUTE > ASSIGNED > CONFIRMED > PENDING
-
-            // If ANY item is Completed (but not all terminated), it implies work is partially done -> IN_PROGRESS
-            // If ANY item is In Progress -> IN_PROGRESS
             if (statuses.some(s => s === BookingStatus.IN_PROGRESS || s === BookingStatus.COMPLETED)) {
                 newStatus = BookingStatus.IN_PROGRESS;
             } else if (statuses.some(s => s === BookingStatus.REACHED)) {
@@ -118,13 +117,54 @@ export async function syncBookingStatus(bookingId: string | any): Promise<void> 
             } else if (statuses.some(s => s === BookingStatus.CONFIRMED)) {
                 newStatus = BookingStatus.CONFIRMED;
             } else {
-                // Formatting fallback
                 newStatus = BookingStatus.PENDING;
             }
         }
 
-        await Booking.findByIdAndUpdate(bookingId, { status: newStatus });
-        console.log(`[syncBookingStatus] Updated Booking ${bookingId} status to ${newStatus}`);
+        if (oldStatus !== newStatus) {
+            await Booking.findByIdAndUpdate(bookingId, { status: newStatus });
+            console.log(`[syncBookingStatus] Updated Booking ${bookingId} status from ${oldStatus} to ${newStatus}`);
+
+            // If SOS booking, sync with SOSAlert
+            if (booking.bookingType === 'SOS') {
+                const alert = await SOSAlert.findOne({ bookingId: booking._id });
+                if (alert) {
+                    let logAction = newStatus.toUpperCase();
+                    let socketEvent = 'sos:active';
+
+                    // Map common statuses to SOS enum actions if applicable
+                    if (newStatus === BookingStatus.ASSIGNED) logAction = 'PARTNER_ASSIGNED';
+
+                    if (newStatus === BookingStatus.COMPLETED) {
+                        alert.status = SOSStatus.RESOLVED;
+                        alert.resolvedAt = new Date();
+                        logAction = 'RESOLVED';
+                        socketEvent = 'sos:resolved';
+                    } else if (newStatus === BookingStatus.CANCELLED) {
+                        alert.status = SOSStatus.CANCELLED;
+                        logAction = 'CANCELLED';
+                        socketEvent = 'sos:cancelled';
+                    }
+
+                    // Only add log if last log is different
+                    const lastLog = alert.logs[alert.logs.length - 1];
+                    if (!lastLog || lastLog.action !== logAction) {
+                        alert.logs.push({
+                            action: logAction,
+                            timestamp: new Date(),
+                            details: `Status synced with booking: ${newStatus}`
+                        });
+                    }
+
+                    await alert.save();
+
+                    // Emit to admins for real-time dashboard updates
+                    const populatedAlert = await alert.populate('user', 'name phone email');
+                    socketService.emitToAdmin(socketEvent, populatedAlert);
+                    console.log(`[syncBookingStatus] Synced SOSAlert ${alert.sosId} with status ${logAction} (${socketEvent})`);
+                }
+            }
+        }
 
     } catch (error) {
         console.error('[syncBookingStatus] Error syncing status:', error);

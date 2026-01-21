@@ -1477,7 +1477,7 @@ export const assignServicePartner = asyncHandler(async (req: Request, res: Respo
 
   // Update order item with assigned partner
   orderItem.assignedPartnerId = new mongoose.Types.ObjectId(partnerId);
-  if (orderItem.status === 'pending') {
+  if (orderItem.status === 'pending' || orderItem.status === 'confirmed') {
     orderItem.status = 'assigned';
   }
   await orderItem.save();
@@ -1667,37 +1667,6 @@ export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Resp
     } catch (activationError) {
       console.error('[updateOrderItemStatus] Error activating plan:', activationError);
       // We still proceed even if activation fails, but log it.
-    }
-  }
-
-  // Handle SOS Resolution/Cancellation sync
-  if (booking.bookingType === 'SOS') {
-    try {
-      const sosAlert = await SOSAlert.findOne({ bookingId: booking._id });
-      if (sosAlert) {
-        if (newStatus === BookingStatus.COMPLETED && sosAlert.status !== SOSStatus.RESOLVED) {
-          sosAlert.status = SOSStatus.RESOLVED;
-          sosAlert.resolvedAt = new Date();
-          sosAlert.logs.push({
-            action: 'RESOLVED',
-            timestamp: new Date(),
-            details: 'Auto-resolved via booking completion'
-          });
-          await sosAlert.save();
-          socketService.emitToAdmin('sos:resolved', await sosAlert.populate('user', 'name phone email'));
-        } else if (newStatus === BookingStatus.CANCELLED && sosAlert.status !== SOSStatus.CANCELLED) {
-          sosAlert.status = SOSStatus.CANCELLED;
-          sosAlert.logs.push({
-            action: 'CANCELLED',
-            timestamp: new Date(),
-            details: 'Auto-cancelled via booking cancellation'
-          });
-          await sosAlert.save();
-          socketService.emitToAdmin('sos:cancelled', await sosAlert.populate('user', 'name phone email'));
-        }
-      }
-    } catch (sosError) {
-      console.error('[updateOrderItemStatus] Error syncing SOS alert status:', sosError);
     }
   }
 

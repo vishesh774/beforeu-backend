@@ -14,6 +14,7 @@ import { sendAddedAsFamilyMessage } from '../services/whatsappService';
 import Role from '../models/Role';
 import { createCRMLead } from '../services/crmService';
 import { assignCRMTask } from '../services/crmTaskService';
+import ServicePartner from '../models/ServicePartner';
 
 interface SignupRequest extends Request {
   body: {
@@ -648,6 +649,15 @@ export const updatePushToken = asyncHandler(async (req: AuthRequest, res: Respon
   }
 
   await User.findByIdAndUpdate(req.user.id, { pushToken });
+
+  // If user is a partner or staff, sync push token to ServicePartner record too
+  if (req.user.phone) {
+    await ServicePartner.findOneAndUpdate(
+      { phone: req.user.phone },
+      { pushToken },
+      { new: true }
+    );
+  }
 
   res.status(200).json({
     success: true,

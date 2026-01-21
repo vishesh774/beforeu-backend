@@ -56,20 +56,21 @@ export const getProviderJobs = asyncHandler(async (req: AuthRequest, res: Respon
 
         return {
             id: job._id,
+            bookingId: booking._id, // Actual Booking MongoDB _id
             bookingDisplayId: booking.bookingId,
             serviceName: job.serviceName,
             serviceId: (job.serviceId as any)?._id,
             variantName: job.variantName,
             status: job.status,
-            date: booking.scheduledDate,
-            time: booking.scheduledTime,
+            date: booking.scheduledDate || job.createdAt,
+            time: booking.scheduledTime || new Date(job.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
             address: isCompleted ? '' : (booking.address?.fullAddress || 'Address not found'),
             customerName: isCompleted ? '' : (booking.userId?.name || 'Customer'),
             customerPhone: isCompleted ? '' : (booking.userId?.phone || 'Hidden'),
             price: job.finalPrice,
             quantity: job.quantity,
             customerVisitRequired: job.customerVisitRequired,
-            bookingType: booking.bookingType // Added bookingType
+            bookingType: booking.bookingType
         };
     }).filter(Boolean);
 
