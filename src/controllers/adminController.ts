@@ -181,6 +181,21 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
   // Initialize user-related records (credits and plan)
   await initializeUserRecords(user._id);
 
+  // If role is ServicePartner, ensure a ServicePartner profile exists
+  if (role === 'ServicePartner') {
+    const ServicePartnerModel = require('../models/ServicePartner').default;
+    const existingPartner = await ServicePartnerModel.findOne({ phone });
+    if (!existingPartner) {
+      await ServicePartnerModel.create({
+        name,
+        phone,
+        email: email && email.trim() ? email.trim().toLowerCase() : undefined,
+        services: [], // Needs to be updated later by admin
+        isActive: true
+      });
+    }
+  }
+
   res.status(201).json({
     success: true,
     message: 'User created successfully',
@@ -261,6 +276,28 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
   }
 
   await user.save();
+
+  // If role is now ServicePartner, ensure profile exists
+  if (user.role === 'ServicePartner') {
+    const ServicePartnerModel = require('../models/ServicePartner').default;
+    const existingPartner = await ServicePartnerModel.findOne({ phone: user.phone });
+    if (!existingPartner) {
+      await ServicePartnerModel.create({
+        name: user.name,
+        phone: user.phone,
+        email: user.email,
+        services: [],
+        isActive: user.isActive
+      });
+    } else {
+      // Sync basic details if profile exists
+      existingPartner.name = user.name;
+      existingPartner.phone = user.phone;
+      existingPartner.email = user.email;
+      existingPartner.isActive = user.isActive;
+      await existingPartner.save();
+    }
+  }
 
   res.status(200).json({
     success: true,

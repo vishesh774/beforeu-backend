@@ -34,7 +34,13 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response, next: Ne
       return next(new AppError('User is not registered', 404));
     }
 
-    if (user.role !== role) {
+    // If requesting a staff role (anything other than 'customer'), ensure user is NOT a customer
+    if (role !== 'customer' && user.role === 'customer') {
+      return next(new AppError('Customers are not authorized to access this application', 403));
+    }
+
+    // Generic staff allowance for staff-intended apps
+    if (role !== 'customer' && user.role !== role && role !== 'ServicePartner') {
       return next(new AppError('User is not authorized to access this application', 403));
     }
   }
@@ -93,8 +99,15 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
   }
 
   // Enforce role check if provided
-  if (role && user.role !== role) {
-    return next(new AppError('User is not authorized to access this application', 403));
+  if (role) {
+    // If requesting a staff role, ensure user is NOT a customer
+    if (role !== 'customer' && user.role === 'customer') {
+      return next(new AppError('Customers are not authorized to access this application', 403));
+    }
+    // Generic staff allowance for staff-intended apps
+    if (role !== 'customer' && user.role !== role && role !== 'ServicePartner') {
+      return next(new AppError('User is not authorized to access this application', 403));
+    }
   }
 
   // User exists - aggregate user data

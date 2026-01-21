@@ -1441,7 +1441,7 @@ export const getEligibleServicePartners = asyncHandler(async (req: Request, res:
 // @desc    Assign a service partner to a booking order item
 // @route   POST /api/admin/bookings/:id/assign-partner
 // @access  Private/Admin
-export const assignServicePartner = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+export const assignServicePartner = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
   const { id } = req.params; // bookingId
   const { orderItemId, partnerId } = req.body;
 
@@ -1477,11 +1477,11 @@ export const assignServicePartner = asyncHandler(async (req: Request, res: Respo
 
   // Update order item with assigned partner
   orderItem.assignedPartnerId = new mongoose.Types.ObjectId(partnerId);
-  if (orderItem.status === 'pending') {
+  if (orderItem.status === 'pending' || orderItem.status === 'confirmed') {
     orderItem.status = 'assigned';
   }
   await orderItem.save();
-  await syncBookingStatus(booking._id);
+  await syncBookingStatus(booking._id, { id: req.user?.id, name: req.user?.name || 'Admin' });
 
   // Send Push Notification to Partner
   if (partner.pushToken) {
@@ -1537,7 +1537,7 @@ export const assignServicePartner = asyncHandler(async (req: Request, res: Respo
 // @desc    Update order item status
 // @route   PATCH /api/admin/bookings/:bookingId/items/:itemId/status
 // @access  Private/Admin
-export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+export const updateOrderItemStatus = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
   const { bookingId, itemId } = req.params;
   const { status } = req.body;
 
@@ -1670,39 +1670,8 @@ export const updateOrderItemStatus = asyncHandler(async (req: Request, res: Resp
     }
   }
 
-  // Handle SOS Resolution/Cancellation sync
-  if (booking.bookingType === 'SOS') {
-    try {
-      const sosAlert = await SOSAlert.findOne({ bookingId: booking._id });
-      if (sosAlert) {
-        if (newStatus === BookingStatus.COMPLETED && sosAlert.status !== SOSStatus.RESOLVED) {
-          sosAlert.status = SOSStatus.RESOLVED;
-          sosAlert.resolvedAt = new Date();
-          sosAlert.logs.push({
-            action: 'RESOLVED',
-            timestamp: new Date(),
-            details: 'Auto-resolved via booking completion'
-          });
-          await sosAlert.save();
-          socketService.emitToAdmin('sos:resolved', await sosAlert.populate('user', 'name phone email'));
-        } else if (newStatus === BookingStatus.CANCELLED && sosAlert.status !== SOSStatus.CANCELLED) {
-          sosAlert.status = SOSStatus.CANCELLED;
-          sosAlert.logs.push({
-            action: 'CANCELLED',
-            timestamp: new Date(),
-            details: 'Auto-cancelled via booking cancellation'
-          });
-          await sosAlert.save();
-          socketService.emitToAdmin('sos:cancelled', await sosAlert.populate('user', 'name phone email'));
-        }
-      }
-    } catch (sosError) {
-      console.error('[updateOrderItemStatus] Error syncing SOS alert status:', sosError);
-    }
-  }
-
   // Sync parent booking status
-  await syncBookingStatus(booking._id);
+  await syncBookingStatus(booking._id, { id: req.user?.id, name: req.user?.name || 'Admin' });
 
   res.status(200).json({
     success: true,

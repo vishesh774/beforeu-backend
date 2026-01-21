@@ -68,7 +68,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
         // Check if there is already an active SOS for this user
         const existingAlert = await SOSAlert.findOne({
             user: userId,
-            status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] }
+            status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED, SOSStatus.PARTNER_ASSIGNED, SOSStatus.EN_ROUTE, SOSStatus.REACHED, SOSStatus.IN_PROGRESS] }
         });
 
         if (existingAlert) {
@@ -156,6 +156,8 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                     }
                 },
                 bookingType: 'SOS',
+                scheduledDate: now,
+                scheduledTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
                 itemTotal: variant.finalPrice || 0,
                 totalAmount: variant.finalPrice || 0,
                 totalOriginalAmount: variant.originalPrice || 0,
@@ -271,7 +273,7 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => {
         } else {
             alert = await SOSAlert.findOne({
                 user: userId,
-                status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] }
+                status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED, SOSStatus.PARTNER_ASSIGNED, SOSStatus.EN_ROUTE, SOSStatus.REACHED, SOSStatus.IN_PROGRESS] }
             });
         }
 
@@ -308,7 +310,7 @@ export const cancelSOS = async (req: AuthRequest, res: Response) => {
 
         if (bookingIdToUse) {
             await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'cancelled' });
-            await syncBookingStatus(bookingIdToUse);
+            await syncBookingStatus(bookingIdToUse, { id: req.user?.id, name: req.user?.name || 'User' });
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
@@ -365,7 +367,7 @@ export const acknowledgeSOS = async (req: AuthRequest, res: Response) => {
 
         if (bookingIdToUse) {
             await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'assigned' });
-            await syncBookingStatus(bookingIdToUse);
+            await syncBookingStatus(bookingIdToUse, { id: req.user?.id, name: req.user?.name || 'Admin' });
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
@@ -436,7 +438,7 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => {
 
         if (bookingIdToUse) {
             await OrderItem.updateMany({ bookingId: bookingIdToUse }, { status: 'completed' });
-            await syncBookingStatus(bookingIdToUse);
+            await syncBookingStatus(bookingIdToUse, { id: req.user?.id, name: req.user?.name || 'Admin' });
         }
 
         const populatedAlert = await alert.populate('user', 'name phone email');
@@ -452,7 +454,7 @@ export const resolveSOS = async (req: AuthRequest, res: Response) => {
 export const getActiveSOS = async (_req: AuthRequest, res: Response) => {
     try {
         const activeAlerts = await SOSAlert.find({
-            status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] }
+            status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED, SOSStatus.PARTNER_ASSIGNED, SOSStatus.EN_ROUTE, SOSStatus.REACHED, SOSStatus.IN_PROGRESS] }
         })
             .populate('user', 'name phone email')
             .sort({ createdAt: -1 });
@@ -502,17 +504,50 @@ export const getAllSOS = async (req: AuthRequest, res: Response) => {
 };
 
 export const getSOSAlertByBookingId = async (req: AuthRequest, res: Response) => {
+    console.log('--- GET SOS ALERT BY BOOKING ID CALLED ---');
     try {
         const { bookingId } = req.params;
-        const alert = await SOSAlert.findOne({ bookingId })
-            .populate('user', 'name phone email')
-            .populate('familyMemberId', 'name relationship phone');
+        console.log(`[getSOSAlertByBookingId] ID from params: "${bookingId}"`);
 
-        if (!alert) {
-            res.status(404).json({ success: false, error: 'SOS alert not found for this booking' });
+        if (!mongoose.Types.ObjectId.isValid(bookingId)) {
+            res.status(400).json({ success: false, error: 'Invalid ID format' });
             return;
         }
 
+        const requestedIdObj = new mongoose.Types.ObjectId(bookingId);
+
+        // 1. Try finding by bookingId directly
+        let alert = await SOSAlert.findOne({ bookingId: requestedIdObj })
+            .populate('user', 'name phone email')
+            .populate('familyMemberId', 'name relationship phone');
+
+        // 2. If not found, maybe the provided ID is an OrderItem ID?
+        if (!alert) {
+            console.log(`[getSOSAlertByBookingId] No alert for bookingId ${bookingId}, checking if it is an OrderItem ID...`);
+            const item = await OrderItem.findById(requestedIdObj);
+            if (item && item.bookingId) {
+                console.log(`[getSOSAlertByBookingId] Found OrderItem ${bookingId}, using its bookingId: ${item.bookingId}`);
+                alert = await SOSAlert.findOne({ bookingId: item.bookingId })
+                    .populate('user', 'name phone email')
+                    .populate('familyMemberId', 'name relationship phone');
+            }
+        }
+
+        // 3. Last fallback: check serviceId field on SOSAlert (sometimes used for OrderItem)
+        if (!alert) {
+            console.log(`[getSOSAlertByBookingId] Still no alert, checking serviceId field...`);
+            alert = await SOSAlert.findOne({ serviceId: requestedIdObj })
+                .populate('user', 'name phone email')
+                .populate('familyMemberId', 'name relationship phone');
+        }
+
+        if (!alert) {
+            console.log(`[getSOSAlertByBookingId] Final Failure: No SOS alert found for ID: ${bookingId}`);
+            res.status(404).json({ success: false, error: 'SOS alert not found' });
+            return;
+        }
+
+        console.log(`[getSOSAlertByBookingId] Success! Alert found: ${alert.sosId}`);
         res.status(200).json({ success: true, alert });
     } catch (error) {
         console.error('Error fetching SOS alert by booking ID:', error);

@@ -116,7 +116,7 @@ app.get('/health', (_req, res) => {
   console.log('✅ Health endpoint called');
   res.status(200).json({
     success: true,
-    message: 'Server is running',
+    message: 'Server is running - LOCAL_DEBUG_V1',
     timestamp: new Date().toISOString()
   });
 });

@@ -3,6 +3,10 @@ import mongoose, { Schema, Document } from 'mongoose';
 export enum SOSStatus {
     TRIGGERED = 'TRIGGERED',
     ACKNOWLEDGED = 'ACKNOWLEDGED',
+    PARTNER_ASSIGNED = 'PARTNER_ASSIGNED',
+    EN_ROUTE = 'EN_ROUTE',
+    REACHED = 'REACHED',
+    IN_PROGRESS = 'IN_PROGRESS',
     RESOLVED = 'RESOLVED',
     CANCELLED = 'CANCELLED'
 }

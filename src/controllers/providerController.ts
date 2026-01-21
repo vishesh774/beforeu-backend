@@ -19,8 +19,13 @@ export const getProviderJobs = asyncHandler(async (req: AuthRequest, res: Respon
 
     // Find partner profile by phone
     const partner = await ServicePartner.findOne({ phone: user.phone });
+
+    // If no partner record, we can still return an empty list of jobs for valid staff/admins
     if (!partner) {
-        return next(new AppError('Service partner profile not found', 404));
+        return res.status(200).json({
+            success: true,
+            data: { jobs: [] }
+        });
     }
 
     // Find assigned order items
@@ -51,20 +56,21 @@ export const getProviderJobs = asyncHandler(async (req: AuthRequest, res: Respon
 
         return {
             id: job._id,
+            bookingId: booking._id, // Actual Booking MongoDB _id
             bookingDisplayId: booking.bookingId,
             serviceName: job.serviceName,
             serviceId: (job.serviceId as any)?._id,
             variantName: job.variantName,
             status: job.status,
-            date: booking.scheduledDate,
-            time: booking.scheduledTime,
+            date: booking.scheduledDate || job.createdAt,
+            time: booking.scheduledTime || new Date(job.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
             address: isCompleted ? '' : (booking.address?.fullAddress || 'Address not found'),
             customerName: isCompleted ? '' : (booking.userId?.name || 'Customer'),
             customerPhone: isCompleted ? '' : (booking.userId?.phone || 'Hidden'),
             price: job.finalPrice,
             quantity: job.quantity,
             customerVisitRequired: job.customerVisitRequired,
-            bookingType: booking.bookingType // Added bookingType
+            bookingType: booking.bookingType
         };
     }).filter(Boolean);
 
@@ -85,7 +91,7 @@ export const getJobDetails = asyncHandler(async (req: AuthRequest, res: Response
 
     const partner = await ServicePartner.findOne({ phone: user?.phone });
     if (!partner) {
-        return next(new AppError('Service partner profile not found', 404));
+        return next(new AppError('No partner profile associated with your account', 404));
     }
 
     const job = await OrderItem.findOne({
@@ -164,7 +170,7 @@ export const updateJobStatus = asyncHandler(async (req: AuthRequest, res: Respon
     await job.save();
 
     // Sync parent booking status
-    await syncBookingStatus(job.bookingId);
+    await syncBookingStatus(job.bookingId, { id: user?.id, name: user?.name || '' });
 
     res.status(200).json({
         success: true,
@@ -207,7 +213,7 @@ export const startJob = asyncHandler(async (req: AuthRequest, res: Response, nex
     await job.save();
 
     // Sync parent booking status
-    await syncBookingStatus(job.bookingId);
+    await syncBookingStatus(job.bookingId, { id: user?.id, name: user?.name || '' });
 
     res.status(200).json({
         success: true,
@@ -245,7 +251,7 @@ export const endJob = asyncHandler(async (req: AuthRequest, res: Response, next:
     await job.save();
 
     // Sync parent booking status
-    await syncBookingStatus(job.bookingId);
+    await syncBookingStatus(job.bookingId, { id: user?.id, name: user?.name || '' });
 
     res.status(200).json({
         success: true,
@@ -265,21 +271,19 @@ export const getProfile = asyncHandler(async (req: AuthRequest, res: Response, n
     }
 
     const partner = await ServicePartner.findOne({ phone: user.phone });
-    if (!partner) {
-        return next(new AppError('Service partner profile not found', 404));
-    }
 
     res.status(200).json({
         success: true,
         data: {
             partner: {
-                id: partner._id,
-                name: partner.name,
-                phone: partner.phone,
-                email: partner.email,
-                isActive: partner.isActive,
-                services: partner.services,
-                availability: partner.availability
+                id: partner?._id || user.id,
+                name: partner?.name || user.name || 'Staff member',
+                phone: partner?.phone || user.phone,
+                email: partner?.email || user.email,
+                role: user.role,
+                isActive: partner?.isActive ?? true,
+                services: partner?.services || [],
+                availability: partner?.availability || []
             }
         }
     });
