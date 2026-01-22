@@ -291,6 +291,10 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                         ? `URGENT! SOS assigned at ${booking.address?.fullAddress || 'Unknown location'}. Check app immediately!`
                         : `You have been assigned ${service.name} for ${booking.scheduledDate ? new Date(booking.scheduledDate).toLocaleDateString() : 'Today'} ${booking.scheduledTime || ''}`;
 
+                    const isToday = booking.scheduledDate
+                        ? new Date(booking.scheduledDate).toDateString() === new Date().toDateString()
+                        : true;
+
                     await sendPushNotification({
                         pushToken: assignedPartner.pushToken,
                         title,
@@ -301,9 +305,10 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                             screen: 'BookingDetails',
                             type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
                         },
-                        sound: isSOS ? 'default' : 'default', // Sound
-                        channelId: isSOS ? 'high_priority' : 'default', // Channel ID
-                        priority: isSOS ? 'high' : 'normal' // Priority
+                        // Requirement: SOS gets sound, Job for today only gets no sound
+                        sound: isSOS ? 'default' : (isToday ? null : 'default'),
+                        channelId: isSOS ? 'high_priority' : (isToday ? 'silent' : 'default'),
+                        priority: isSOS ? 'high' : 'normal'
                     });
                     console.log(`[autoAssignServicePartner] Notification sent to partner ${assignedPartner.name}`);
                 }
