@@ -306,7 +306,7 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                             type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
                         },
                         // Requirement: SOS gets sound, Job for today only gets no sound
-                        sound: isSOS ? 'default' : (isToday ? null : 'default'),
+                        sound: isSOS ? 'ambulance.mp3' : (isToday ? null : 'default'),
                         channelId: isSOS ? 'high_priority' : (isToday ? 'silent' : 'default'),
                         priority: isSOS ? 'high' : 'normal'
                     });

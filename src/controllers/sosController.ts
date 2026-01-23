@@ -13,6 +13,7 @@ import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
 import User from '../models/User';
 import { sendPushNotification } from '../services/pushNotificationService';
+import { formatTimeToIST } from '../utils/dateUtils';
 
 import CustomerAppSettings from '../models/CustomerAppSettings';
 
@@ -157,7 +158,7 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                 },
                 bookingType: 'SOS',
                 scheduledDate: now,
-                scheduledTime: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                scheduledTime: formatTimeToIST(now),
                 itemTotal: variant.finalPrice || 0,
                 totalAmount: variant.finalPrice || 0,
                 totalOriginalAmount: variant.originalPrice || 0,

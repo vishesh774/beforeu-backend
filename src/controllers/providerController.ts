@@ -7,6 +7,7 @@ import ServicePartner from '../models/ServicePartner';
 
 import { BookingStatus, COMPLETED_BOOKING_STATUSES, ONGOING_BOOKING_STATUSES } from '../constants/bookingStatus';
 import { syncBookingStatus } from '../services/bookingService';
+import { formatTimeToIST } from '../utils/dateUtils';
 
 // @desc    Get all assigned jobs for the logged-in provider
 // @route   GET /api/provider/jobs
@@ -63,7 +64,7 @@ export const getProviderJobs = asyncHandler(async (req: AuthRequest, res: Respon
             variantName: job.variantName,
             status: job.status,
             date: booking.scheduledDate || job.createdAt,
-            time: booking.scheduledTime || new Date(job.createdAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+            time: booking.scheduledTime || formatTimeToIST(job.createdAt),
             address: isCompleted ? '' : (booking.address?.fullAddress || 'Address not found'),
             customerName: isCompleted ? '' : (booking.userId?.name || 'Customer'),
             customerPhone: isCompleted ? '' : (booking.userId?.phone || 'Hidden'),

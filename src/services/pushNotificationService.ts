@@ -8,7 +8,7 @@ export interface SendPushNotificationParams {
     title: string;
     body: string;
     data?: Record<string, any>;
-    sound?: 'default' | null;
+    sound?: string | null;
     channelId?: string; // For Android
     priority?: 'default' | 'normal' | 'high'; // For Android
 }
@@ -28,9 +28,12 @@ export const sendPushNotification = async (params: SendPushNotificationParams) =
         sound: sound,
         title: title,
         body: body,
-        data: data,
-        channelId: channelId, // Required for Android loud ringing if channel configured on device
-        priority: priority || 'normal',
+        data: {
+            ...data,
+            _displayInForeground: true, // Hint to show even if app is foregrounded without handler
+        },
+        channelId: channelId,
+        priority: priority === 'high' ? 'high' : 'default',
     };
 
     try {
