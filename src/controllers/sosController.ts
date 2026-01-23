@@ -234,8 +234,8 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
                                 type: 'FAMILY_SOS',
                                 screen: 'SOSDetails'
                             },
-                            sound: 'default',
-                            channelId: 'high_priority',
+                            sound: 'ambulance',
+                            channelId: 'sos_siren_channel',
                             priority: 'high'
                         });
                     }
