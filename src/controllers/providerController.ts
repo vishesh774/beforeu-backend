@@ -283,7 +283,9 @@ export const getProfile = asyncHandler(async (req: AuthRequest, res: Response, n
                 role: user.role,
                 isActive: partner?.isActive ?? true,
                 services: partner?.services || [],
-                availability: partner?.availability || []
+                availability: partner?.availability || [],
+                pushToken: partner?.pushToken, // From partner record
+                userPushToken: user.pushToken   // From user record
             }
         }
     });
