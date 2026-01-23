@@ -96,6 +96,12 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 // });
 // app.use('/api/', limiter);
 
+// Request logging middleware
+app.use((req, _res, next) => {
+  console.log(`[API-AUDIT] ${req.method} ${req.url}`);
+  next();
+});
+
 // Routes
 console.log('📝 Registering routes...');
 

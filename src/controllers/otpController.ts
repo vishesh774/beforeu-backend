@@ -5,7 +5,8 @@ import { createAndSendOTP, verifyOTP } from '../services/otpService';
 import { sendWelcomeMessage } from '../services/whatsappService';
 import { createCRMLead } from '../services/crmService';
 import { assignCRMTask } from '../services/crmTaskService';
-import User, { UserRole } from '../models/User';
+import User from '../models/User';
+import ServicePartner from '../models/ServicePartner';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
 import { normalizePhone } from '../utils/phoneUtils';
@@ -68,7 +69,7 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response, next: Ne
 // @route   POST /api/auth/verify-otp
 // @access  Public
 export const verifyOTPController = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  let { phone, otp, role } = req.body;
+  let { phone, otp, role, pushToken } = req.body;
 
   if (!phone || !otp) {
     return next(new AppError('Phone number and OTP are required', 400));
@@ -117,6 +118,23 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
     }
   }
 
+  // Handle Push Token if provided during verification (Atomic Login)
+  if (pushToken) {
+    console.log(`[otpController] Atomic push token update for ${phone}: ${pushToken.substring(0, 15)}...`);
+    user.pushToken = pushToken;
+    await user.save();
+
+    // Also sync to ServicePartner if applicable
+    const partner = await ServicePartner.findOneAndUpdate(
+      { phone },
+      { pushToken },
+      { new: true }
+    );
+    if (partner) {
+      console.log(`[otpController] Atomic push token sync to ServicePartner complete for ${phone}`);
+    }
+  }
+
   // User exists - aggregate user data
   const userData = await aggregateUserData(user._id);
   if (!userData) {
@@ -144,19 +162,17 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
 // @route   POST /api/auth/complete-profile
 // @access  Public
 export const completeProfile = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { phone, name, email } = req.body;
+  const { phone, name, email, pushToken } = req.body;
 
   if (!phone || !name) {
     return next(new AppError('Phone and name are required', 400));
   }
 
-  // Note: Since OTPs are now deleted after verification, we rely on the fact that
-  // verifyOTP was called successfully before this endpoint. In production, you might
-  // want to use a session token or JWT to verify the OTP verification step.
-  // For now, we'll allow profile completion if user doesn't exist or was created recently.
+  // Normalize phone number
+  const normalizedPhone = normalizePhone(phone);
 
   // Check if user already exists
-  let user = await User.findOne({ phone });
+  let user = await User.findOne({ phone: normalizedPhone });
 
   if (user) {
     // Check if user is active
@@ -166,6 +182,8 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
 
     // Update existing user
     user.name = name;
+    if (pushToken) user.pushToken = pushToken;
+
     // Only set email if provided and not empty, otherwise unset the field to avoid unique constraint violation
     if (email && email.trim()) {
       user.email = email.trim().toLowerCase();
@@ -176,6 +194,9 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
         { _id: user._id },
         { $unset: { email: '' } }
       );
+      // Save other fields if they were modified
+      if (user.isModified()) await user.save();
+
       // Reload user to get updated data
       user = await User.findById(user._id);
       if (!user) {
@@ -184,31 +205,24 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
     }
   } else {
     // Create new user with default role as 'customer'
-    // Only include email if provided and not empty
-    const userData: {
-      name: string;
-      phone: string;
-      password: string;
-      role: UserRole;
-      email?: string;
-    } = {
+    const userData: any = {
       name,
-      phone,
-      password: 'temp-password-' + Date.now(), // Temporary password, user can set later
-      role: 'customer' // Default role for OTP-based signups
+      phone: normalizedPhone,
+      password: 'temp-password-' + Date.now(),
+      role: 'customer',
+      pushToken
     };
 
-    // Only add email if provided and not empty
     if (email && email.trim()) {
       userData.email = email.trim().toLowerCase();
     }
-    // Don't set email at all if not provided (undefined) - this allows sparse unique index to work
 
     const newUser = await User.create(userData);
     if (!newUser) {
       return next(new AppError('Failed to create user', 500));
     }
-    user = newUser;
+    // Handle the fact that create can return an array or a single document
+    user = Array.isArray(newUser) ? newUser[0] : newUser;
 
     // Initialize user-related records
     await initializeUserRecords(user._id);

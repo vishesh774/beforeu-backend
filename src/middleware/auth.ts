@@ -24,11 +24,13 @@ export const protect = async (req: AuthRequest, _res: Response, next: NextFuncti
     }
 
     if (!token) {
+      console.warn(`[AUTH-PROTECT] No token provided for: ${req.method} ${req.url}`);
       throw new AppError('Not authorized to access this route', 401);
     }
 
     // Verify token
     const decoded = verifyToken(token);
+    console.log(`[AUTH-PROTECT] Token verified for user ID: ${decoded.userId}`);
 
     // Get user from token
     const user = await User.findById(decoded.userId);
