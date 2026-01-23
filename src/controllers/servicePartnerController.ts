@@ -6,6 +6,7 @@ import ServicePartner from '../models/ServicePartner';
 import User from '../models/User';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
+import { normalizePhone } from '../utils/phoneUtils';
 
 // @desc    Get all service partners with pagination and filters
 // @route   GET /api/admin/service-partners
@@ -131,12 +132,15 @@ export const getServicePartner = asyncHandler(async (req: Request, res: Response
 // @route   POST /api/admin/service-partners
 // @access  Private/Admin
 export const createServicePartner = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { name, phone, email, services, serviceRegions, availability, isActive } = req.body;
+  let { name, phone, email, services, serviceRegions, availability, isActive } = req.body;
 
   // Validate required fields
   if (!name || !phone || !services || !Array.isArray(services) || services.length === 0) {
     return next(new AppError('Name, phone, and at least one service are required', 400));
   }
+
+  // Normalize phone number
+  phone = normalizePhone(phone);
 
   // Check if partner with this phone already exists
   const existingPartner = await ServicePartner.findOne({ phone });
@@ -266,11 +270,16 @@ export const createServicePartner = asyncHandler(async (req: Request, res: Respo
 // @access  Private/Admin
 export const updateServicePartner = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
-  const { name, phone, email, services, serviceRegions, availability, isActive } = req.body;
+  let { name, phone, email, services, serviceRegions, availability, isActive } = req.body;
 
   const servicePartner = await ServicePartner.findById(id);
   if (!servicePartner) {
     return next(new AppError('Service partner not found', 404));
+  }
+
+  // Normalize phone number if provided
+  if (phone) {
+    phone = normalizePhone(phone);
   }
 
   // Update fields
