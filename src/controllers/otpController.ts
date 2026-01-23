@@ -8,16 +8,20 @@ import { assignCRMTask } from '../services/crmTaskService';
 import User, { UserRole } from '../models/User';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
+import { normalizePhone } from '../utils/phoneUtils';
 
 // @desc    Send OTP to phone number
 // @route   POST /api/auth/send-otp
 // @access  Public
 export const sendOTP = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { phone, role } = req.body;
+  let { phone, role } = req.body;
 
   if (!phone) {
     return next(new AppError('Phone number is required', 400));
   }
+
+  // Normalize phone number
+  phone = normalizePhone(phone);
 
   // Validate phone number format (should include country code)
   const phoneRegex = /^\+?[1-9]\d{1,14}$/;
@@ -64,11 +68,14 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response, next: Ne
 // @route   POST /api/auth/verify-otp
 // @access  Public
 export const verifyOTPController = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { phone, otp, role } = req.body;
+  let { phone, otp, role } = req.body;
 
   if (!phone || !otp) {
     return next(new AppError('Phone number and OTP are required', 400));
   }
+
+  // Normalize phone number
+  phone = normalizePhone(phone);
 
   const result = await verifyOTP(phone, otp);
 
