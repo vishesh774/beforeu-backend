@@ -16,6 +16,8 @@ export interface SendPushNotificationParams {
 export const sendPushNotification = async (params: SendPushNotificationParams) => {
     const { pushToken, title, body, data, sound = 'default', channelId, priority } = params;
 
+    console.log(`[PushNotification] Attempting to send: "${title}" to token: ${pushToken.substring(0, 15)}... Type: ${data?.type || 'N/A'}`);
+
     if (!Expo.isExpoPushToken(pushToken)) {
         console.error(`[PushNotification] Invalid Expo push token: ${pushToken}`);
         return;
@@ -43,7 +45,7 @@ export const sendPushNotification = async (params: SendPushNotificationParams) =
                     console.warn(`[PushNotification] Device not registered (token invalid): ${pushToken}`);
                 }
             } else {
-                console.log(`[PushNotification] Notification sent successfully: ${ticket.id}`);
+                console.log(`[PushNotification] Notification "${title}" sent successfully. Ticket ID: ${ticket.id}`);
             }
         }
     } catch (error) {
