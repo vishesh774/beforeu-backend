@@ -27,26 +27,17 @@ export const sendPushNotification = async (params: SendPushNotificationParams) =
 
     const message: ExpoPushMessage = {
         to: pushToken,
+        title: title, // Always include for OS visibility
+        body: body,   // Always include for OS visibility
         data: {
             ...data,
-            title: title, // Move title inside data
-            body: body,   // Move body inside data
             _displayInForeground: true,
         },
         priority: 'high',
+        sound: isSOS ? 'ambulance' : (sound as any),
+        channelId: channelId,
         mutableContent: true,
     };
-
-    // ONLY for non-SOS, we send standard title/body to let OS handle it normally
-    if (!isSOS) {
-        message.title = title;
-        message.body = body;
-        message.sound = sound as any;
-        message.channelId = channelId;
-    } else {
-        // For SOS, we want it to be data-only, but some versions of Expo might still need a hint
-        // We do NOT set title/body here to ensure it's data-only on Android
-    }
 
     try {
         const tickets = await expo.sendPushNotificationsAsync([message]);
