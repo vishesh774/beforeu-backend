@@ -1507,7 +1507,7 @@ export const assignServicePartner = asyncHandler(async (req: AuthRequest, res: R
           type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
         },
         // Requirement: SOS gets sound, Job for today only gets no sound
-        sound: isSOS ? 'default' : (isToday ? null : 'default'),
+        sound: isSOS ? 'ambulance' : (isToday ? null : 'default'),
         channelId: isSOS ? 'emergency_final_v7' : (isToday ? 'silent' : 'default'),
         priority: isSOS ? 'high' : 'normal'
       });
@@ -2070,7 +2070,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
           title: '🚨 URGENT: Manual SOS Assigned',
           body: `Admin assigned an SOS at ${targetAddress.fullAddress}. Respond immediately!`,
           data: { bookingId: booking._id, itemId: orderItem._id, type: 'SOS_ASSIGNED', screen: 'BookingDetails' },
-          sound: 'default',
+          sound: 'ambulance',
           channelId: 'emergency_final_v7',
           priority: 'high'
         });
@@ -2104,7 +2104,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
           title: '🚨 Family SOS Alert!',
           body: `An SOS has been triggered for ${customer.name}. Help is being organized.`,
           data: { sosId: newAlert.sosId, screen: 'SOSDetails' },
-          sound: 'default',
+          sound: 'ambulance',
           channelId: 'emergency_final_v7',
           priority: 'high'
         });
