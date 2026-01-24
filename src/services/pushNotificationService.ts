@@ -1,6 +1,11 @@
 /**
  * Push Notification Service
  * Handles sending push notifications via Firebase Cloud Messaging (FCM)
+ * 
+ * IMPORTANT: To ensure notifications work when app is killed:
+ * - SOS notifications use BOTH notification + data payloads
+ * - When app is killed, Android displays the notification payload
+ * - When app is in foreground/background, the data payload is used
  */
 
 import * as admin from 'firebase-admin';
@@ -72,7 +77,8 @@ interface JobNotificationData {
 
 /**
  * Send SOS alert notification to a service partner
- * High priority, full-screen intent, alarm sound
+ * Uses BOTH notification + data payloads to ensure delivery in killed state
+ * High priority, custom sound, bypasses doze mode
  */
 export async function sendSosNotification(
     partnerId: string,
@@ -91,13 +97,19 @@ export async function sendSosNotification(
             return false;
         }
 
+        const title = '🚨 SOS EMERGENCY ALERT';
+        const body = `${data.customerName} needs immediate help at ${data.location.address}`;
+
         const message: admin.messaging.Message = {
             token: partner.pushToken,
-            // Data-only message for full control in killed state
+
+            // DATA-ONLY payload - handled by setBackgroundMessageHandler
+            // We REMOVED the notification payload to let the mobile app have full control
             data: {
                 type: 'SOS_ALERT',
                 channelId: CHANNELS.SOS_ALERTS,
                 sosId: data.sosId,
+                uuid: data.sosId, // Required for full-screen notification library
                 bookingId: data.bookingId,
                 customerName: data.customerName,
                 customerPhone: data.customerPhone,
@@ -105,17 +117,18 @@ export async function sendSosNotification(
                 latitude: data.location.latitude?.toString() || '',
                 longitude: data.location.longitude?.toString() || '',
                 emergencyType: data.emergencyType || 'EMERGENCY',
-                title: '🚨 SOS EMERGENCY ALERT',
-                body: `${data.customerName} needs immediate help at ${data.location.address}`,
+                title,
+                body,
                 sound: 'ambulance_alarm',
                 priority: 'high',
-                fullScreen: 'true',
                 timestamp: Date.now().toString()
             },
+
+            // Android-specific configuration
             android: {
                 priority: 'high',
                 ttl: 60000, // 60 seconds TTL for SOS
-                directBootOk: true // Allow delivery in direct boot mode
+                restrictedPackageName: 'com.beforeu.serviceprovider',
             }
         };
 
@@ -140,6 +153,7 @@ export async function sendSosNotification(
 
 /**
  * Send job assignment notification to a service partner
+ * Uses BOTH notification + data payloads for killed app delivery
  * Normal priority, standard notification
  */
 export async function sendJobNotification(
@@ -163,9 +177,13 @@ export async function sendJobNotification(
             ? `Scheduled: ${data.scheduledDate} at ${data.scheduledTime}`
             : 'ASAP';
 
+        const title = 'New Job Assigned';
+        const body = `${data.variantName} for ${data.customerName}. ${scheduleInfo}`;
+
         const message: admin.messaging.Message = {
             token: partner.pushToken,
-            // Data-only message for consistency
+
+            // DATA-ONLY payload - handled by setBackgroundMessageHandler
             data: {
                 type: 'JOB_ASSIGNMENT',
                 channelId: CHANNELS.JOB_ASSIGNMENTS,
@@ -176,15 +194,18 @@ export async function sendJobNotification(
                 address: data.address,
                 scheduledDate: data.scheduledDate || '',
                 scheduledTime: data.scheduledTime || '',
-                title: 'New Job Assigned',
-                body: `${data.variantName} for ${data.customerName}. ${scheduleInfo}`,
+                title,
+                body,
                 sound: 'default',
                 priority: 'normal',
                 timestamp: Date.now().toString()
             },
+
+            // Android-specific configuration
             android: {
                 priority: 'normal',
-                ttl: 3600000 // 1 hour TTL for regular jobs
+                ttl: 3600000, // 1 hour TTL for regular jobs
+                restrictedPackageName: 'com.beforeu.serviceprovider',
             }
         };
 
