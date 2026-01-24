@@ -11,6 +11,8 @@ export interface IServicePartner extends Document {
   name: string;
   phone: string;
   email?: string;
+  pushToken?: string; // FCM device token for push notifications
+  pushTokenUpdatedAt?: Date;
   services: string[]; // Array of service IDs
   serviceRegions: string[]; // Array of service region IDs
   availability: IAvailability[]; // Array of availability for each day
@@ -18,7 +20,6 @@ export interface IServicePartner extends Document {
   rating: number;
   ratingCount: number;
   lastAssignedAt?: Date;
-  pushToken?: string; // Add pushToken field
   createdAt: Date;
   updatedAt: Date;
 }
@@ -68,6 +69,13 @@ const ServicePartnerSchema = new Schema<IServicePartner>(
       lowercase: true,
       match: [/^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Please provide a valid email address']
     },
+    pushToken: {
+      type: String,
+      trim: true
+    },
+    pushTokenUpdatedAt: {
+      type: Date
+    },
     services: {
       type: [String],
       required: true,
@@ -110,10 +118,6 @@ const ServicePartnerSchema = new Schema<IServicePartner>(
     lastAssignedAt: {
       type: Date
     },
-    pushToken: {
-      type: String,
-      trim: true
-    }
   },
   {
     timestamps: true

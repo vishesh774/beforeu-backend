@@ -6,7 +6,6 @@ import { sendWelcomeMessage } from '../services/whatsappService';
 import { createCRMLead } from '../services/crmService';
 import { assignCRMTask } from '../services/crmTaskService';
 import User from '../models/User';
-import ServicePartner from '../models/ServicePartner';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
 import { normalizePhone } from '../utils/phoneUtils';
@@ -118,25 +117,30 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
     }
   }
 
-  // Handle Push Token if provided during verification (Atomic Login)
-  if (pushToken) {
-    console.log(`[otpController] Atomic push token update for ${phone}: ${pushToken.substring(0, 15)}...`);
-    user.pushToken = pushToken;
-    await user.save();
-
-    // Also sync to ServicePartner if applicable
-    const partner = await ServicePartner.findOneAndUpdate(
-      { phone },
-      { pushToken },
-      { new: true }
-    );
-    if (partner) {
-      console.log(`[otpController] Atomic push token sync to ServicePartner complete for ${phone}`);
-    }
-  }
-
   // User exists - aggregate user data
   const userData = await aggregateUserData(user._id);
+  if (!userData) {
+    return next(new AppError('Failed to load user data', 500));
+  }
+
+  // Save pushToken for ServicePartner (for push notifications)
+  if (role === 'ServicePartner' && pushToken) {
+    try {
+      const ServicePartner = (await import('../models/ServicePartner')).default;
+      await ServicePartner.findOneAndUpdate(
+        { phone },
+        {
+          pushToken,
+          pushTokenUpdatedAt: new Date()
+        },
+        { new: true }
+      );
+      console.log(`[Push] Updated pushToken for ServicePartner: ${phone}`);
+    } catch (err) {
+      console.error('[Push] Failed to save pushToken:', err);
+      // Non-blocking - continue with login even if token save fails
+    }
+  }
   if (!userData) {
     return next(new AppError('Failed to load user data', 500));
   }
@@ -162,7 +166,7 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
 // @route   POST /api/auth/complete-profile
 // @access  Public
 export const completeProfile = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { phone, name, email, pushToken } = req.body;
+  const { phone, name, email } = req.body;
 
   if (!phone || !name) {
     return next(new AppError('Phone and name are required', 400));
@@ -182,7 +186,6 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
 
     // Update existing user
     user.name = name;
-    if (pushToken) user.pushToken = pushToken;
 
     // Only set email if provided and not empty, otherwise unset the field to avoid unique constraint violation
     if (email && email.trim()) {
@@ -209,8 +212,7 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
       name,
       phone: normalizedPhone,
       password: 'temp-password-' + Date.now(),
-      role: 'customer',
-      pushToken
+      role: 'customer'
     };
 
     if (email && email.trim()) {

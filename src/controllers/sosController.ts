@@ -7,12 +7,10 @@ import { socketService } from '../services/socketService';
 import { AuthRequest } from '../middleware/auth';
 import { getSOSService } from '../utils/systemServices';
 import { syncBookingStatus, autoAssignServicePartner } from '../services/bookingService';
-import { getPlanHolderId, getFamilyGroupIds } from '../utils/userHelpers';
+import { getPlanHolderId } from '../utils/userHelpers';
 import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
-import User from '../models/User';
-import { sendPushNotification } from '../services/pushNotificationService';
 import { formatTimeToIST } from '../utils/dateUtils';
 
 import CustomerAppSettings from '../models/CustomerAppSettings';
@@ -212,39 +210,6 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
 
         await newAlert.save();
 
-        // --- NEW: Notify Family Members & Plan Holder ---
-        try {
-            const familyGroupIds = await getFamilyGroupIds(planHolderId);
-            // Filter out the sender
-            const recipientsIds = familyGroupIds.filter(id => id.toString() !== userId);
-
-            if (recipientsIds.length > 0) {
-                const recipients = await User.find({ _id: { $in: recipientsIds }, pushToken: { $exists: true, $ne: '' } });
-                const sender = await User.findById(userId);
-
-                for (const recipient of recipients) {
-                    if (recipient.pushToken) {
-                        await sendPushNotification({
-                            pushToken: recipient.pushToken,
-                            title: '🚨 Family SOS Alert!',
-                            body: `${sender?.name || 'Someone'} in your family group has triggered an SOS alert. Emergency Type: ${location.emergencyType || 'General Emergency'}`,
-                            data: {
-                                sosId: newAlert.sosId,
-                                userId: userId,
-                                type: 'FAMILY_SOS',
-                                screen: 'SOSDetails'
-                            },
-                            sound: 'ambulance',
-                            channelId: 'emergency_v9_looping',
-                            priority: 'high'
-                        });
-                    }
-                }
-                console.log(`[triggerSOS] Family notifications sent to ${recipients.length} members`);
-            }
-        } catch (notifError) {
-            console.error('[triggerSOS] Error sending family notifications:', notifError);
-        }
 
         // Populate user details for the frontend
         const populatedAlert = await newAlert.populate([

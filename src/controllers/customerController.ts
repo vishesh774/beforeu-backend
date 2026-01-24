@@ -5,7 +5,6 @@ import User from '../models/User';
 import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
-import { sendPushNotification } from '../services/pushNotificationService';
 import FamilyMember from '../models/FamilyMember';
 
 // @desc    Get all customers with pagination and filters
@@ -322,21 +321,6 @@ export const addFamilyMember = asyncHandler(async (req: Request, res: Response, 
     relation: relationship
   });
 
-  // Notify Primary Customer
-  if (primaryCustomer.pushToken) {
-    try {
-      await sendPushNotification({
-        pushToken: primaryCustomer.pushToken,
-        title: 'Family Member Added',
-        body: `${name} has been added to your family list by admin.`,
-        data: { screen: 'FamilyMembers' },
-        channelId: 'default',
-        priority: 'normal'
-      });
-    } catch (error) {
-      console.error('Error sending push notification:', error);
-    }
-  }
 
   res.status(201).json({
     success: true,

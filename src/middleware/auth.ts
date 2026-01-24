@@ -10,7 +10,6 @@ export interface AuthRequest extends Request {
     phone: string;
     name: string;
     role: string;
-    pushToken?: string;
   };
 }
 
@@ -44,8 +43,7 @@ export const protect = async (req: AuthRequest, _res: Response, next: NextFuncti
       email: user?.email || '',
       phone: user.phone,
       name: user.name || '',
-      role: user.role || 'customer',
-      pushToken: user.pushToken
+      role: user.role || 'customer'
     };
 
     next();
