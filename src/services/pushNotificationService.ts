@@ -23,17 +23,20 @@ export const sendPushNotification = async (params: SendPushNotificationParams) =
         return;
     }
 
-    const message: ExpoPushMessage = {
+    const message: any = {
         to: pushToken,
         sound: sound,
         title: title,
         body: body,
         data: {
             ...data,
-            _displayInForeground: true, // Hint to show even if app is foregrounded without handler
+            _displayInForeground: true,
         },
         channelId: channelId,
         priority: priority === 'high' ? 'high' : 'default',
+        mutableContent: true,
+        ttl: 0,
+        expiration: 0, // Force immediate delivery even in killed state
     };
 
     try {
