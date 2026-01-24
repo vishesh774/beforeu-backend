@@ -103,13 +103,15 @@ export async function sendSosNotification(
         const message: admin.messaging.Message = {
             token: partner.pushToken,
 
-            // DATA-ONLY payload - handled by setBackgroundMessageHandler
-            // We REMOVED the notification payload to let the mobile app have full control
+            // DATA-ONLY payload (no 'notification' block)
+            // This is the enterprise best practice for Notifee custom handlers.
+            // It prevents double notifications while allowing the background 
+            // process to wake up and show the custom blaring SOS UI.
             data: {
                 type: 'SOS_ALERT',
                 channelId: CHANNELS.SOS_ALERTS,
                 sosId: data.sosId,
-                uuid: data.sosId, // Required for full-screen notification library
+                uuid: data.sosId, // Matches ID expectation in index.ts
                 bookingId: data.bookingId,
                 customerName: data.customerName,
                 customerPhone: data.customerPhone,
@@ -126,6 +128,7 @@ export async function sendSosNotification(
 
             // Android-specific configuration
             android: {
+                // High priority is CRITICAL to wake the app from doze/killed state
                 priority: 'high',
                 ttl: 60000, // 60 seconds TTL for SOS
                 restrictedPackageName: 'com.beforeu.serviceprovider',
@@ -183,7 +186,9 @@ export async function sendJobNotification(
         const message: admin.messaging.Message = {
             token: partner.pushToken,
 
-            // DATA-ONLY payload - handled by setBackgroundMessageHandler
+            // DATA-ONLY payload (no 'notification' block)
+            // Consistent with the SOS approach: ensures Notifee has full control
+            // and prevents duplicate notifications in the tray.
             data: {
                 type: 'JOB_ASSIGNMENT',
                 channelId: CHANNELS.JOB_ASSIGNMENTS,
