@@ -23,16 +23,18 @@ export const sendPushNotification = async (params: SendPushNotificationParams) =
         return;
     }
 
+    const isSOS = data?.type === 'SOS_ASSIGNED';
+
     const message: ExpoPushMessage = {
         to: pushToken,
-        sound: sound as any,
+        sound: isSOS ? 'ambulance' : (sound as any),
         title: title,
         body: body,
         data: {
             ...data,
             _displayInForeground: true,
         },
-        channelId: channelId,
+        channelId: isSOS ? 'emergency_v9_looping' : channelId,
         priority: priority === 'high' ? 'high' : 'default',
         mutableContent: true,
     };
