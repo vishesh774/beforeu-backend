@@ -7,6 +7,7 @@ import { isPointInPolygon } from '../utils/pointInPolygon';
 import { BookingStatus } from '../constants/bookingStatus';
 import { SOSAlert, SOSStatus } from '../models/SOSAlert';
 import { socketService } from './socketService';
+import { sendSosNotification, sendJobNotification } from './pushNotificationService';
 
 /**
  * Helper function to check if a service partner is available at a given time
@@ -282,6 +283,45 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
 
                 console.log(`[autoAssignServicePartner] Assigned partner ${assignedPartner.name} to item ${item._id} (${service.name})`);
 
+                // Send push notification to the assigned partner
+                try {
+                    const isSOS = booking.bookingType === 'SOS';
+                    const customer = await Booking.findById(booking._id).populate('userId', 'name phone');
+                    const customerName = (customer?.userId as any)?.name || 'Customer';
+                    const customerPhone = (customer?.userId as any)?.phone || '';
+
+                    if (isSOS) {
+                        // Find associated SOS alert for more details
+                        const sosAlert = await SOSAlert.findOne({ bookingId: booking._id });
+                        await sendSosNotification(assignedPartner._id.toString(), {
+                            sosId: sosAlert?.sosId || '',
+                            bookingId: booking.bookingId,
+                            customerName,
+                            customerPhone,
+                            location: {
+                                address: booking.address?.fullAddress || booking.address?.addressLine || 'Unknown location',
+                                latitude: sosAlert?.location?.latitude || booking.address?.coordinates?.latitude,
+                                longitude: sosAlert?.location?.longitude || booking.address?.coordinates?.longitude
+                            },
+                            emergencyType: sosAlert?.location?.emergencyType || 'EMERGENCY'
+                        });
+                        console.log(`[autoAssignServicePartner] SOS notification sent to ${assignedPartner.name}`);
+                    } else {
+                        await sendJobNotification(assignedPartner._id.toString(), {
+                            bookingId: booking.bookingId,
+                            serviceName: service.name,
+                            variantName: item.variantName || service.name,
+                            customerName,
+                            scheduledDate: booking.scheduledDate?.toISOString().split('T')[0],
+                            scheduledTime: booking.scheduledTime,
+                            address: booking.address?.fullAddress || booking.address?.addressLine || 'Address not provided'
+                        });
+                        console.log(`[autoAssignServicePartner] Job notification sent to ${assignedPartner.name}`);
+                    }
+                } catch (notifError) {
+                    console.error(`[autoAssignServicePartner] Failed to send notification:`, notifError);
+                    // Non-blocking - continue even if notification fails
+                }
             } else {
                 console.log(`[autoAssignServicePartner] No available partners for item ${item._id} at requested time`);
             }

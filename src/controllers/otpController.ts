@@ -68,7 +68,7 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response, next: Ne
 // @route   POST /api/auth/verify-otp
 // @access  Public
 export const verifyOTPController = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  let { phone, otp, role } = req.body;
+  let { phone, otp, role, pushToken } = req.body;
 
   if (!phone || !otp) {
     return next(new AppError('Phone number and OTP are required', 400));
@@ -117,9 +117,30 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
     }
   }
 
-
   // User exists - aggregate user data
   const userData = await aggregateUserData(user._id);
+  if (!userData) {
+    return next(new AppError('Failed to load user data', 500));
+  }
+
+  // Save pushToken for ServicePartner (for push notifications)
+  if (role === 'ServicePartner' && pushToken) {
+    try {
+      const ServicePartner = (await import('../models/ServicePartner')).default;
+      await ServicePartner.findOneAndUpdate(
+        { phone },
+        {
+          pushToken,
+          pushTokenUpdatedAt: new Date()
+        },
+        { new: true }
+      );
+      console.log(`[Push] Updated pushToken for ServicePartner: ${phone}`);
+    } catch (err) {
+      console.error('[Push] Failed to save pushToken:', err);
+      // Non-blocking - continue with login even if token save fails
+    }
+  }
   if (!userData) {
     return next(new AppError('Failed to load user data', 500));
   }

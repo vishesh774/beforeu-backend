@@ -29,6 +29,7 @@ import { getPlanHolderId } from '../utils/userHelpers';
 import { sendBookingAssignmentMessage } from '../services/whatsappService';
 import FamilyMember from '../models/FamilyMember';
 import CustomerAppSettings from '../models/CustomerAppSettings';
+import { sendSosNotification, sendJobNotification } from '../services/pushNotificationService';
 
 
 // @desc    Get all active services (without location requirement)
@@ -1486,6 +1487,46 @@ export const assignServicePartner = asyncHandler(async (req: AuthRequest, res: R
   // Get updated order item with populated partner
   const updatedOrderItem = await OrderItem.findById(orderItem._id)
     .populate('assignedPartnerId', 'name phone email');
+
+  // Send push notification to assigned partner (manual assignment from admin)
+  try {
+    const isSOS = booking.bookingType === 'SOS';
+    const customer = await Booking.findById(booking._id).populate('userId', 'name phone');
+    const customerName = (customer?.userId as any)?.name || 'Customer';
+    const customerPhone = (customer?.userId as any)?.phone || '';
+    const service = await Service.findById(orderItem.serviceId);
+
+    if (isSOS) {
+      const sosAlert = await SOSAlert.findOne({ bookingId: booking._id });
+      await sendSosNotification(partnerId, {
+        sosId: sosAlert?.sosId || '',
+        bookingId: booking.bookingId,
+        customerName,
+        customerPhone,
+        location: {
+          address: booking.address?.fullAddress || 'Unknown',
+          latitude: sosAlert?.location?.latitude || booking.address?.coordinates?.lat,
+          longitude: sosAlert?.location?.longitude || booking.address?.coordinates?.lng
+        },
+        emergencyType: sosAlert?.location?.emergencyType || 'EMERGENCY'
+      });
+      console.log(`[assignServicePartner] SOS notification sent to partner ${partnerId}`);
+    } else {
+      await sendJobNotification(partnerId, {
+        bookingId: booking.bookingId,
+        serviceName: service?.name || 'Service',
+        variantName: orderItem.variantName || service?.name || 'Service',
+        customerName,
+        scheduledDate: booking.scheduledDate?.toISOString().split('T')[0],
+        scheduledTime: booking.scheduledTime,
+        address: booking.address?.fullAddress || 'Address not provided'
+      });
+      console.log(`[assignServicePartner] Job notification sent to partner ${partnerId}`);
+    }
+  } catch (notifError) {
+    console.error('[assignServicePartner] Failed to send notification:', notifError);
+    // Non-blocking - continue even if notification fails
+  }
 
   res.status(200).json({
     success: true,
