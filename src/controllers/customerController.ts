@@ -329,7 +329,9 @@ export const addFamilyMember = asyncHandler(async (req: Request, res: Response, 
         pushToken: primaryCustomer.pushToken,
         title: 'Family Member Added',
         body: `${name} has been added to your family list by admin.`,
-        data: { screen: 'FamilyMembers' }
+        data: { screen: 'FamilyMembers' },
+        channelId: 'default',
+        priority: 'normal'
       });
     } catch (error) {
       console.error('Error sending push notification:', error);

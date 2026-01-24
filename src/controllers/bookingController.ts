@@ -1508,7 +1508,7 @@ export const assignServicePartner = asyncHandler(async (req: AuthRequest, res: R
         },
         // Requirement: SOS gets sound, Job for today only gets no sound
         sound: isSOS ? 'default' : (isToday ? null : 'default'),
-        channelId: isSOS ? 'emergency_final_v6' : (isToday ? 'silent' : 'default'),
+        channelId: isSOS ? 'emergency_final_v7' : (isToday ? 'silent' : 'default'),
         priority: isSOS ? 'high' : 'normal'
       });
       console.log(`[assignServicePartner] Notification sent to partner ${partner.name}`);
@@ -1619,14 +1619,18 @@ export const updateOrderItemStatus = asyncHandler(async (req: AuthRequest, res: 
           pushToken: user.pushToken,
           title: 'Service Partner Arrived',
           body: `Our service partner has reached your location for ${orderItem.variantName || 'your service'}.`,
-          data: { bookingId: booking.bookingId, screen: 'BookingDetails' }
+          data: { bookingId: booking.bookingId, screen: 'BookingDetails' },
+          channelId: 'default',
+          priority: 'normal'
         });
       } else if (newStatus === BookingStatus.COMPLETED) {
         await sendPushNotification({
           pushToken: user.pushToken,
           title: 'Service Completed',
           body: `Your service ${orderItem.variantName || ''} is completed. Please rate your experience!`,
-          data: { bookingId: booking.bookingId, screen: 'RateService', itemId: orderItem._id }
+          data: { bookingId: booking.bookingId, screen: 'RateService', itemId: orderItem._id },
+          channelId: 'default',
+          priority: 'normal'
         });
       }
     }
@@ -2067,7 +2071,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
           body: `Admin assigned an SOS at ${targetAddress.fullAddress}. Respond immediately!`,
           data: { bookingId: booking._id, itemId: orderItem._id, type: 'SOS_ASSIGNED', screen: 'BookingDetails' },
           sound: 'default',
-          channelId: 'emergency_final_v6',
+          channelId: 'emergency_final_v7',
           priority: 'high'
         });
       }
@@ -2101,7 +2105,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
           body: `An SOS has been triggered for ${customer.name}. Help is being organized.`,
           data: { sosId: newAlert.sosId, screen: 'SOSDetails' },
           sound: 'default',
-          channelId: 'emergency_final_v6',
+          channelId: 'emergency_final_v7',
           priority: 'high'
         });
       }

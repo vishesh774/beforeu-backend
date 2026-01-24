@@ -1,4 +1,4 @@
-import { Expo } from 'expo-server-sdk';
+import { Expo, ExpoPushMessage } from 'expo-server-sdk';
 
 
 const expo = new Expo();
@@ -23,9 +23,9 @@ export const sendPushNotification = async (params: SendPushNotificationParams) =
         return;
     }
 
-    const message: any = {
+    const message: ExpoPushMessage = {
         to: pushToken,
-        sound: sound,
+        sound: sound as any,
         title: title,
         body: body,
         data: {
@@ -35,8 +35,6 @@ export const sendPushNotification = async (params: SendPushNotificationParams) =
         channelId: channelId,
         priority: priority === 'high' ? 'high' : 'default',
         mutableContent: true,
-        ttl: 0,
-        expiration: 0, // Force immediate delivery even in killed state
     };
 
     try {
