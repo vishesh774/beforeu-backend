@@ -5,7 +5,6 @@ import OrderItem from '../models/OrderItem';
 import Booking from '../models/Booking';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { BookingStatus } from '../constants/bookingStatus';
-import { sendPushNotification } from './pushNotificationService';
 import { SOSAlert, SOSStatus } from '../models/SOSAlert';
 import { socketService } from './socketService';
 
@@ -283,35 +282,6 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
 
                 console.log(`[autoAssignServicePartner] Assigned partner ${assignedPartner.name} to item ${item._id} (${service.name})`);
 
-                // Send Push Notification to Partner
-                if (assignedPartner.pushToken) {
-                    const isSOS = booking.bookingType === 'SOS';
-                    const title = isSOS ? '🚨 SOS ALERT ASSIGNED!' : 'New Service Assigned';
-                    const body = isSOS
-                        ? `URGENT! SOS assigned at ${booking.address?.fullAddress || 'Unknown location'}. Check app immediately!`
-                        : `You have been assigned ${service.name} for ${booking.scheduledDate ? new Date(booking.scheduledDate).toLocaleDateString() : 'Today'} ${booking.scheduledTime || ''}`;
-
-                    const isToday = booking.scheduledDate
-                        ? new Date(booking.scheduledDate).toDateString() === new Date().toDateString()
-                        : true;
-
-                    await sendPushNotification({
-                        pushToken: assignedPartner.pushToken,
-                        title,
-                        body,
-                        data: {
-                            bookingId: booking._id,
-                            itemId: item._id,
-                            screen: 'BookingDetails',
-                            type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
-                        },
-                        // Requirement: SOS gets sound, Job for today only gets no sound
-                        sound: isSOS ? 'ambulance' : (isToday ? null : 'default'),
-                        channelId: isSOS ? 'emergency_v9_looping' : (isToday ? 'silent' : 'default'),
-                        priority: isSOS ? 'high' : 'normal'
-                    });
-                    console.log(`[autoAssignServicePartner] Notification sent to partner ${assignedPartner.name}`);
-                }
             } else {
                 console.log(`[autoAssignServicePartner] No available partners for item ${item._id} at requested time`);
             }

@@ -14,7 +14,6 @@ import { sendAddedAsFamilyMessage } from '../services/whatsappService';
 import Role from '../models/Role';
 import { createCRMLead } from '../services/crmService';
 import { assignCRMTask } from '../services/crmTaskService';
-import ServicePartner from '../models/ServicePartner';
 
 interface SignupRequest extends Request {
   body: {
@@ -633,54 +632,3 @@ export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response
   });
 });
 
-// @desc    Update push token
-// @route   POST /api/auth/push-token
-// @access  Private
-// @ts-ignore
-export const updatePushToken = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const { pushToken } = req.body;
-
-  if (!req.user || !req.user.id) {
-    return next(new AppError('User not authenticated', 401));
-  }
-
-  if (!pushToken) {
-    return next(new AppError('Push token is required', 400));
-  }
-
-  console.log(`[authController] Updating push token for User ID: ${req.user.id} (${req.user.phone || 'no-phone'}). Token: ${pushToken.substring(0, 15)}...`);
-
-  try {
-    const updatedUser = await User.findByIdAndUpdate(req.user.id, { pushToken }, { new: true });
-    if (!updatedUser) {
-      console.warn(`[authController] User not found for ID: ${req.user.id}`);
-    } else {
-      console.log(`[authController] User record updated successfully. Role: ${updatedUser.role}`);
-    }
-
-    // If user is a partner or staff, sync push token to ServicePartner record too
-    if (req.user.phone) {
-      const updatedPartner = await ServicePartner.findOneAndUpdate(
-        { phone: req.user.phone },
-        { pushToken },
-        { new: true }
-      );
-
-      if (updatedPartner) {
-        console.log(`[authController] Sync complete: ServicePartner record for ${req.user.phone} updated with push token.`);
-      } else if (req.user.role === 'ServicePartner') {
-        console.warn(`[authController] Role is ServicePartner but no ServicePartner record found for phone: ${req.user.phone}`);
-      }
-    } else {
-      console.warn(`[authController] No phone number in req.user for token sync.`);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: 'Push token updated successfully'
-    });
-  } catch (error) {
-    console.error('[authController] Error updating push token:', error);
-    return next(new AppError('Failed to update push token', 500));
-  }
-});

@@ -23,11 +23,10 @@ import ServiceLocation from '../models/ServiceLocation';
 import { isPointInPolygon } from '../utils/pointInPolygon';
 import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus } from '../services/bookingService';
 import { BookingStatus, COMPLETED_BOOKING_STATUSES, ONGOING_BOOKING_STATUSES } from '../constants/bookingStatus';
-import { sendPushNotification } from '../services/pushNotificationService';
 import User from '../models/User';
 import { getSOSService } from '../utils/systemServices';
-import { getPlanHolderId, getFamilyGroupIds } from '../utils/userHelpers';
-import { sendBookingAssignmentMessage, sendSOSAlertToFamily } from '../services/whatsappService';
+import { getPlanHolderId } from '../utils/userHelpers';
+import { sendBookingAssignmentMessage } from '../services/whatsappService';
 import FamilyMember from '../models/FamilyMember';
 import CustomerAppSettings from '../models/CustomerAppSettings';
 
@@ -1483,39 +1482,6 @@ export const assignServicePartner = asyncHandler(async (req: AuthRequest, res: R
   await orderItem.save();
   await syncBookingStatus(booking._id, { id: req.user?.id, name: req.user?.name || 'Admin' });
 
-  // Send Push Notification to Partner
-  if (partner.pushToken) {
-    try {
-      const isSOS = booking.bookingType === 'SOS';
-      const title = isSOS ? '🚨 SOS ALERT ASSIGNED!' : 'New Task Assigned';
-      const body = isSOS
-        ? `URGENT! SOS assigned at ${booking.address?.fullAddress || 'Unknown location'}. Check app immediately!`
-        : `You have been assigned ${orderItem.variantName || 'a new service'} for ${booking.scheduledDate ? new Date(booking.scheduledDate).toLocaleDateString() : 'Today'}.`;
-
-      const isToday = booking.scheduledDate
-        ? new Date(booking.scheduledDate).toDateString() === new Date().toDateString()
-        : true;
-
-      await sendPushNotification({
-        pushToken: partner.pushToken,
-        title,
-        body,
-        data: {
-          bookingId: booking._id,
-          itemId: orderItem._id,
-          screen: 'BookingDetails',
-          type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
-        },
-        // Requirement: SOS gets sound, Job for today only gets no sound
-        sound: isSOS ? 'ambulance' : (isToday ? null : 'default'),
-        channelId: isSOS ? 'emergency_v9_looping' : (isToday ? 'silent' : 'default'),
-        priority: isSOS ? 'high' : 'normal'
-      });
-      console.log(`[assignServicePartner] Notification sent to partner ${partner.name}`);
-    } catch (notifError) {
-      console.error('[assignServicePartner] Error sending partner notification:', notifError);
-    }
-  }
 
   // Get updated order item with populated partner
   const updatedOrderItem = await OrderItem.findById(orderItem._id)
@@ -1610,33 +1576,6 @@ export const updateOrderItemStatus = asyncHandler(async (req: AuthRequest, res: 
   orderItem.status = newStatus;
   await orderItem.save();
 
-  // Notification Logic for Customer
-  try {
-    const user = await User.findById(booking.userId);
-    if (user && user.pushToken) {
-      if (newStatus === BookingStatus.REACHED) {
-        await sendPushNotification({
-          pushToken: user.pushToken,
-          title: 'Service Partner Arrived',
-          body: `Our service partner has reached your location for ${orderItem.variantName || 'your service'}.`,
-          data: { bookingId: booking.bookingId, screen: 'BookingDetails' },
-          channelId: 'default',
-          priority: 'normal'
-        });
-      } else if (newStatus === BookingStatus.COMPLETED) {
-        await sendPushNotification({
-          pushToken: user.pushToken,
-          title: 'Service Completed',
-          body: `Your service ${orderItem.variantName || ''} is completed. Please rate your experience!`,
-          data: { bookingId: booking.bookingId, screen: 'RateService', itemId: orderItem._id },
-          channelId: 'default',
-          priority: 'normal'
-        });
-      }
-    }
-  } catch (notifError) {
-    console.error('Error sending customer notification:', notifError);
-  }
 
   // Handle Plan Activation for PLAN_PURCHASE bookings
   if (newStatus === BookingStatus.COMPLETED && booking.bookingType === 'PLAN_PURCHASE') {
@@ -1989,7 +1928,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
   });
 
   // 10. Create Order Item
-  const orderItem = await OrderItem.create({
+  await OrderItem.create({
     bookingId: booking._id,
     serviceId: service._id,
     serviceVariantId: variant._id,
@@ -2063,18 +2002,6 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
   try {
     // A. Partner Push & WhatsApp
     if (partner) {
-      // Push
-      if (partner.pushToken) {
-        await sendPushNotification({
-          pushToken: partner.pushToken,
-          title: '🚨 URGENT: Manual SOS Assigned',
-          body: `Admin assigned an SOS at ${targetAddress.fullAddress}. Respond immediately!`,
-          data: { bookingId: booking._id, itemId: orderItem._id, type: 'SOS_ASSIGNED', screen: 'BookingDetails' },
-          sound: 'ambulance',
-          channelId: 'emergency_v9_looping',
-          priority: 'high'
-        });
-      }
       // WhatsApp
       await sendBookingAssignmentMessage(
         partner.phone,
@@ -2085,38 +2012,6 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
         targetAddress.fullAddress,
         true
       );
-    }
-
-    // B. Family Notifications (Always for SOS)
-    const familyGroupIds = await getFamilyGroupIds(planHolderId);
-    const relatives = await User.find({
-      _id: {
-        $in: familyGroupIds,
-        $ne: userIdObj
-      }
-    });
-
-    for (const relative of relatives) {
-      // Push
-      if (relative.pushToken) {
-        await sendPushNotification({
-          pushToken: relative.pushToken,
-          title: '🚨 Family SOS Alert!',
-          body: `An SOS has been triggered for ${customer.name}. Help is being organized.`,
-          data: { sosId: newAlert.sosId, screen: 'SOSDetails' },
-          sound: 'ambulance',
-          channelId: 'emergency_v9_looping',
-          priority: 'high'
-        });
-      }
-      // WhatsApp (If we have relative's name)
-      await sendSOSAlertToFamily(
-        relative.phone,
-        relative.name,
-        customer.name,
-        'SOS Emergency (Admin Assisted)',
-        targetAddress.fullAddress
-      ).catch(e => console.error(`Failed to send family WhatsApp to ${relative.phone}:`, e));
     }
 
     // C. Internal Admin Socket
