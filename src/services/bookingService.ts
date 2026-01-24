@@ -299,9 +299,9 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                             customerName,
                             customerPhone,
                             location: {
-                                address: booking.address?.fullAddress || booking.address?.addressLine || 'Unknown location',
-                                latitude: sosAlert?.location?.latitude || booking.address?.coordinates?.latitude,
-                                longitude: sosAlert?.location?.longitude || booking.address?.coordinates?.longitude
+                                address: booking.address?.fullAddress || 'Unknown location',
+                                latitude: sosAlert?.location?.latitude || booking.address?.coordinates?.lat,
+                                longitude: sosAlert?.location?.longitude || booking.address?.coordinates?.lng
                             },
                             emergencyType: sosAlert?.location?.emergencyType || 'EMERGENCY'
                         });
@@ -314,7 +314,7 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                             customerName,
                             scheduledDate: booking.scheduledDate?.toISOString().split('T')[0],
                             scheduledTime: booking.scheduledTime,
-                            address: booking.address?.fullAddress || booking.address?.addressLine || 'Address not provided'
+                            address: booking.address?.fullAddress || 'Address not provided'
                         });
                         console.log(`[autoAssignServicePartner] Job notification sent to ${assignedPartner.name}`);
                     }
