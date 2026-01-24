@@ -1507,8 +1507,8 @@ export const assignServicePartner = asyncHandler(async (req: AuthRequest, res: R
           type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
         },
         // Requirement: SOS gets sound, Job for today only gets no sound
-        sound: isSOS ? 'ambulance' : (isToday ? null : 'default'),
-        channelId: isSOS ? 'sos_siren_channel_v4' : (isToday ? 'silent' : 'default'),
+        sound: isSOS ? 'default' : (isToday ? null : 'default'),
+        channelId: isSOS ? 'emergency_v1' : (isToday ? 'silent' : 'default'),
         priority: isSOS ? 'high' : 'normal'
       });
       console.log(`[assignServicePartner] Notification sent to partner ${partner.name}`);
@@ -2066,8 +2066,8 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
           title: '🚨 URGENT: Manual SOS Assigned',
           body: `Admin assigned an SOS at ${targetAddress.fullAddress}. Respond immediately!`,
           data: { bookingId: booking._id, itemId: orderItem._id, type: 'SOS_ASSIGNED', screen: 'BookingDetails' },
-          sound: 'ambulance',
-          channelId: 'sos_siren_channel_v4',
+          sound: 'default',
+          channelId: 'emergency_v1',
           priority: 'high'
         });
       }
@@ -2100,8 +2100,8 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
           title: '🚨 Family SOS Alert!',
           body: `An SOS has been triggered for ${customer.name}. Help is being organized.`,
           data: { sosId: newAlert.sosId, screen: 'SOSDetails' },
-          sound: 'ambulance',
-          channelId: 'sos_siren_channel_v4',
+          sound: 'default',
+          channelId: 'emergency_v1',
           priority: 'high'
         });
       }

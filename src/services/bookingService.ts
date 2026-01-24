@@ -306,8 +306,8 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
                             type: isSOS ? 'SOS_ASSIGNED' : 'SERVICE_ASSIGNED'
                         },
                         // Requirement: SOS gets sound, Job for today only gets no sound
-                        sound: isSOS ? 'ambulance' : (isToday ? null : 'default'),
-                        channelId: isSOS ? 'sos_siren_channel_v4' : (isToday ? 'silent' : 'default'),
+                        sound: isSOS ? 'default' : (isToday ? null : 'default'),
+                        channelId: isSOS ? 'emergency_v1' : (isToday ? 'silent' : 'default'),
                         priority: isSOS ? 'high' : 'normal'
                     });
                     console.log(`[autoAssignServicePartner] Notification sent to partner ${assignedPartner.name}`);
