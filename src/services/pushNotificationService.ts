@@ -14,7 +14,7 @@ export interface SendPushNotificationParams {
 }
 
 export const sendPushNotification = async (params: SendPushNotificationParams) => {
-    const { pushToken, title, body, data, sound = 'default', channelId, priority } = params;
+    const { pushToken, title, body, data, sound = 'default', channelId } = params;
 
     console.log(`[PushNotification] Attempting to send: "${title}" to token: ${pushToken.substring(0, 15)}... Type: ${data?.type || 'N/A'}`);
 
@@ -27,17 +27,26 @@ export const sendPushNotification = async (params: SendPushNotificationParams) =
 
     const message: ExpoPushMessage = {
         to: pushToken,
-        sound: isSOS ? 'ambulance' : (sound as any),
-        title: title,
-        body: body,
         data: {
             ...data,
+            title: title, // Move title inside data
+            body: body,   // Move body inside data
             _displayInForeground: true,
         },
-        channelId: isSOS ? 'emergency_v9_looping' : channelId,
-        priority: priority === 'high' ? 'high' : 'default',
+        priority: 'high',
         mutableContent: true,
     };
+
+    // ONLY for non-SOS, we send standard title/body to let OS handle it normally
+    if (!isSOS) {
+        message.title = title;
+        message.body = body;
+        message.sound = sound as any;
+        message.channelId = channelId;
+    } else {
+        // For SOS, we want it to be data-only, but some versions of Expo might still need a hint
+        // We do NOT set title/body here to ensure it's data-only on Android
+    }
 
     try {
         const tickets = await expo.sendPushNotificationsAsync([message]);
