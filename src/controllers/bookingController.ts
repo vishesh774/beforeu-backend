@@ -2053,6 +2053,21 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
         targetAddress.fullAddress,
         true
       );
+
+      // Push Notification
+      await sendSosNotification(partner._id.toString(), {
+        sosId: newAlert.sosId,
+        bookingId: booking.bookingId,
+        customerName: customer.name,
+        customerPhone: customer.phone,
+        location: {
+          address: targetAddress.fullAddress,
+          latitude: targetAddress.coordinates?.lat,
+          longitude: targetAddress.coordinates?.lng
+        },
+        emergencyType: 'Manual SOS'
+      });
+      console.log(`[triggerManualSOS] SOS notification sent to partner ${partner._id}`);
     }
 
     // C. Internal Admin Socket
