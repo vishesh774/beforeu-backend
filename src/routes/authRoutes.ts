@@ -1,7 +1,7 @@
 import express from 'express';
 import { signup, login, adminLogin, getMe, addAddress, updateAddress, deleteAddress, addFamilyMember, deleteFamilyMember, deleteAccount } from '../controllers/authController';
 import { sendOTP, verifyOTPController, completeProfile } from '../controllers/otpController';
-import { getAllPlans, purchasePlan } from '../controllers/planController';
+import { getAllPlans, purchasePlan, getMyPlanDetails } from '../controllers/planController';
 import { getAllFAQs } from '../controllers/faqController';
 import { getAllPolicies } from '../controllers/refundCancellationPolicyController';
 import { getAllRules } from '../controllers/serviceDefinitionsVisitRulesController';
@@ -28,6 +28,7 @@ router.post('/admin/login', validate(loginValidator), adminLogin);
 router.get('/me', protect, getMe);
 router.get('/plans', getAllPlans); // Customer-facing plans endpoint (only active plans)
 router.post('/plans/purchase', protect, purchasePlan); // Purchase a plan
+router.get('/my-plan', protect, getMyPlanDetails); // Get current user's plan details with credits and savings
 router.get('/faqs', getAllFAQs); // Customer-facing FAQs endpoint (only active FAQs)
 router.get('/refund-cancellation-policies', getAllPolicies); // Customer-facing policies endpoint (only active)
 router.get('/service-definitions-visit-rules', getAllRules); // Customer-facing rules endpoint (only active)

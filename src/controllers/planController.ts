@@ -1041,3 +1041,114 @@ export const purchasePlan = asyncHandler(async (req: AuthRequest, res: Response,
   }
 });
 
+
+// @desc    Get current user's plan details with credits and savings
+// @route   GET /api/auth/my-plan
+// @access  Private
+export const getMyPlanDetails = asyncHandler(async (req: AuthRequest, res: Response, next: any) => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('Not authenticated', 401));
+  }
+
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Get user's active plan
+  const userPlan = await UserPlan.findOne({ userId: userIdObj });
+
+  if (!userPlan || !userPlan.activePlanId) {
+    return res.status(200).json({
+      success: true,
+      data: {
+        hasPlan: false,
+        message: 'No active plan found'
+      }
+    });
+  }
+
+  // Get the plan details
+  const plan = await Plan.findById(userPlan.activePlanId);
+  if (!plan) {
+    return res.status(200).json({
+      success: true,
+      data: {
+        hasPlan: false,
+        message: 'Plan not found'
+      }
+    });
+  }
+
+  // Get user credits
+  const userCredits = await UserCredits.findOne({ userId: userIdObj });
+  const remainingCredits = userCredits?.credits || 0;
+
+  // Get family member IDs for this user (to include their bookings)
+  const familyIds = await getFamilyGroupIds(userIdObj);
+
+  // Calculate credits used from completed bookings
+  const creditUsageAgg = await Booking.aggregate([
+    {
+      $match: {
+        userId: { $in: familyIds },
+        creditsUsed: { $gt: 0 },
+        status: { $in: ['completed', 'in_progress', 'reached', 'en_route', 'confirmed', 'assigned'] }
+      }
+    },
+    {
+      $group: {
+        _id: null,
+        totalCreditsUsed: { $sum: '$creditsUsed' },
+        bookingsCount: { $sum: 1 },
+        totalAmountSaved: { $sum: { $multiply: ['$creditsUsed', 1] } } // Each credit saves ₹1 worth
+      }
+    }
+  ]);
+
+  const creditStats = creditUsageAgg[0] || { totalCreditsUsed: 0, bookingsCount: 0, totalAmountSaved: 0 };
+
+  // Calculate estimated savings (credits used * estimated value per credit)
+  // We'll estimate each credit saves roughly the average service price
+  // For simplicity, we'll use the plan's totalCredits vs finalPrice ratio
+  const creditValue = plan.totalCredits > 0 ? plan.finalPrice / plan.totalCredits : 0;
+  const estimatedSavings = creditStats.totalCreditsUsed * creditValue;
+
+  // Get services included in plan
+  const includedServices = plan.services?.map(s => ({
+    name: s.subServiceName,
+    limit: s.totalCountLimit
+  })) || [];
+
+  res.status(200).json({
+    success: true,
+    data: {
+      hasPlan: true,
+      plan: {
+        id: plan._id.toString(),
+        name: plan.planName,
+        title: plan.planTitle,
+        subtitle: plan.planSubTitle,
+        status: plan.planStatus,
+        allowSOS: plan.allowSOS,
+        totalCredits: plan.totalCredits,
+        totalMembers: plan.totalMembers,
+        originalPrice: plan.originalPrice,
+        finalPrice: plan.finalPrice,
+        expiresAt: userPlan.expiresAt,
+        purchaseDate: userPlan.updatedAt,
+        includedServices
+      },
+      credits: {
+        total: plan.totalCredits,
+        used: creditStats.totalCreditsUsed,
+        remaining: remainingCredits
+      },
+      savings: {
+        bookingsWithCredits: creditStats.bookingsCount,
+        totalCreditsUsed: creditStats.totalCreditsUsed,
+        estimatedSavings: Math.round(estimatedSavings),
+        valuePerCredit: Math.round(creditValue)
+      }
+    }
+  });
+});
