@@ -296,14 +296,18 @@ export const addAddress = asyncHandler(async (req: AuthRequest, res: Response, n
     return next(new AppError('Label and full address are required', 400));
   }
 
-  // Check current address count
-  const addressCount = await Address.countDocuments({ userId: new mongoose.Types.ObjectId(userId) });
+  // Convert userId string to ObjectId
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+
+  // Determine storage user: planHolderId if user has plan, else userId
+  // This enables shared address pool for family plan members
+  const storageUserId = await getPlanHolderId(userIdObj);
+
+  // Check current address count (limit applies to plan holder's pool)
+  const addressCount = await Address.countDocuments({ userId: storageUserId });
   if (addressCount >= 4) {
     return next(new AppError('Maximum limit of 4 addresses reached. Please delete an existing address to add a new one.', 400));
   }
-
-  // Convert userId string to ObjectId
-  const userIdObj = new mongoose.Types.ObjectId(userId);
 
   // Generate unique address ID
   const addressId = `addr-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -311,14 +315,14 @@ export const addAddress = asyncHandler(async (req: AuthRequest, res: Response, n
   // If this is set as default, unset all other default addresses
   if (isDefault) {
     await Address.updateMany(
-      { userId: userIdObj },
+      { userId: storageUserId },
       { isDefault: false }
     );
   }
 
-  // Create the address
+  // Create the address under the storage user (plan holder or self)
   const address = await Address.create({
-    userId: userIdObj,
+    userId: storageUserId,
     id: addressId,
     label,
     fullAddress,
@@ -368,8 +372,11 @@ export const updateAddress = asyncHandler(async (req: AuthRequest, res: Response
   // Convert userId string to ObjectId
   const userIdObj = new mongoose.Types.ObjectId(userId);
 
-  // Find the address and verify it belongs to the user
-  const address = await Address.findOne({ userId: userIdObj, id });
+  // Get storage user for shared address pool
+  const storageUserId = await getPlanHolderId(userIdObj);
+
+  // Find the address in the shared pool
+  const address = await Address.findOne({ userId: storageUserId, id });
   if (!address) {
     return next(new AppError('Address not found', 404));
   }
@@ -377,7 +384,7 @@ export const updateAddress = asyncHandler(async (req: AuthRequest, res: Response
   // If this is set as default, unset all other default addresses
   if (isDefault) {
     await Address.updateMany(
-      { userId: userIdObj, id: { $ne: id } },
+      { userId: storageUserId, id: { $ne: id } },
       { isDefault: false }
     );
   }
@@ -428,24 +435,27 @@ export const deleteAddress = asyncHandler(async (req: AuthRequest, res: Response
   // Convert userId string to ObjectId
   const userIdObj = new mongoose.Types.ObjectId(userId);
 
-  // Find the address and verify it belongs to the user
-  const address = await Address.findOne({ userId: userIdObj, id });
+  // Get storage user for shared address pool
+  const storageUserId = await getPlanHolderId(userIdObj);
+
+  // Find the address in the shared pool
+  const address = await Address.findOne({ userId: storageUserId, id });
   if (!address) {
     return next(new AppError('Address not found', 404));
   }
 
-  // Check if user has at least one address remaining
-  const addressCount = await Address.countDocuments({ userId: userIdObj });
+  // Check if pool has at least one address remaining
+  const addressCount = await Address.countDocuments({ userId: storageUserId });
   if (addressCount <= 1) {
     return next(new AppError('Cannot delete the last address. You must have at least one address.', 400));
   }
 
-  // Delete the address
-  await Address.deleteOne({ userId: userIdObj, id });
+  // Delete the address from shared pool
+  await Address.deleteOne({ userId: storageUserId, id });
 
   // If deleted address was default, set the first remaining address as default
   if (address.isDefault) {
-    const remainingAddress = await Address.findOne({ userId: userIdObj });
+    const remainingAddress = await Address.findOne({ userId: storageUserId });
     if (remainingAddress) {
       remainingAddress.isDefault = true;
       await remainingAddress.save();
