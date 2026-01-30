@@ -10,6 +10,7 @@ export enum BookingStatus {
     EN_ROUTE = 'en_route',
     REACHED = 'reached',
     IN_PROGRESS = 'in_progress',
+    ON_HOLD = 'on_hold',  // Task paused by partner/admin
     COMPLETED = 'completed',
     CANCELLED = 'cancelled',
     REFUND_INITIATED = 'refund_initiated',
@@ -23,6 +24,7 @@ export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = {
     [BookingStatus.EN_ROUTE]: 'On The Way',
     [BookingStatus.REACHED]: 'Partner Arrived',
     [BookingStatus.IN_PROGRESS]: 'In Progress',
+    [BookingStatus.ON_HOLD]: 'On Hold',
     [BookingStatus.COMPLETED]: 'Completed',
     [BookingStatus.CANCELLED]: 'Cancelled',
     [BookingStatus.REFUND_INITIATED]: 'Refund Initiated',
@@ -36,14 +38,16 @@ export const ACTIVE_BOOKING_STATUSES = [
     BookingStatus.ASSIGNED,
     BookingStatus.EN_ROUTE,
     BookingStatus.REACHED,
-    BookingStatus.IN_PROGRESS
+    BookingStatus.IN_PROGRESS,
+    BookingStatus.ON_HOLD
 ];
 
 export const ONGOING_BOOKING_STATUSES = [
     BookingStatus.ASSIGNED,
     BookingStatus.EN_ROUTE,
     BookingStatus.REACHED,
-    BookingStatus.IN_PROGRESS
+    BookingStatus.IN_PROGRESS,
+    BookingStatus.ON_HOLD
 ];
 
 export const COMPLETED_BOOKING_STATUSES = [

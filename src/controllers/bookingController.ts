@@ -2088,3 +2088,86 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
     }
   });
 });
+
+// @desc    Put order item on hold (Admin)
+// @route   PUT /api/admin/bookings/:bookingId/items/:itemId/hold
+// @access  Private/Admin
+export const holdOrderItem = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { bookingId, itemId } = req.params;
+  const { reason, customRemark } = req.body;
+  const adminName = req.user?.name || 'Admin';
+
+  if (!reason) {
+    return next(new AppError('Reason is required to put item on hold', 400));
+  }
+
+  const booking = await Booking.findOne({ bookingId });
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  const orderItem = await OrderItem.findOne({ _id: itemId, bookingId: booking._id });
+  if (!orderItem) {
+    return next(new AppError('Order item not found', 404));
+  }
+
+  if (orderItem.status !== BookingStatus.IN_PROGRESS) {
+    return next(new AppError('Item must be in progress to put on hold', 400));
+  }
+
+  // Add hold entry
+  orderItem.holdHistory.push({
+    reason,
+    customRemark: reason === 'Other' ? customRemark : undefined,
+    holdStartedAt: new Date(),
+    heldBy: adminName
+  });
+
+  orderItem.status = BookingStatus.ON_HOLD;
+  await orderItem.save();
+  await syncBookingStatus(booking._id, { id: req.user?.id, name: adminName });
+
+  res.status(200).json({
+    success: true,
+    message: 'Item put on hold',
+    data: { status: BookingStatus.ON_HOLD }
+  });
+});
+
+// @desc    Resume order item from hold (Admin)
+// @route   PUT /api/admin/bookings/:bookingId/items/:itemId/resume
+// @access  Private/Admin
+export const resumeOrderItem = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { bookingId, itemId } = req.params;
+  const adminName = req.user?.name || 'Admin';
+
+  const booking = await Booking.findOne({ bookingId });
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  const orderItem = await OrderItem.findOne({ _id: itemId, bookingId: booking._id });
+  if (!orderItem) {
+    return next(new AppError('Order item not found', 404));
+  }
+
+  if (orderItem.status !== BookingStatus.ON_HOLD) {
+    return next(new AppError('Item must be on hold to resume', 400));
+  }
+
+  // Update the last hold entry with end time
+  const lastHoldEntry = orderItem.holdHistory[orderItem.holdHistory.length - 1];
+  if (lastHoldEntry && !lastHoldEntry.holdEndedAt) {
+    lastHoldEntry.holdEndedAt = new Date();
+  }
+
+  orderItem.status = BookingStatus.IN_PROGRESS;
+  await orderItem.save();
+  await syncBookingStatus(booking._id, { id: req.user?.id, name: adminName });
+
+  res.status(200).json({
+    success: true,
+    message: 'Item resumed',
+    data: { status: BookingStatus.IN_PROGRESS }
+  });
+});

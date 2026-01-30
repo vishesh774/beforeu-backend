@@ -6,7 +6,9 @@ import {
     getPartnerBookings,
     updateBookingStatus,
     verifyStartJobOtp,
-    verifyEndJobOtp
+    verifyEndJobOtp,
+    holdTask,
+    resumeTask
 } from '../controllers/partnerController';
 import { protectPartner } from '../middleware/partnerAuth';
 
@@ -22,5 +24,7 @@ router.get('/bookings', getPartnerBookings);
 router.post('/bookings/:id/status', updateBookingStatus);
 router.post('/bookings/:id/verify-start', verifyStartJobOtp);
 router.post('/bookings/:id/verify-end', verifyEndJobOtp);
+router.put('/bookings/:id/hold', holdTask);
+router.put('/bookings/:id/resume', resumeTask);
 
 export default router;
