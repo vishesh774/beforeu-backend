@@ -1,6 +1,14 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import { BookingStatus } from '../constants/bookingStatus';
 
+export interface IHoldEntry {
+  reason: string;
+  customRemark?: string;
+  holdStartedAt: Date;
+  holdEndedAt?: Date;
+  heldBy: string; // Partner name or admin name
+}
+
 export interface IOrderItem extends Document {
   bookingId: mongoose.Types.ObjectId;
   serviceId: mongoose.Types.ObjectId;
@@ -12,13 +20,16 @@ export interface IOrderItem extends Document {
   finalPrice: number;
   creditValue: number;
   estimatedTimeMinutes: number;
-  customerVisitRequired: boolean; // Whether customer visit is required for this service variant
-  assignedPartnerId?: mongoose.Types.ObjectId; // Service partner assigned to this item
-  assignedServiceLocationId?: mongoose.Types.ObjectId; // Service location assigned to this item
+  customerVisitRequired: boolean;
+  assignedPartnerId?: mongoose.Types.ObjectId;
+  assignedServiceLocationId?: mongoose.Types.ObjectId;
   paidWithCredits: boolean;
   startJobOtp?: string;
   endJobOtp?: string;
-  status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
+  holdHistory: IHoldEntry[];  // Track hold periods for time calculation
+  startedAt?: Date;  // When job started (status became in_progress)
+  completedAt?: Date;  // When job completed
+  status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -104,10 +115,24 @@ const OrderItemSchema = new Schema<IOrderItem>(
       type: String,
       default: null
     },
-
-
-    // ...
-
+    holdHistory: {
+      type: [{
+        reason: { type: String, required: true },
+        customRemark: { type: String },
+        holdStartedAt: { type: Date, required: true },
+        holdEndedAt: { type: Date },
+        heldBy: { type: String, required: true }
+      }],
+      default: []
+    },
+    startedAt: {
+      type: Date,
+      default: null
+    },
+    completedAt: {
+      type: Date,
+      default: null
+    },
     status: {
       type: String,
       enum: Object.values(BookingStatus),

@@ -208,6 +208,7 @@ export const verifyStartJobOtp = async (req: Request, res: Response, next: NextF
         }
 
         item.status = BookingStatus.IN_PROGRESS;
+        item.startedAt = new Date();
         await item.save();
         await syncBookingStatus(item.bookingId, { id: (req as any).user._id, name: (req as any).user.name });
 
@@ -246,12 +247,100 @@ export const verifyEndJobOtp = async (req: Request, res: Response, next: NextFun
         }
 
         item.status = BookingStatus.COMPLETED;
+        item.completedAt = new Date();
         await item.save();
         await syncBookingStatus(item.bookingId, { id: (req as any).user._id, name: (req as any).user.name });
 
         res.status(200).json({
             success: true,
             data: { status: BookingStatus.COMPLETED }
+        });
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Put task on hold
+// @route   PUT /api/partners/bookings/:id/hold
+// @access  Private (Partner)
+export const holdTask = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const { reason, customRemark } = req.body;
+        const orderItemId = req.params.id;
+        const partnerId = (req as any).user.id;
+        const partnerName = (req as any).user.name || 'Partner';
+
+        if (!reason) {
+            return next(new AppError('Reason is required to put task on hold', 400));
+        }
+
+        const item = await OrderItem.findOne({ _id: orderItemId, assignedPartnerId: partnerId });
+
+        if (!item) {
+            return next(new AppError('Task not found or not assigned to you', 404));
+        }
+
+        if (item.status !== BookingStatus.IN_PROGRESS) {
+            return next(new AppError('Task must be in progress to put on hold', 400));
+        }
+
+        // Add hold entry
+        item.holdHistory.push({
+            reason,
+            customRemark: reason === 'Other' ? customRemark : undefined,
+            holdStartedAt: new Date(),
+            heldBy: partnerName
+        });
+
+        item.status = BookingStatus.ON_HOLD;
+        await item.save();
+        await syncBookingStatus(item.bookingId, { id: (req as any).user._id, name: partnerName });
+
+        res.status(200).json({
+            success: true,
+            message: 'Task put on hold',
+            data: { status: BookingStatus.ON_HOLD }
+        });
+
+    } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Resume task from hold
+// @route   PUT /api/partners/bookings/:id/resume
+// @access  Private (Partner)
+export const resumeTask = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+        const orderItemId = req.params.id;
+        const partnerId = (req as any).user.id;
+        const partnerName = (req as any).user.name || 'Partner';
+
+        const item = await OrderItem.findOne({ _id: orderItemId, assignedPartnerId: partnerId });
+
+        if (!item) {
+            return next(new AppError('Task not found or not assigned to you', 404));
+        }
+
+        if (item.status !== BookingStatus.ON_HOLD) {
+            return next(new AppError('Task must be on hold to resume', 400));
+        }
+
+        // Update the last hold entry with end time
+        const lastHoldEntry = item.holdHistory[item.holdHistory.length - 1];
+        if (lastHoldEntry && !lastHoldEntry.holdEndedAt) {
+            lastHoldEntry.holdEndedAt = new Date();
+        }
+
+        item.status = BookingStatus.IN_PROGRESS;
+        await item.save();
+        await syncBookingStatus(item.bookingId, { id: (req as any).user._id, name: partnerName });
+
+        res.status(200).json({
+            success: true,
+            message: 'Task resumed',
+            data: { status: BookingStatus.IN_PROGRESS }
         });
 
     } catch (error) {

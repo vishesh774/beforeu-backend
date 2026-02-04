@@ -135,12 +135,10 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
   }
 
   // Fetch related data
-  // Family members and addresses are always SHARED if plan is shared?
-  // User says: "On the family page, we should be able to see all the family members on the family page."
-  // This implies the list is shared.
+  // Family members and addresses are SHARED under the plan holder
   const [familyMembers, addresses, userCredits, userPlan] = await Promise.all([
     FamilyMember.find({ userId: planHolderId }).sort({ createdAt: 1 }), // Shared list
-    Address.find({ userId: user._id }).sort({ createdAt: 1 }),          // Addresses remain specific to the user?
+    Address.find({ userId: planHolderId }).sort({ createdAt: 1 }),      // Shared addresses under plan holder
     UserCredits.findOne({ userId: planHolderId }),
     UserPlan.findOne({ userId: planHolderId })
   ]);
@@ -301,4 +299,3 @@ export const updateUserPlan = async (userId: string | mongoose.Types.ObjectId, a
     { upsert: true, new: true }
   );
 };
-

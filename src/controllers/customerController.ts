@@ -6,6 +6,7 @@ import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
 import FamilyMember from '../models/FamilyMember';
+import Plan from '../models/Plan';
 
 // @desc    Get all customers with pagination and filters
 // @route   GET /api/admin/customers
@@ -41,6 +42,17 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
     const escapedSearch = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const searchRegex = { $regex: escapedSearch, $options: 'i' };
 
+    const familyUserIds = new Set<string>();
+
+    // Search Family Members by name
+    const familyMembers = await FamilyMember.find({
+      name: searchRegex
+    }).select('userId');
+
+    familyMembers.forEach(fm => {
+      familyUserIds.add(fm.userId.toString());
+    });
+
     const orConditions: any[] = [
       { name: searchRegex },
       { email: searchRegex },
@@ -52,6 +64,17 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
     if (digitsOnly.length >= 10) {
       const last10 = digitsOnly.slice(-10);
       orConditions.push({ phone: { $regex: last10 + '$' } });
+
+      // Search family members by phone match as well
+      const familyByPhone = await FamilyMember.find({ phone: { $regex: last10 + '$' } }).select('userId');
+      familyByPhone.forEach(fm => {
+        familyUserIds.add(fm.userId.toString());
+      });
+    }
+
+    // Add family matched user IDs to filter
+    if (familyUserIds.size > 0) {
+      orConditions.push({ _id: { $in: Array.from(familyUserIds) } });
     }
 
     filter.$or = orConditions;
@@ -78,6 +101,21 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
       UserPlan.findOne({ userId: planHolderId })
     ]);
 
+    // Find matching family members if searching
+    let matchingFamilyMembers: Array<{ name: string, relation: string }> = [];
+    if (searchQuery && searchQuery.trim()) {
+      const trimmedSearch = searchQuery.trim();
+      const escapedSearch = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = { $regex: escapedSearch, $options: 'i' };
+
+      const matches = await FamilyMember.find({
+        userId: customer._id,
+        $or: [{ name: searchRegex }, { phone: searchRegex }]
+      }).select('name relation');
+
+      matchingFamilyMembers = matches.map(m => ({ name: m.name, relation: m.relation }));
+    }
+
     return {
       id: customer._id.toString(),
       name: customer.name,
@@ -87,6 +125,7 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
       credits: credits?.credits || 0,
       activePlanId: userPlan?.activePlanId,
       isSharedPlan,
+      matchingFamilyMembers,
       createdAt: customer.createdAt,
       updatedAt: customer.updatedAt
     };
@@ -306,6 +345,30 @@ export const addFamilyMember = asyncHandler(async (req: Request, res: Response, 
   const existingFamilyMember = await FamilyMember.findOne({ userId: primaryCustomer._id, phone: formattedPhone });
   if (existingFamilyMember) {
     return next(new AppError('Family member with this phone number already exists for this customer', 400));
+  }
+
+  // Plan Limit Check
+  const planHolderId = await getPlanHolderId(primaryCustomer._id);
+  const userPlan = await UserPlan.findOne({ userId: planHolderId });
+
+  if (userPlan && userPlan.activePlanId) {
+    if (!userPlan.expiresAt || new Date() < userPlan.expiresAt) {
+      const plan = await Plan.findById(userPlan.activePlanId);
+      if (plan) {
+        // Count total members added by the Plan Holder
+        const currentMemberCount = await FamilyMember.countDocuments({ userId: planHolderId });
+        // totalMembers includes the primary user
+        if (currentMemberCount + 1 >= plan.totalMembers) {
+          return next(new AppError(`The plan limit of ${plan.totalMembers} members (including primary) has been reached.`, 400));
+        }
+      }
+    }
+  } else {
+    // Default limit for users without a plan
+    const currentMemberCount = await FamilyMember.countDocuments({ userId: primaryCustomer._id });
+    if (currentMemberCount >= 5) {
+      return next(new AppError('The limit of 5 family members has been reached.', 400));
+    }
   }
 
   // Create FamilyMember document

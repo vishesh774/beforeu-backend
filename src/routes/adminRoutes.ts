@@ -38,7 +38,9 @@ import {
   rescheduleBooking,
   cancelBooking,
   assignServiceLocation,
-  triggerManualSOS
+  triggerManualSOS,
+  holdOrderItem,
+  resumeOrderItem
 } from '../controllers/bookingController';
 import {
   getAllPolicies,
@@ -168,6 +170,8 @@ router.post('/bookings/:id/reschedule', rescheduleBooking);
 router.post('/bookings/:id/cancel', cancelBooking);
 router.post('/bookings/:bookingId/items/:itemId/assign-location', assignServiceLocation);
 router.patch('/bookings/:bookingId/items/:itemId/status', updateOrderItemStatus);
+router.put('/bookings/:bookingId/items/:itemId/hold', holdOrderItem);
+router.put('/bookings/:bookingId/items/:itemId/resume', resumeOrderItem);
 
 // Refund & Cancellation Policy routes
 router.get('/refund-cancellation-policies', getAllPolicies);

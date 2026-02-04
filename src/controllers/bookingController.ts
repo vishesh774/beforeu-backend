@@ -184,7 +184,8 @@ export const getSubServicesByServiceId = asyncHandler(async (req: Request, res: 
     originalPrice: variant.originalPrice,
     finalPrice: variant.finalPrice,
     estimatedTimeMinutes: variant.estimatedTimeMinutes,
-    includedInSubscription: variant.includedInSubscription,
+    isIncludedInSubscription: variant.includedInSubscription,
+    isAvailableForPurchase: variant.availableForPurchase,
     creditCost: variant.creditValue,
     tags: variant.tags || [],
     createdAt: variant.createdAt,
@@ -432,6 +433,16 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   });
   const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
+  // Determine payment method
+  let paymentMethod: 'CREDITS' | 'ONLINE' | 'MIXED' = 'ONLINE';
+  if (creditsUsed > 0 && calculationResult.total === 0) {
+    paymentMethod = 'CREDITS';
+  } else if (creditsUsed > 0 && calculationResult.total > 0) {
+    paymentMethod = 'MIXED';
+  } else {
+    paymentMethod = 'ONLINE';
+  }
+
   // Determine status based on total amount
   let initialStatus: any = 'pending';
   let initialPaymentStatus = 'pending';
@@ -460,6 +471,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     totalAmount: calculationResult.total,
     totalOriginalAmount,
     creditsUsed, // Add creditsUsed to booking document
+    paymentMethod, // Add paymentMethod indicator
     couponCode: appliedCoupon?.code,
     discountAmount: couponDiscount,
     paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
@@ -626,9 +638,12 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
             serviceName: item.serviceName,
             icon: (item.serviceVariantId as any)?.icon || (item.serviceId as any)?.icon || null,
             price: item.finalPrice,
+            finalPrice: item.finalPrice,
             originalPrice: item.originalPrice,
             creditCost: item.creditValue || 0,
-            quantity: item.quantity
+            creditValue: item.creditValue || 0,
+            quantity: item.quantity,
+            paidWithCredits: item.paidWithCredits
           }],
           // Show per-item price as the total amount for this card
           totalAmount: item.finalPrice,
@@ -818,7 +833,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
         name: partner.name || '',
         phone: isCompleted ? '' : partner.phone,
         email: isCompleted ? '' : partner.email,
-        rating: partner.rating || 4.5,
+        rating: partner.rating || 0,
         jobsCompleted: partner.jobsCompleted || 0
       };
     }
@@ -837,7 +852,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
         name: partner.name || 'Professional',
         phone: isCompleted ? '' : partner.phone,
         email: isCompleted ? '' : partner.email,
-        rating: partner.rating || 4.5,
+        rating: partner.rating || 0,
         jobsCompleted: partner.jobsCompleted || 0
       };
     }
@@ -1279,8 +1294,11 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
       serviceName: item.serviceName,
       variantName: item.variantName,
       quantity: item.quantity,
+      price: item.finalPrice,
       finalPrice: item.finalPrice,
       originalPrice: item.originalPrice,
+      creditCost: item.creditValue || 0,
+      creditValue: item.creditValue || 0,
       estimatedTimeMinutes: item.estimatedTimeMinutes,
       status: item.status,
       startJobOtp: item.startJobOtp,
@@ -1308,8 +1326,9 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     endOtp: items[0]?.endJobOtp,
     // If specific item, show its price. Otherwise show total.
     totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
-    itemTotal: specificItem ? specificItem.originalPrice : (booking.itemTotal || booking.totalAmount),
+    itemTotal: specificItem ? (specificItem.paidWithCredits ? 0 : specificItem.finalPrice) : (booking.itemTotal || booking.totalAmount),
     totalOriginalAmount: booking.totalOriginalAmount,
+    creditsUsed: booking.creditsUsed || 0,
     paymentBreakdown: booking.paymentBreakdown || [],
     paymentId: booking.paymentId,
     orderId: booking.orderId,
@@ -2086,5 +2105,88 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
       customer: customer.name,
       creditsUsed: booking.creditsUsed
     }
+  });
+});
+
+// @desc    Put order item on hold (Admin)
+// @route   PUT /api/admin/bookings/:bookingId/items/:itemId/hold
+// @access  Private/Admin
+export const holdOrderItem = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { bookingId, itemId } = req.params;
+  const { reason, customRemark } = req.body;
+  const adminName = req.user?.name || 'Admin';
+
+  if (!reason) {
+    return next(new AppError('Reason is required to put item on hold', 400));
+  }
+
+  const booking = await Booking.findOne({ bookingId });
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  const orderItem = await OrderItem.findOne({ _id: itemId, bookingId: booking._id });
+  if (!orderItem) {
+    return next(new AppError('Order item not found', 404));
+  }
+
+  if (orderItem.status !== BookingStatus.IN_PROGRESS) {
+    return next(new AppError('Item must be in progress to put on hold', 400));
+  }
+
+  // Add hold entry
+  orderItem.holdHistory.push({
+    reason,
+    customRemark: reason === 'Other' ? customRemark : undefined,
+    holdStartedAt: new Date(),
+    heldBy: adminName
+  });
+
+  orderItem.status = BookingStatus.ON_HOLD;
+  await orderItem.save();
+  await syncBookingStatus(booking._id, { id: req.user?.id, name: adminName });
+
+  res.status(200).json({
+    success: true,
+    message: 'Item put on hold',
+    data: { status: BookingStatus.ON_HOLD }
+  });
+});
+
+// @desc    Resume order item from hold (Admin)
+// @route   PUT /api/admin/bookings/:bookingId/items/:itemId/resume
+// @access  Private/Admin
+export const resumeOrderItem = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { bookingId, itemId } = req.params;
+  const adminName = req.user?.name || 'Admin';
+
+  const booking = await Booking.findOne({ bookingId });
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  const orderItem = await OrderItem.findOne({ _id: itemId, bookingId: booking._id });
+  if (!orderItem) {
+    return next(new AppError('Order item not found', 404));
+  }
+
+  if (orderItem.status !== BookingStatus.ON_HOLD) {
+    return next(new AppError('Item must be on hold to resume', 400));
+  }
+
+  // Update the last hold entry with end time
+  const lastHoldEntry = orderItem.holdHistory[orderItem.holdHistory.length - 1];
+  if (lastHoldEntry && !lastHoldEntry.holdEndedAt) {
+    lastHoldEntry.holdEndedAt = new Date();
+  }
+
+  orderItem.status = BookingStatus.IN_PROGRESS;
+  await orderItem.save();
+  await syncBookingStatus(booking._id, { id: req.user?.id, name: adminName });
+
+  res.status(200).json({
+    success: true,
+    message: 'Item resumed',
+    data: { status: BookingStatus.IN_PROGRESS }
   });
 });
