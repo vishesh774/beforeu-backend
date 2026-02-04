@@ -833,7 +833,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
         name: partner.name || '',
         phone: isCompleted ? '' : partner.phone,
         email: isCompleted ? '' : partner.email,
-        rating: partner.rating || 4.5,
+        rating: partner.rating || 0,
         jobsCompleted: partner.jobsCompleted || 0
       };
     }
@@ -852,7 +852,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
         name: partner.name || 'Professional',
         phone: isCompleted ? '' : partner.phone,
         email: isCompleted ? '' : partner.email,
-        rating: partner.rating || 4.5,
+        rating: partner.rating || 0,
         jobsCompleted: partner.jobsCompleted || 0
       };
     }

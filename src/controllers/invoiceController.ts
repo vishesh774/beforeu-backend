@@ -1,4 +1,5 @@
 import { Response } from 'express';
+import mongoose from 'mongoose';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import Booking from '../models/Booking';
@@ -28,7 +29,13 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
         let invoiceData: any = {};
 
         if (isBooking) {
-            const booking = await Booking.findById(id).populate('userId');
+            let query = {};
+            if (mongoose.Types.ObjectId.isValid(id)) {
+                query = { _id: id };
+            } else {
+                query = { bookingId: id };
+            }
+            const booking = await Booking.findOne(query).populate('userId');
             if (!booking) return next(new AppError('Booking not found', 404));
 
             const orderItems = await OrderItem.find({ bookingId: booking._id });
