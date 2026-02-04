@@ -432,6 +432,16 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   });
   const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
+  // Determine payment method
+  let paymentMethod: 'CREDITS' | 'ONLINE' | 'MIXED' = 'ONLINE';
+  if (creditsUsed > 0 && calculationResult.total === 0) {
+    paymentMethod = 'CREDITS';
+  } else if (creditsUsed > 0 && calculationResult.total > 0) {
+    paymentMethod = 'MIXED';
+  } else {
+    paymentMethod = 'ONLINE';
+  }
+
   // Determine status based on total amount
   let initialStatus: any = 'pending';
   let initialPaymentStatus = 'pending';
@@ -460,6 +470,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     totalAmount: calculationResult.total,
     totalOriginalAmount,
     creditsUsed, // Add creditsUsed to booking document
+    paymentMethod, // Add paymentMethod indicator
     couponCode: appliedCoupon?.code,
     discountAmount: couponDiscount,
     paymentBreakdown: paymentBreakdown.length > 0 ? paymentBreakdown : undefined,
@@ -628,7 +639,8 @@ export const getUserBookings = asyncHandler(async (req: AuthRequest, res: Respon
             price: item.finalPrice,
             originalPrice: item.originalPrice,
             creditCost: item.creditValue || 0,
-            quantity: item.quantity
+            quantity: item.quantity,
+            paidWithCredits: item.paidWithCredits
           }],
           // Show per-item price as the total amount for this card
           totalAmount: item.finalPrice,
@@ -1279,8 +1291,9 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
       serviceName: item.serviceName,
       variantName: item.variantName,
       quantity: item.quantity,
-      finalPrice: item.finalPrice,
+      price: item.finalPrice,
       originalPrice: item.originalPrice,
+      creditCost: item.creditValue || 0,
       estimatedTimeMinutes: item.estimatedTimeMinutes,
       status: item.status,
       startJobOtp: item.startJobOtp,
@@ -1308,8 +1321,9 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     endOtp: items[0]?.endJobOtp,
     // If specific item, show its price. Otherwise show total.
     totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
-    itemTotal: specificItem ? specificItem.originalPrice : (booking.itemTotal || booking.totalAmount),
+    itemTotal: specificItem ? (specificItem.paidWithCredits ? 0 : specificItem.finalPrice) : (booking.itemTotal || booking.totalAmount),
     totalOriginalAmount: booking.totalOriginalAmount,
+    creditsUsed: booking.creditsUsed || 0,
     paymentBreakdown: booking.paymentBreakdown || [],
     paymentId: booking.paymentId,
     orderId: booking.orderId,

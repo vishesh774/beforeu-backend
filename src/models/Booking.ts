@@ -41,6 +41,7 @@ export interface IBooking extends Document {
   }>;
   status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
   paymentStatus: 'pending' | 'paid' | 'refunded';
+  paymentMethod?: 'CREDITS' | 'ONLINE' | 'MIXED';
   paymentId?: string; // Razorpay payment ID
   orderId?: string; // Razorpay order ID
   paymentDetails?: any; // Raw Razorpay response object
@@ -177,6 +178,11 @@ const BookingSchema = new Schema<IBooking>(
       enum: ['pending', 'paid', 'refunded'],
       default: 'pending',
       required: true
+    },
+    paymentMethod: {
+      type: String,
+      enum: ['CREDITS', 'ONLINE', 'MIXED'],
+      default: undefined
     },
     paymentId: {
       type: String,

@@ -6,6 +6,7 @@ import UserCredits from '../models/UserCredits';
 import UserPlan from '../models/UserPlan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
 import FamilyMember from '../models/FamilyMember';
+import Plan from '../models/Plan';
 
 // @desc    Get all customers with pagination and filters
 // @route   GET /api/admin/customers
@@ -306,6 +307,30 @@ export const addFamilyMember = asyncHandler(async (req: Request, res: Response, 
   const existingFamilyMember = await FamilyMember.findOne({ userId: primaryCustomer._id, phone: formattedPhone });
   if (existingFamilyMember) {
     return next(new AppError('Family member with this phone number already exists for this customer', 400));
+  }
+
+  // Plan Limit Check
+  const planHolderId = await getPlanHolderId(primaryCustomer._id);
+  const userPlan = await UserPlan.findOne({ userId: planHolderId });
+
+  if (userPlan && userPlan.activePlanId) {
+    if (!userPlan.expiresAt || new Date() < userPlan.expiresAt) {
+      const plan = await Plan.findById(userPlan.activePlanId);
+      if (plan) {
+        // Count total members added by the Plan Holder
+        const currentMemberCount = await FamilyMember.countDocuments({ userId: planHolderId });
+        // totalMembers includes the primary user
+        if (currentMemberCount + 1 >= plan.totalMembers) {
+          return next(new AppError(`The plan limit of ${plan.totalMembers} members (including primary) has been reached.`, 400));
+        }
+      }
+    }
+  } else {
+    // Default limit for users without a plan
+    const currentMemberCount = await FamilyMember.countDocuments({ userId: primaryCustomer._id });
+    if (currentMemberCount >= 5) {
+      return next(new AppError('The limit of 5 family members has been reached.', 400));
+    }
   }
 
   // Create FamilyMember document
