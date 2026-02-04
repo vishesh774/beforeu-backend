@@ -42,6 +42,17 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
     const escapedSearch = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const searchRegex = { $regex: escapedSearch, $options: 'i' };
 
+    const familyUserIds = new Set<string>();
+
+    // Search Family Members by name
+    const familyMembers = await FamilyMember.find({
+      name: searchRegex
+    }).select('userId');
+
+    familyMembers.forEach(fm => {
+      familyUserIds.add(fm.userId.toString());
+    });
+
     const orConditions: any[] = [
       { name: searchRegex },
       { email: searchRegex },
@@ -53,6 +64,17 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
     if (digitsOnly.length >= 10) {
       const last10 = digitsOnly.slice(-10);
       orConditions.push({ phone: { $regex: last10 + '$' } });
+
+      // Search family members by phone match as well
+      const familyByPhone = await FamilyMember.find({ phone: { $regex: last10 + '$' } }).select('userId');
+      familyByPhone.forEach(fm => {
+        familyUserIds.add(fm.userId.toString());
+      });
+    }
+
+    // Add family matched user IDs to filter
+    if (familyUserIds.size > 0) {
+      orConditions.push({ _id: { $in: Array.from(familyUserIds) } });
     }
 
     filter.$or = orConditions;
@@ -79,6 +101,21 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
       UserPlan.findOne({ userId: planHolderId })
     ]);
 
+    // Find matching family members if searching
+    let matchingFamilyMembers: Array<{ name: string, relation: string }> = [];
+    if (searchQuery && searchQuery.trim()) {
+      const trimmedSearch = searchQuery.trim();
+      const escapedSearch = trimmedSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchRegex = { $regex: escapedSearch, $options: 'i' };
+
+      const matches = await FamilyMember.find({
+        userId: customer._id,
+        $or: [{ name: searchRegex }, { phone: searchRegex }]
+      }).select('name relation');
+
+      matchingFamilyMembers = matches.map(m => ({ name: m.name, relation: m.relation }));
+    }
+
     return {
       id: customer._id.toString(),
       name: customer.name,
@@ -88,6 +125,7 @@ export const getAllCustomers = asyncHandler(async (req: Request, res: Response, 
       credits: credits?.credits || 0,
       activePlanId: userPlan?.activePlanId,
       isSharedPlan,
+      matchingFamilyMembers,
       createdAt: customer.createdAt,
       updatedAt: customer.updatedAt
     };
