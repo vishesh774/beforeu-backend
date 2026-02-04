@@ -603,12 +603,17 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           booking: {
             ...booking.toObject(),
             id: booking._id.toString(),
+            creditsUsed: booking.creditsUsed || 0,
+            paymentMethod: booking.paymentMethod,
             items: orderItems.map(item => ({
               ...item,
               price: item.finalPrice,
+              finalPrice: item.finalPrice,
               originalPrice: item.originalPrice,
               creditCost: item.creditValue,
-              quantity: item.quantity
+              creditValue: item.creditValue,
+              quantity: item.quantity,
+              paidWithCredits: (item as any).paidWithCredits || false
             })),
             date: booking.scheduledDate?.toISOString() || new Date().toISOString(),
             time: booking.scheduledTime || '',
@@ -854,15 +859,20 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       const transformedBooking = {
         id: booking._id.toString(),
         bookingId: booking.bookingId,
+        creditsUsed: booking.creditsUsed || 0,
+        paymentMethod: booking.paymentMethod,
         items: orderItems.map((item) => ({
           serviceId: item.serviceId.toString(),
           variantId: item.serviceVariantId.toString(),
           variantName: item.variantName,
           serviceName: item.serviceName,
           price: item.finalPrice,
+          finalPrice: item.finalPrice,
           originalPrice: item.originalPrice,
           creditCost: item.creditValue,
+          creditValue: item.creditValue,
           quantity: item.quantity,
+          paidWithCredits: item.paidWithCredits || false
         })),
         totalAmount: booking.totalAmount,
         itemTotal: booking.itemTotal,
