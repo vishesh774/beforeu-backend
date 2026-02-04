@@ -29,7 +29,7 @@ export const getAllPlans = asyncHandler(async (req: Request, res: Response) => {
 
   const filter: any = {};
   // If accessed via /api/auth/plans (customer route), only show active plans
-  const isCustomerRoute = req.path.includes('/auth/plans');
+  const isCustomerRoute = req.originalUrl.includes('/auth/plans');
   if (isCustomerRoute) {
     filter.planStatus = 'active';
   } else if (planStatus !== undefined) {
