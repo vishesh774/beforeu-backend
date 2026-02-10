@@ -2,8 +2,7 @@ import { Response } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
-// @ts-ignore - Razorpay doesn't have proper TypeScript definitions
-const Razorpay = require('razorpay');
+import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Booking from '../models/Booking';
@@ -222,7 +221,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         const validityDays = plan.validity || 365;
         expiryDate.setDate(expiryDate.getDate() + validityDays);
 
-        let userPlan = await UserPlan.findOne({ userId: userIdObj });
+        const userPlan = await UserPlan.findOne({ userId: userIdObj });
         if (!userPlan) {
           await UserPlan.create({
             userId: userIdObj,
@@ -235,7 +234,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           await userPlan.save();
         }
 
-        let userCredits = await UserCredits.findOne({ userId: userIdObj });
+        const userCredits = await UserCredits.findOne({ userId: userIdObj });
         if (!userCredits) {
           await UserCredits.create({ userId: userIdObj, credits: plan.totalCredits });
         } else {
@@ -358,7 +357,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       // 1. Calculate base item total and validate items
       let totalAmount = 0;
       let totalOriginalAmount = 0;
-      let orderItems = [];
+      const orderItems = [];
 
       for (const item of bookingData.items) {
         const service = await Service.findOne({
@@ -932,7 +931,7 @@ export const getRazorpayOrderDetails = asyncHandler(async (req: any, res: Respon
             order = await razorpay.orders.fetch(orderId);
             const allPayments = await razorpay.orders.fetchPayments(orderId);
             payments = allPayments.items;
-          } catch (e) {
+          } catch {
             // Order might not exist if it was a direct payment
             payments = [capturedPayment];
           }
@@ -1135,7 +1134,7 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
       const expiryDate = new Date();
       expiryDate.setDate(expiryDate.getDate() + (planToActivate.validity || 365));
 
-      let userPlan = await UserPlan.findOne({ userId: userIdObj });
+      const userPlan = await UserPlan.findOne({ userId: userIdObj });
       if (!userPlan) {
         await UserPlan.create({ userId: userIdObj, activePlanId: planToActivate._id.toString(), expiresAt: expiryDate });
       } else {
@@ -1144,7 +1143,7 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
         await userPlan.save();
       }
 
-      let userCredits = await UserCredits.findOne({ userId: userIdObj });
+      const userCredits = await UserCredits.findOne({ userId: userIdObj });
       if (!userCredits) {
         await UserCredits.create({ userId: userIdObj, credits: planTx.credits });
       } else {
@@ -1184,7 +1183,7 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
 
       let totalAmount = 0;
       let totalOriginalAmount = 0;
-      let orderItemsData = [];
+      const orderItemsData = [];
       let creditsToDeduct = 0;
 
       for (const item of items) {

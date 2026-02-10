@@ -95,7 +95,7 @@ export const generateInvoiceBuffer = async (invoiceData: InvoiceData): Promise<B
                     const base64Data = settings.logoUrl.split(',')[1];
                     const logoBuffer = Buffer.from(base64Data, 'base64');
                     doc.image(logoBuffer, 50, 35, { fit: [100, 70], valign: 'center' });
-                } catch (e) {
+                } catch {
                     doc.font('Helvetica-Bold').fontSize(20).fillColor(blueColor).text(settings.name, margin, yPos);
                 }
             } else {

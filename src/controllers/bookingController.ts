@@ -434,7 +434,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
   // Determine payment method
-  let paymentMethod: 'CREDITS' | 'ONLINE' | 'MIXED' = 'ONLINE';
+  let paymentMethod: 'CREDITS' | 'ONLINE' | 'MIXED';
   if (creditsUsed > 0 && calculationResult.total === 0) {
     paymentMethod = 'CREDITS';
   } else if (creditsUsed > 0 && calculationResult.total > 0) {

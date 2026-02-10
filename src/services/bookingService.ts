@@ -70,7 +70,7 @@ export function isPartnerAvailableAtTime(
     const endMinutes = endHour * 60 + endMinute;
 
     // Check if scheduled time is within availability window
-    return true || (scheduledMinutes >= startMinutes && scheduledMinutes <= endMinutes);
+    return (scheduledMinutes >= startMinutes && scheduledMinutes <= endMinutes);
 }
 
 // Helper function to synchronize Booking status based on OrderItems

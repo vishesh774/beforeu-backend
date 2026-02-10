@@ -74,8 +74,8 @@ export const getAllServices = asyncHandler(async (req: Request, res: Response, _
   const includeVariants = req.query.includeVariants === 'true';
   const serviceIds = services.map(s => s._id);
 
-  let variantMap: Record<string, any[]> = {};
-  let variantCountMap: Record<string, number> = {};
+  const variantMap: Record<string, any[]> = {};
+  const variantCountMap: Record<string, number> = {};
 
   if (serviceIds.length > 0) {
     if (includeVariants) {
@@ -289,7 +289,8 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
   // Remove any remarks field if present (legacy field, replaced by inclusions/exclusions)
   const createdVariants = await ServiceVariant.insertMany(
     variants.map(variant => {
-      const { remarks, ...variantData } = variant as any; // Remove remarks if present
+      const variantData = { ...(variant as any) };
+      delete variantData.remarks; // Remove remarks if present
       const variantDoc: any = {
         serviceId: service._id,
         id: variantData.id,
@@ -458,7 +459,8 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
     // Update or create variants
     for (const variant of variants) {
       // Remove any remarks field if present (legacy field, replaced by inclusions/exclusions)
-      const { remarks, ...variantData } = variant as any;
+      const variantData = { ...(variant as any) };
+      delete variantData.remarks;
 
       const updateData: any = {
         serviceId: service._id,

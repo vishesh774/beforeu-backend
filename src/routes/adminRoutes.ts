@@ -101,9 +101,6 @@ import { generateInvoicePDF } from '../controllers/invoiceController';
 import { requireAdmin } from '../middleware/adminAuth';
 
 import {
-  getCustomerPendingPayments,
-  createCustomerPaymentOrder,
-  verifyCustomerPayment,
   waiveExtraCharge
 } from '../controllers/extraChargesController';
 

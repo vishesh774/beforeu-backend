@@ -258,8 +258,8 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
 // @access  Private/Admin
 export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: Response, next: any) => {
   const { id } = req.params;
-  let transaction: any = null;
-  let userId: any = null;
+  let transaction: any;
+  let userId: any;
 
   // Check if it's a legacy ID
   if (id.startsWith('LEGACY-')) {
@@ -454,7 +454,7 @@ export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Re
       const validityDays = plan.validity || 365;
       expiryDate.setDate(expiryDate.getDate() + validityDays);
 
-      let userPlan = await UserPlan.findOne({ userId });
+      const userPlan = await UserPlan.findOne({ userId });
       if (!userPlan) {
         await UserPlan.create({
           userId,
@@ -467,7 +467,7 @@ export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Re
         await userPlan.save();
       }
 
-      let userCredits = await UserCredits.findOne({ userId });
+      const userCredits = await UserCredits.findOne({ userId });
       if (!userCredits) {
         await UserCredits.create({ userId, credits: plan.totalCredits });
       } else {

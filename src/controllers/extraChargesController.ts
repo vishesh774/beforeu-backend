@@ -1,4 +1,5 @@
 import { Response, NextFunction } from 'express';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
@@ -407,7 +408,6 @@ export const verifyExtraChargePayment = asyncHandler(async (req: AuthRequest, re
         return next(new AppError('Payment gateway not configured', 500));
     }
 
-    const crypto = require('crypto');
     const expectedSignature = crypto
         .createHmac('sha256', keySecret)
         .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -801,7 +801,6 @@ export const createCustomerPaymentOrder = asyncHandler(async (req: AuthRequest, 
                 userId: userId
             }
         });
-
         // Store order ID
         job.extraCharges[chargeIndex].razorpayOrderId = order.id;
         await job.save();
@@ -887,7 +886,6 @@ export const verifyCustomerPayment = asyncHandler(async (req: AuthRequest, res: 
         return next(new AppError('Payment gateway not configured', 500));
     }
 
-    const crypto = require('crypto');
     const expectedSignature = crypto
         .createHmac('sha256', keySecret)
         .update(`${razorpay_order_id}|${razorpay_payment_id}`)

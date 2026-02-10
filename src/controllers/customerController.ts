@@ -263,7 +263,7 @@ export const addCustomer = asyncHandler(async (req: Request, res: Response, next
     return next(new AppError('Phone number must be exactly 10 digits', 400));
   }
 
-  let formattedPhone = '+91' + cleanPhone;
+  const formattedPhone = '+91' + cleanPhone;
 
   // Check if phone already exists
   const existingPhone = await User.findOne({ phone: formattedPhone });
@@ -339,7 +339,7 @@ export const addFamilyMember = asyncHandler(async (req: Request, res: Response, 
     return next(new AppError('Phone number must be exactly 10 digits', 400));
   }
 
-  let formattedPhone = '+91' + cleanPhone;
+  const formattedPhone = '+91' + cleanPhone;
 
   // Check if family member already exists in THIS user's family
   const existingFamilyMember = await FamilyMember.findOne({ userId: primaryCustomer._id, phone: formattedPhone });
