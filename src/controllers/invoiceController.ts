@@ -70,6 +70,8 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
                 customerPhone: customer?.phone,
                 customerEmail: customer?.email,
                 customerAddress: booking.address?.fullAddress,
+                // Billing details override (from admin panel)
+                billingDetails: booking.billingDetails || undefined,
                 items: [
                     ...orderItems.map(item => ({
                         description: `${item.serviceName} - ${item.variantName}`,
@@ -122,6 +124,98 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
                 paymentMethod: paymentMethod
             };
         }
+
+        const pdfBuffer = await generateInvoiceBuffer(invoiceData);
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Length', pdfBuffer.length);
+        res.setHeader('Content-Disposition', `attachment; filename=Invoice_${invoiceData.invoiceNumber}.pdf`);
+        res.send(pdfBuffer);
+
+    } catch (error: any) {
+        console.error('Invoice generation error:', error);
+        return next(new AppError('Failed to generate invoice', 500));
+    }
+});
+
+// @desc    Generate User Invoice PDF
+// @route   GET /api/bookings/:id/invoice
+// @access  Private
+export const getUserInvoicePDF = asyncHandler(async (req: any, res: Response, next: any) => {
+    const { id } = req.params;
+    const userId = req.user._id;
+
+    try {
+        const companySettings = (await CompanySettings.findOne()) || {
+            name: "BeforeU",
+            address: "",
+            phone: "",
+            email: "",
+            gstNumber: "",
+            invoicePrefix: "BU"
+        };
+
+        const settings = companySettings as any;
+
+        let query = {};
+        if (mongoose.Types.ObjectId.isValid(id)) {
+            query = { _id: id, userId: userId };
+        } else {
+            query = { bookingId: id, userId: userId };
+        }
+
+        const booking = await Booking.findOne(query).populate('userId');
+        if (!booking) return next(new AppError('Invoice not found or access denied', 404));
+
+        const orderItems = await OrderItem.find({ bookingId: booking._id });
+        const customer = booking.userId as any;
+
+        const paidExtraCharges = orderItems.flatMap(item =>
+            (item.extraCharges || [])
+                .filter(charge => charge.status === 'paid')
+                .map(charge => ({
+                    description: `Extra: ${charge.description} (${item.variantName})`,
+                    quantity: 1,
+                    price: charge.amount,
+                    total: charge.amount
+                }))
+        );
+
+        const extraChargesTotal = paidExtraCharges.reduce((sum, c) => sum + c.total, 0);
+
+        let paymentMethod = 'Online';
+        if (booking.paymentDetails?.method) {
+            paymentMethod = booking.paymentDetails.method;
+        } else if (booking.creditsUsed > 0 && booking.totalAmount === 0) {
+            paymentMethod = 'Credits';
+        }
+
+        const invoiceData = {
+            invoiceNumber: `${settings.invoicePrefix}-${booking.bookingId}`,
+            date: booking.createdAt,
+            customerName: customer?.name,
+            customerPhone: customer?.phone,
+            customerEmail: customer?.email,
+            customerAddress: booking.address?.fullAddress,
+            billingDetails: booking.billingDetails || undefined,
+            items: [
+                ...orderItems.map(item => ({
+                    description: `${item.serviceName} - ${item.variantName}`,
+                    quantity: item.quantity,
+                    price: item.finalPrice / item.quantity,
+                    total: item.finalPrice
+                })),
+                ...paidExtraCharges
+            ],
+            subtotal: (booking.itemTotal || booking.totalOriginalAmount || 0) + extraChargesTotal,
+            discount: booking.discountAmount || 0,
+            creditsUsed: booking.creditsUsed || 0,
+            taxBreakdown: booking.paymentBreakdown || [],
+            total: (booking.totalAmount || 0) + extraChargesTotal,
+            paymentStatus: booking.paymentStatus,
+            paymentId: booking.paymentId,
+            paymentMethod: paymentMethod
+        };
 
         const pdfBuffer = await generateInvoiceBuffer(invoiceData);
 

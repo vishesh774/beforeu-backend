@@ -20,6 +20,11 @@ export interface InvoiceData {
     customerPhone?: string;
     customerEmail?: string;
     customerAddress?: string;
+    billingDetails?: {
+        gstNumber?: string;
+        billingName?: string;
+        billingAddress?: string;
+    };
     items: InvoiceItem[];
     subtotal: number;
     discount: number;
@@ -158,8 +163,10 @@ export const generateInvoiceBuffer = async (invoiceData: InvoiceData): Promise<B
             doc.font('Helvetica').fontSize(10).fillColor(grayColor);
             const billToWidth = rightEdge - billToX;
 
-            if (hasValue(invoiceData.customerName)) {
-                doc.text(invoiceData.customerName, billToX, billY, { width: billToWidth });
+            // Use billing name if provided, otherwise customer name
+            const displayName = invoiceData.billingDetails?.billingName || invoiceData.customerName;
+            if (hasValue(displayName)) {
+                doc.text(displayName, billToX, billY, { width: billToWidth });
                 billY += 14;
             }
             if (hasValue(invoiceData.customerPhone)) {
@@ -170,9 +177,19 @@ export const generateInvoiceBuffer = async (invoiceData: InvoiceData): Promise<B
                 doc.text(invoiceData.customerEmail || '', billToX, billY, { width: billToWidth });
                 billY += 14;
             }
-            if (hasValue(invoiceData.customerAddress)) {
-                doc.text(invoiceData.customerAddress || '', billToX, billY, { width: billToWidth });
-                billY += doc.heightOfString(invoiceData.customerAddress || '', { width: billToWidth }) + 5;
+
+            // Use billing address if provided, otherwise customer address
+            const displayAddress = invoiceData.billingDetails?.billingAddress || invoiceData.customerAddress;
+            if (hasValue(displayAddress)) {
+                doc.text(displayAddress || '', billToX, billY, { width: billToWidth });
+                billY += doc.heightOfString(displayAddress || '', { width: billToWidth }) + 5;
+            }
+
+            // Customer GST number
+            if (hasValue(invoiceData.billingDetails?.gstNumber)) {
+                doc.font('Helvetica-Bold').fontSize(9).fillColor(blackColor)
+                    .text(`GSTIN: ${invoiceData.billingDetails!.gstNumber}`, billToX, billY, { width: billToWidth });
+                billY += 14;
             }
 
             // Table Header

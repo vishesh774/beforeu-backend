@@ -45,6 +45,11 @@ export interface IBooking extends Document {
   paymentId?: string; // Razorpay payment ID
   orderId?: string; // Razorpay order ID
   paymentDetails?: any; // Raw Razorpay response object
+  billingDetails?: {
+    gstNumber?: string;
+    billingName?: string;
+    billingAddress?: string;
+  };
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -195,6 +200,11 @@ const BookingSchema = new Schema<IBooking>(
     paymentDetails: {
       type: Schema.Types.Mixed, // Store raw Razorpay response
       default: {}
+    },
+    billingDetails: {
+      gstNumber: { type: String, trim: true },
+      billingName: { type: String, trim: true },
+      billingAddress: { type: String, trim: true }
     },
     notes: {
       type: String,

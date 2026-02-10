@@ -40,7 +40,8 @@ import {
   assignServiceLocation,
   triggerManualSOS,
   holdOrderItem,
-  resumeOrderItem
+  resumeOrderItem,
+  updateBillingDetails
 } from '../controllers/bookingController';
 import {
   getAllPolicies,
@@ -177,6 +178,7 @@ router.patch('/bookings/:bookingId/items/:itemId/status', updateOrderItemStatus)
 router.put('/bookings/:bookingId/items/:itemId/hold', holdOrderItem);
 router.put('/bookings/:bookingId/items/:itemId/resume', resumeOrderItem);
 router.post('/bookings/:id/items/:itemId/extra-charges/:chargeId/waive', waiveExtraCharge);
+router.put('/bookings/:id/billing-details', updateBillingDetails);
 
 // Refund & Cancellation Policy routes
 router.get('/refund-cancellation-policies', getAllPolicies);

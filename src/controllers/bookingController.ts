@@ -1377,6 +1377,7 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     status: specificItem ? specificItem.status : booking.status,
     paymentStatus: booking.paymentStatus,
     notes: booking.notes,
+    billingDetails: booking.billingDetails || null,
     createdAt: booking.createdAt,
     updatedAt: booking.updatedAt,
     actionLog: booking.actionLog,
@@ -2239,5 +2240,126 @@ export const resumeOrderItem = asyncHandler(async (req: AuthRequest, res: Respon
     success: true,
     message: 'Item resumed',
     data: { status: BookingStatus.IN_PROGRESS }
+  });
+});
+
+
+// ──────────────────────────────────────────────────────────────
+// GST Validation Utilities
+// ──────────────────────────────────────────────────────────────
+
+/**
+ * Validates a GST Number (GSTIN) format.
+ * Format: 2-digit State Code | 10-char PAN | Entity Code (1-9/A-Z) | Z | Check Digit
+ * Total: 15 characters
+ * For Maharashtra, must start with '27'.
+ */
+function validateGSTNumber(gst: string): { valid: boolean; error?: string } {
+  if (!gst || typeof gst !== 'string') {
+    return { valid: false, error: 'GST number is required' };
+  }
+
+  const gstin = gst.trim().toUpperCase();
+
+  // Length check
+  if (gstin.length !== 15) {
+    return { valid: false, error: 'GST number must be exactly 15 characters' };
+  }
+
+  // Format regex: 2-digit state code, 5 alpha PAN holder, 4 digit PAN, 1 alpha PAN type, 1 entity code, Z, 1 check
+  const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+  if (!gstRegex.test(gstin)) {
+    return { valid: false, error: 'Invalid GST number format. Expected format: 27XXXXX1234X1ZX' };
+  }
+
+  // State code check - must be 27 for Maharashtra
+  const stateCode = gstin.substring(0, 2);
+  if (stateCode !== '27') {
+    return { valid: false, error: 'GST number must start with 27 (Maharashtra). We currently operate only in Maharashtra.' };
+  }
+
+  // Checksum validation (Luhn-like for GSTIN)
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const charIndex = chars.indexOf(gstin[i]);
+    if (charIndex === -1) return { valid: false, error: 'Invalid characters in GST number' };
+
+    let value = charIndex;
+    if (i % 2 !== 0) {
+      value = value * 2;
+      const quotient = Math.floor(value / 36);
+      const remainder = value % 36;
+      value = quotient + remainder;
+    }
+    sum += value;
+  }
+
+  const expectedCheckChar = chars[(36 - (sum % 36)) % 36];
+  if (gstin[14] !== expectedCheckChar) {
+    return { valid: false, error: 'GST number checksum validation failed. Please verify the number.' };
+  }
+
+  return { valid: true };
+}
+
+
+// @desc    Update billing details for a booking (Admin)
+// @route   PUT /api/admin/bookings/:id/billing-details
+// @access  Private/Admin
+export const updateBillingDetails = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { id } = req.params;
+  const { gstNumber, billingName, billingAddress } = req.body;
+  const adminName = req.user?.name || 'Admin';
+
+  // Find booking
+  const query = mongoose.Types.ObjectId.isValid(id)
+    ? { _id: id }
+    : { bookingId: id };
+
+  const booking = await Booking.findOne(query);
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // Validate GST number if provided
+  if (gstNumber) {
+    const gstValidation = validateGSTNumber(gstNumber);
+    if (!gstValidation.valid) {
+      return next(new AppError(gstValidation.error || 'Invalid GST number', 400));
+    }
+  }
+
+  // Build the update
+  const previousBilling = booking.billingDetails || {};
+  const updatedBilling = {
+    gstNumber: gstNumber?.trim().toUpperCase() || previousBilling.gstNumber || undefined,
+    billingName: billingName?.trim() || previousBilling.billingName || undefined,
+    billingAddress: billingAddress?.trim() || previousBilling.billingAddress || undefined,
+  };
+
+  booking.billingDetails = updatedBilling;
+
+  // Add action log entry
+  const changes: string[] = [];
+  if (gstNumber && gstNumber !== previousBilling.gstNumber) changes.push(`GST: ${gstNumber.toUpperCase()}`);
+  if (billingName && billingName !== previousBilling.billingName) changes.push(`Name: ${billingName}`);
+  if (billingAddress && billingAddress !== previousBilling.billingAddress) changes.push(`Address: ${billingAddress}`);
+
+  booking.actionLog.push({
+    action: 'BILLING_DETAILS_UPDATED',
+    performedBy: adminName,
+    timestamp: new Date(),
+    details: `Billing details updated: ${changes.join(', ') || 'No changes'}`
+  });
+
+  await booking.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Billing details updated successfully',
+    data: {
+      billingDetails: booking.billingDetails
+    }
   });
 });

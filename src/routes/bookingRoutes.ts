@@ -1,5 +1,15 @@
 import express from 'express';
-import { getAllServices, getServicesByLocation, getSubServicesByServiceId, createBooking, getUserBookings, getUserBookingById, rescheduleBooking, cancelBooking } from '../controllers/bookingController';
+import {
+    getAllServices,
+    getServicesByLocation,
+    getSubServicesByServiceId,
+    createBooking,
+    getUserBookings,
+    getUserBookingById,
+    rescheduleBooking,
+    cancelBooking
+} from '../controllers/bookingController';
+import { getUserInvoicePDF } from '../controllers/invoiceController';
 import { protect } from '../middleware/auth';
 import {
     getCustomerPendingPayments,
@@ -24,6 +34,7 @@ router.get('/bookings/pending-extra-payments', protect, getCustomerPendingPaymen
 router.post('/bookings', protect, createBooking);
 router.get('/bookings', protect, getUserBookings);
 router.get('/bookings/:bookingId', protect, getUserBookingById);
+router.get('/bookings/:id/invoice', protect, getUserInvoicePDF);
 router.post('/bookings/:id/reschedule', protect, rescheduleBooking);
 router.post('/bookings/:id/cancel', protect, cancelBooking);
 
@@ -32,4 +43,3 @@ router.post('/bookings/:bookingId/items/:itemId/extra-charges/:chargeId/pay', pr
 router.post('/bookings/:bookingId/items/:itemId/extra-charges/:chargeId/verify', protect, verifyCustomerPayment);
 
 export default router;
-
