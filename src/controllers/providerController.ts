@@ -115,6 +115,11 @@ export const getJobDetails = asyncHandler(async (req: AuthRequest, res: Response
 
     const isCompleted = COMPLETED_BOOKING_STATUSES.includes(job.status as BookingStatus);
 
+    // Calculate extra charges summary
+    const extraCharges = job.extraCharges || [];
+    const pendingCharges = extraCharges.filter(c => c.status === 'pending');
+    const paidCharges = extraCharges.filter(c => c.status === 'paid');
+
     res.status(200).json({
         success: true,
         data: {
@@ -136,7 +141,26 @@ export const getJobDetails = asyncHandler(async (req: AuthRequest, res: Response
                 customerVisitRequired: job.customerVisitRequired,
                 bookingType: booking.bookingType,
                 startOtpRequired: booking.bookingType !== 'SOS',
-                endOtpRequired: true
+                endOtpRequired: true,
+                // Extra charges
+                extraCharges: extraCharges.map(charge => ({
+                    id: charge.id,
+                    amount: charge.amount,
+                    description: charge.description,
+                    status: charge.status,
+                    paymentMethod: charge.paymentMethod,
+                    addedAt: charge.addedAt,
+                    paidAt: charge.paidAt
+                })),
+                extraChargesSummary: {
+                    total: extraCharges.length,
+                    pendingCount: pendingCharges.length,
+                    paidCount: paidCharges.length,
+                    totalPendingAmount: pendingCharges.reduce((sum, c) => sum + c.amount, 0),
+                    totalPaidAmount: paidCharges.reduce((sum, c) => sum + c.amount, 0)
+                },
+                // Flag to indicate if job can be completed (no pending extra charges)
+                canComplete: pendingCharges.length === 0
             }
         }
     });
@@ -243,12 +267,23 @@ export const endJob = asyncHandler(async (req: AuthRequest, res: Response, next:
 
     if (!job) return next(new AppError('Job not found', 404));
 
+    // Block completion if there are pending extra charges
+    const pendingCharges = (job.extraCharges || []).filter(c => c.status === 'pending');
+    if (pendingCharges.length > 0) {
+        const pendingAmount = pendingCharges.reduce((sum, c) => sum + c.amount, 0);
+        return next(new AppError(
+            `Cannot complete job. Please collect ${pendingCharges.length} pending extra charge payment(s) totaling ₹${pendingAmount} before completing.`,
+            400
+        ));
+    }
+
     // Verify OTP
     if (job.endJobOtp !== otp) {
         return next(new AppError('Invalid End OTP', 400));
     }
 
     job.status = BookingStatus.COMPLETED;
+    job.completedAt = new Date();
     await job.save();
 
     // Sync parent booking status

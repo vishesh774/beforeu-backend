@@ -9,6 +9,24 @@ export interface IHoldEntry {
   heldBy: string; // Partner name or admin name
 }
 
+// Extra charges added by service partner during a job
+export interface IExtraCharge {
+  id: string; // UUID for unique identification
+  amount: number;
+  description: string;
+  status: 'pending' | 'paid' | 'cancelled';
+  paymentMethod?: 'cash' | 'upi' | 'razorpay';
+  razorpayOrderId?: string;
+  razorpayQrId?: string; // Razorpay QR Code ID for UPI payments
+  razorpayPaymentId?: string;
+  addedBy: mongoose.Types.ObjectId; // ServicePartner ID
+  addedByName: string; // Partner name for display
+  addedAt: Date;
+  paidAt?: Date;
+  notes?: string;
+}
+
+
 export interface IOrderItem extends Document {
   bookingId: mongoose.Types.ObjectId;
   serviceId: mongoose.Types.ObjectId;
@@ -27,6 +45,7 @@ export interface IOrderItem extends Document {
   startJobOtp?: string;
   endJobOtp?: string;
   holdHistory: IHoldEntry[];  // Track hold periods for time calculation
+  extraCharges: IExtraCharge[]; // Extra charges added during job
   startedAt?: Date;  // When job started (status became in_progress)
   completedAt?: Date;  // When job completed
   status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
@@ -125,6 +144,33 @@ const OrderItemSchema = new Schema<IOrderItem>(
       }],
       default: []
     },
+    extraCharges: {
+      type: [{
+        id: { type: String, required: true },
+        amount: { type: Number, required: true, min: 1 },
+        description: { type: String, required: true, minlength: 3 },
+        status: {
+          type: String,
+          enum: ['pending', 'paid', 'cancelled'],
+          default: 'pending'
+        },
+        paymentMethod: {
+          type: String,
+          enum: ['cash', 'upi', 'razorpay'],
+          default: null
+        },
+        razorpayOrderId: { type: String },
+        razorpayQrId: { type: String }, // Razorpay QR Code ID
+        razorpayPaymentId: { type: String },
+        addedBy: { type: Schema.Types.ObjectId, ref: 'ServicePartner', required: true },
+        addedByName: { type: String, required: true },
+        addedAt: { type: Date, default: Date.now },
+        paidAt: { type: Date },
+        notes: { type: String }
+      }],
+      default: []
+    },
+
     startedAt: {
       type: Date,
       default: null

@@ -877,6 +877,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     id: requestedId, // Return the requested ID (virtual or real)
     bookingId: booking.bookingId, // The real database ID
     items: displayItems.map(item => ({
+      id: item._id.toString(),
       serviceId: (item.serviceId as any).id || item.serviceId.toString(),
       variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
       variantName: item.variantName,
@@ -895,7 +896,25 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
         address: (item.assignedServiceLocationId as any).address,
         contactNumber: (item.assignedServiceLocationId as any).contactNumber,
         contactPerson: (item.assignedServiceLocationId as any).contactPerson
-      } : null
+      } : null,
+      // Extra charges added by service partner
+      extraCharges: (item.extraCharges || []).map(charge => ({
+        id: charge.id,
+        amount: charge.amount,
+        description: charge.description,
+        status: charge.status,
+        paymentMethod: charge.paymentMethod,
+        addedByName: charge.addedByName,
+        addedAt: charge.addedAt,
+        paidAt: charge.paidAt
+      })),
+      extraChargesSummary: {
+        total: (item.extraCharges || []).length,
+        pending: (item.extraCharges || []).filter(c => c.status === 'pending').length,
+        paid: (item.extraCharges || []).filter(c => c.status === 'paid').length,
+        totalPendingAmount: (item.extraCharges || []).filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0),
+        totalPaidAmount: (item.extraCharges || []).filter(c => c.status === 'paid').reduce((sum, c) => sum + c.amount, 0)
+      }
     })),
     // If specific item, show its price. Otherwise show total.
     totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
