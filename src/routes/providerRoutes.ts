@@ -6,7 +6,10 @@ import {
     updateJobStatus,
     startJob,
     endJob,
-    getProfile
+    getProfile,
+    getPartnerSOSAlerts,
+    getUnassignedSOSAlerts,
+    acceptSOSAlert
 } from '../controllers/providerController';
 import {
     addExtraCharge,
@@ -33,6 +36,11 @@ router.put('/jobs/:id/status', updateJobStatus);
 router.post('/jobs/:id/start', startJob);
 router.post('/jobs/:id/end', endJob);
 router.get('/profile', getProfile);
+
+// SOS routes (for partners assigned to SOS service)
+router.get('/sos/unassigned', getUnassignedSOSAlerts);
+router.get('/sos', getPartnerSOSAlerts);
+router.post('/sos/:id/accept', acceptSOSAlert);
 
 // Extra charges routes
 router.get('/jobs/:id/extra-charges', getExtraCharges);

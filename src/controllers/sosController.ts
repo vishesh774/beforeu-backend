@@ -12,6 +12,7 @@ import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
 import { formatTimeToIST } from '../utils/dateUtils';
+import { triggerSOSCallsToPartners } from '../services/sosCallService';
 
 import CustomerAppSettings from '../models/CustomerAppSettings';
 
@@ -220,6 +221,16 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
 
         // Emit socket event to admins
         socketService.emitToAdmin('sos:alert', populatedAlert);
+
+        // Trigger phone calls to eligible SOS partners (fire-and-forget, non-blocking)
+        triggerSOSCallsToPartners(
+            { latitude: location.latitude, longitude: location.longitude, address: location.address || location.fullAddress },
+            sosIdStr
+        ).then(callResult => {
+            console.log(`[triggerSOS] SOS call results for ${sosIdStr}: ${callResult.callsTriggered}/${callResult.totalPartners} calls triggered`);
+        }).catch(callError => {
+            console.error(`[triggerSOS] SOS call workflow failed for ${sosIdStr}:`, callError);
+        });
 
         res.status(201).json({ success: true, data: populatedAlert });
     } catch (error) {

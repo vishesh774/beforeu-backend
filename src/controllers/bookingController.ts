@@ -30,6 +30,7 @@ import { sendBookingAssignmentMessage } from '../services/whatsappService';
 import FamilyMember from '../models/FamilyMember';
 import CustomerAppSettings from '../models/CustomerAppSettings';
 import { sendSosNotification, sendJobNotification } from '../services/pushNotificationService';
+import { triggerSOSCallsToPartners } from '../services/sosCallService';
 
 
 // @desc    Get all active services (without location requirement)
@@ -2135,6 +2136,16 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
   } catch (notifErr) {
     console.error('[triggerManualSOS] Notification pipeline error:', notifErr);
   }
+
+  // Trigger phone calls to eligible SOS partners (fire-and-forget, non-blocking)
+  triggerSOSCallsToPartners(
+    { latitude: targetAddress.coordinates?.lat || 0, longitude: targetAddress.coordinates?.lng || 0, address: targetAddress.fullAddress },
+    newAlert.sosId
+  ).then(callResult => {
+    console.log(`[triggerManualSOS] SOS call results for ${newAlert.sosId}: ${callResult.callsTriggered}/${callResult.totalPartners} calls triggered`);
+  }).catch(callError => {
+    console.error(`[triggerManualSOS] SOS call workflow failed for ${newAlert.sosId}:`, callError);
+  });
 
   res.status(201).json({
     success: true,

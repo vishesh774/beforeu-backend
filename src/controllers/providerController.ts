@@ -4,10 +4,15 @@ import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
 import OrderItem from '../models/OrderItem';
 import ServicePartner from '../models/ServicePartner';
+import Service from '../models/Service';
+import ServiceRegion from '../models/ServiceRegion';
+import { SOSAlert, SOSStatus } from '../models/SOSAlert';
+import { isPointInPolygon } from '../utils/pointInPolygon';
 
 import { BookingStatus, COMPLETED_BOOKING_STATUSES, ONGOING_BOOKING_STATUSES } from '../constants/bookingStatus';
 import { syncBookingStatus } from '../services/bookingService';
 import { formatTimeToIST } from '../utils/dateUtils';
+import { socketService } from '../services/socketService';
 
 // @desc    Get all assigned jobs for the logged-in provider
 // @route   GET /api/provider/jobs
@@ -319,8 +324,270 @@ export const getProfile = asyncHandler(async (req: AuthRequest, res: Response, n
                 role: user.role,
                 isActive: partner?.isActive ?? true,
                 services: partner?.services || [],
+                serviceRegions: partner?.serviceRegions || [],
                 availability: partner?.availability || []
             }
+        }
+    });
+});
+
+// @desc    Get SOS alerts in the partner's service regions
+// @route   GET /api/provider/sos
+// @access  Private (ServicePartner)
+export const getPartnerSOSAlerts = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) return next(new AppError('Not authenticated', 401));
+
+    const partner = await ServicePartner.findOne({ phone: user.phone });
+    if (!partner) return next(new AppError('Partner profile not found', 404));
+
+    // Check if partner is assigned to the SOS service
+    const sosService = await Service.findOne({ name: { $regex: /^SOS/i } });
+    if (!sosService) {
+        return res.status(200).json({ success: true, data: { alerts: [] } });
+    }
+
+    const sosServiceId = sosService._id.toString();
+    if (!partner.services.includes(sosServiceId)) {
+        return res.status(200).json({ success: true, data: { alerts: [] } });
+    }
+
+    // Find all active SOS alerts
+    const activeStatuses = [
+        SOSStatus.TRIGGERED,
+        SOSStatus.ACKNOWLEDGED,
+        SOSStatus.PARTNER_ASSIGNED,
+        SOSStatus.EN_ROUTE,
+        SOSStatus.REACHED,
+        SOSStatus.IN_PROGRESS
+    ];
+
+    const allActiveAlerts = await SOSAlert.find({ status: { $in: activeStatuses } })
+        .populate('user', 'name phone email')
+        .populate('familyMemberId', 'name relationship phone')
+        .sort({ createdAt: -1 });
+
+    // Filter alerts by partner's service regions
+    const partnerRegionIds = partner.serviceRegions || [];
+    const hasNoRegionRestriction = partnerRegionIds.length === 0;
+
+    let filteredAlerts;
+    if (hasNoRegionRestriction) {
+        // Partner with no region restrictions sees all SOS
+        filteredAlerts = allActiveAlerts;
+    } else {
+        // Load all active regions and check which alerts fall within partner's regions
+        const activeRegions = await ServiceRegion.find({
+            _id: { $in: partnerRegionIds },
+            isActive: true
+        });
+
+        filteredAlerts = allActiveAlerts.filter(alert => {
+            if (!alert.location?.latitude || !alert.location?.longitude) return false;
+            const point = { lat: alert.location.latitude, lng: alert.location.longitude };
+            return activeRegions.some(region => isPointInPolygon(point, region.polygon));
+        });
+    }
+
+    // Transform and add assignment info
+    const transformedAlerts = await Promise.all(filteredAlerts.map(async (alert) => {
+        // Find the booking and order item to determine assignment
+        let assignedPartnerId: string | null = null;
+        let assignedPartnerName: string | null = null;
+        let isAssignedToMe = false;
+
+        if (alert.bookingId) {
+            const orderItem = await OrderItem.findOne({ bookingId: alert.bookingId })
+                .populate('assignedPartnerId', 'name phone');
+            if (orderItem?.assignedPartnerId) {
+                const assigned = orderItem.assignedPartnerId as any;
+                assignedPartnerId = assigned._id?.toString() || null;
+                assignedPartnerName = assigned.name || null;
+                isAssignedToMe = assignedPartnerId === partner._id.toString();
+            }
+        }
+
+        return {
+            id: alert._id,
+            sosId: alert.sosId,
+            status: alert.status,
+            location: alert.location,
+            customer: alert.user ? {
+                name: (alert.user as any).name,
+                phone: (alert.user as any).phone,
+            } : null,
+            familyMember: alert.familyMemberId ? {
+                name: (alert.familyMemberId as any).name,
+                relationship: (alert.familyMemberId as any).relationship,
+                phone: (alert.familyMemberId as any).phone,
+            } : null,
+            bookingId: alert.bookingId,
+            assignedPartnerId,
+            assignedPartnerName,
+            isAssignedToMe,
+            isReadOnly: !isAssignedToMe,
+            createdAt: alert.createdAt,
+            updatedAt: alert.updatedAt,
+        };
+    }));
+
+    res.status(200).json({
+        success: true,
+        data: { alerts: transformedAlerts }
+    });
+});
+
+// @desc    Get unassigned SOS alerts in the partner's service regions (for popup)
+// @route   GET /api/provider/sos/unassigned
+// @access  Private (ServicePartner)
+export const getUnassignedSOSAlerts = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const user = req.user;
+    if (!user) return next(new AppError('Not authenticated', 401));
+
+    const partner = await ServicePartner.findOne({ phone: user.phone });
+    if (!partner) return next(new AppError('Partner profile not found', 404));
+
+    // Check if partner has SOS service
+    const sosService = await Service.findOne({ name: { $regex: /^SOS/i } });
+    if (!sosService || !partner.services.includes(sosService._id.toString())) {
+        return res.status(200).json({ success: true, data: { alerts: [] } });
+    }
+
+    // Find TRIGGERED or ACKNOWLEDGED SOS alerts (not yet assigned to any partner)
+    const unassignedStatuses = [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED];
+    const potentialAlerts = await SOSAlert.find({ status: { $in: unassignedStatuses } })
+        .populate('user', 'name phone email')
+        .populate('familyMemberId', 'name relationship phone')
+        .sort({ createdAt: -1 });
+
+    // Filter: only alerts where the order item has NO assigned partner
+    const unassignedAlerts = [];
+    for (const alert of potentialAlerts) {
+        if (!alert.bookingId) {
+            // No booking yet — treat as unassigned
+            unassignedAlerts.push(alert);
+            continue;
+        }
+        const orderItem = await OrderItem.findOne({ bookingId: alert.bookingId });
+        if (!orderItem || !orderItem.assignedPartnerId) {
+            unassignedAlerts.push(alert);
+        }
+    }
+
+    // Filter by partner's regions
+    const partnerRegionIds = partner.serviceRegions || [];
+    const hasNoRegionRestriction = partnerRegionIds.length === 0;
+
+    let filteredAlerts;
+    if (hasNoRegionRestriction) {
+        filteredAlerts = unassignedAlerts;
+    } else {
+        const activeRegions = await ServiceRegion.find({
+            _id: { $in: partnerRegionIds },
+            isActive: true
+        });
+
+        filteredAlerts = unassignedAlerts.filter(alert => {
+            if (!alert.location?.latitude || !alert.location?.longitude) return false;
+            const point = { lat: alert.location.latitude, lng: alert.location.longitude };
+            return activeRegions.some(region => isPointInPolygon(point, region.polygon));
+        });
+    }
+
+    const transformedAlerts = filteredAlerts.map(alert => ({
+        id: alert._id,
+        sosId: alert.sosId,
+        status: alert.status,
+        location: alert.location,
+        customer: alert.user ? {
+            name: (alert.user as any).name,
+            phone: (alert.user as any).phone,
+        } : null,
+        familyMember: alert.familyMemberId ? {
+            name: (alert.familyMemberId as any).name,
+            relationship: (alert.familyMemberId as any).relationship,
+            phone: (alert.familyMemberId as any).phone,
+        } : null,
+        bookingId: alert.bookingId,
+        createdAt: alert.createdAt,
+    }));
+
+    res.status(200).json({
+        success: true,
+        data: { alerts: transformedAlerts }
+    });
+});
+
+// @desc    Accept/self-assign an SOS alert
+// @route   POST /api/provider/sos/:id/accept
+// @access  Private (ServicePartner)
+export const acceptSOSAlert = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const user = req.user;
+    if (!user) return next(new AppError('Not authenticated', 401));
+
+    const partner = await ServicePartner.findOne({ phone: user.phone });
+    if (!partner) return next(new AppError('Partner profile not found', 404));
+
+    // Verify partner has SOS service
+    const sosService = await Service.findOne({ name: { $regex: /^SOS/i } });
+    if (!sosService || !partner.services.includes(sosService._id.toString())) {
+        return next(new AppError('You are not authorized for SOS service', 403));
+    }
+
+    // Find the SOS alert
+    const alert = await SOSAlert.findById(id);
+    if (!alert) return next(new AppError('SOS alert not found', 404));
+
+    // Must be in TRIGGERED or ACKNOWLEDGED status
+    if (![SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED].includes(alert.status)) {
+        return next(new AppError('This SOS has already been assigned or resolved', 400));
+    }
+
+    // Check if already assigned
+    if (alert.bookingId) {
+        const orderItem = await OrderItem.findOne({ bookingId: alert.bookingId });
+        if (orderItem?.assignedPartnerId) {
+            return next(new AppError('This SOS has already been accepted by another partner', 400));
+        }
+
+        // Assign partner to the order item
+        if (orderItem) {
+            orderItem.assignedPartnerId = partner._id;
+            orderItem.status = BookingStatus.ASSIGNED;
+            await orderItem.save();
+        }
+    }
+
+    // Update SOS alert status
+    alert.status = SOSStatus.PARTNER_ASSIGNED;
+    alert.logs.push({
+        action: 'PARTNER_SELF_ASSIGNED',
+        timestamp: new Date(),
+        performedBy: partner._id as any,
+        details: `Partner ${partner.name} self-assigned via app`
+    });
+    await alert.save();
+
+    // Update partner's lastAssignedAt
+    partner.lastAssignedAt = new Date();
+    await partner.save();
+
+    // Sync booking status
+    if (alert.bookingId) {
+        await syncBookingStatus(alert.bookingId, { id: partner._id, name: partner.name });
+    }
+
+    // Emit to admins
+    const populatedAlert = await alert.populate('user', 'name phone email');
+    socketService.emitToAdmin('sos:acknowledged', populatedAlert);
+
+    res.status(200).json({
+        success: true,
+        message: 'SOS accepted successfully. You are now assigned to this emergency.',
+        data: {
+            sosId: alert.sosId,
+            status: alert.status
         }
     });
 });
