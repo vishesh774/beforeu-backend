@@ -918,3 +918,60 @@ export const verifyCustomerPayment = asyncHandler(async (req: AuthRequest, res: 
         message: 'Payment verified successfully'
     });
 });
+// ============================================================
+// ADMIN EXTRA CHARGES ENDPOINTS
+// ============================================================
+
+// @desc    Waive off a pending extra charge (Admin)
+// @route   POST /api/admin/bookings/:id/items/:itemId/extra-charges/:chargeId/waive
+// @access  Private (Admin)
+export const waiveExtraCharge = asyncHandler(async (req: any, res: Response, next: NextFunction) => {
+    const { id, itemId, chargeId } = req.params;
+    const adminUser = req.user;
+
+    const job = await OrderItem.findOne({
+        _id: itemId,
+        $or: [
+            { bookingId: id },
+            { _id: itemId } // In case id is booking or item, findOne handles it
+        ]
+    }).populate('bookingId');
+
+    if (!job) {
+        return next(new AppError('Item not found', 404));
+    }
+
+    const chargeIndex = job.extraCharges?.findIndex(c => c.id === chargeId);
+    if (chargeIndex === undefined || chargeIndex === -1) {
+        return next(new AppError('Extra charge not found', 404));
+    }
+
+    const charge = job.extraCharges[chargeIndex];
+
+    // Can only waive pending charges
+    if (charge.status !== 'pending') {
+        return next(new AppError('Only pending charges can be waived', 400));
+    }
+
+    // Mark as waived
+    job.extraCharges[chargeIndex].status = 'waived';
+    await job.save();
+
+    // Log action on booking
+    const booking = await Booking.findById(job.bookingId);
+    if (booking) {
+        booking.actionLog.push({
+            action: 'EXTRA_CHARGE_WAIVED',
+            performedBy: adminUser?.name || 'Admin',
+            timestamp: new Date(),
+            details: `Admin waived off extra charge of ₹${charge.amount}: ${charge.description}`
+        });
+        await booking.save();
+    }
+
+    res.status(200).json({
+        success: true,
+        message: 'Extra charge waived successfully',
+        data: { orderItem: job }
+    });
+});

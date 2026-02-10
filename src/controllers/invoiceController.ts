@@ -41,6 +41,20 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
             const orderItems = await OrderItem.find({ bookingId: booking._id });
             const customer = booking.userId as any;
 
+            // Gather paid extra charges from all items
+            const paidExtraCharges = orderItems.flatMap(item =>
+                (item.extraCharges || [])
+                    .filter(charge => charge.status === 'paid')
+                    .map(charge => ({
+                        description: `Extra: ${charge.description} (${item.variantName})`,
+                        quantity: 1,
+                        price: charge.amount, // Individual amount
+                        total: charge.amount
+                    }))
+            );
+
+            const extraChargesTotal = paidExtraCharges.reduce((sum, c) => sum + c.total, 0);
+
             // Determine payment method
             let paymentMethod = 'Online';
             if (booking.paymentDetails?.method) {
@@ -56,17 +70,20 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
                 customerPhone: customer?.phone,
                 customerEmail: customer?.email,
                 customerAddress: booking.address?.fullAddress,
-                items: orderItems.map(item => ({
-                    description: `${item.serviceName} - ${item.variantName}`,
-                    quantity: item.quantity,
-                    price: item.finalPrice / item.quantity, // Unit Price derived from final price (per unit)
-                    total: item.finalPrice
-                })),
-                subtotal: booking.itemTotal || booking.totalOriginalAmount || 0,
+                items: [
+                    ...orderItems.map(item => ({
+                        description: `${item.serviceName} - ${item.variantName}`,
+                        quantity: item.quantity,
+                        price: item.finalPrice / item.quantity, // Unit Price derived from final price (per unit)
+                        total: item.finalPrice
+                    })),
+                    ...paidExtraCharges
+                ],
+                subtotal: (booking.itemTotal || booking.totalOriginalAmount || 0) + extraChargesTotal,
                 discount: booking.discountAmount || 0,
                 creditsUsed: booking.creditsUsed || 0,
                 taxBreakdown: booking.paymentBreakdown || [],
-                total: booking.totalAmount || 0,
+                total: (booking.totalAmount || 0) + extraChargesTotal,
                 paymentStatus: booking.paymentStatus,
                 paymentId: booking.paymentId,
                 paymentMethod: paymentMethod

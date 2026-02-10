@@ -14,7 +14,7 @@ export interface IExtraCharge {
   id: string; // UUID for unique identification
   amount: number;
   description: string;
-  status: 'pending' | 'paid' | 'cancelled';
+  status: 'pending' | 'paid' | 'cancelled' | 'waived';
   paymentMethod?: 'cash' | 'upi' | 'razorpay';
   razorpayOrderId?: string;
   razorpayQrId?: string; // Razorpay QR Code ID for UPI payments
@@ -151,7 +151,7 @@ const OrderItemSchema = new Schema<IOrderItem>(
         description: { type: String, required: true, minlength: 3 },
         status: {
           type: String,
-          enum: ['pending', 'paid', 'cancelled'],
+          enum: ['pending', 'paid', 'cancelled', 'waived'],
           default: 'pending'
         },
         paymentMethod: {

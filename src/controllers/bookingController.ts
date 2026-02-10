@@ -1335,7 +1335,28 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
         address: (item.assignedServiceLocationId as any).address,
         contactNumber: (item.assignedServiceLocationId as any).contactNumber
       } : null,
-      paidWithCredits: item.paidWithCredits || false
+      paidWithCredits: item.paidWithCredits || false,
+      // Extra charges added by service partner
+      extraCharges: (item.extraCharges || []).map(charge => ({
+        id: charge.id,
+        amount: charge.amount,
+        description: charge.description,
+        status: charge.status,
+        paymentMethod: charge.paymentMethod,
+        razorpayOrderId: charge.razorpayOrderId,
+        razorpayPaymentId: charge.razorpayPaymentId,
+        addedByName: charge.addedByName,
+        addedAt: charge.addedAt,
+        paidAt: charge.paidAt,
+        notes: charge.notes
+      })),
+      extraChargesSummary: {
+        total: (item.extraCharges || []).length,
+        pending: (item.extraCharges || []).filter(c => c.status === 'pending').length,
+        paid: (item.extraCharges || []).filter(c => c.status === 'paid').length,
+        totalPendingAmount: (item.extraCharges || []).filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0),
+        totalPaidAmount: (item.extraCharges || []).filter(c => c.status === 'paid').reduce((sum, c) => sum + c.amount, 0)
+      }
     })),
     address: booking.address,
     bookingType: booking.bookingType,

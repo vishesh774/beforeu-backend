@@ -100,6 +100,13 @@ import { getCompanySettings, updateCompanySettings } from '../controllers/compan
 import { generateInvoicePDF } from '../controllers/invoiceController';
 import { requireAdmin } from '../middleware/adminAuth';
 
+import {
+  getCustomerPendingPayments,
+  createCustomerPaymentOrder,
+  verifyCustomerPayment,
+  waiveExtraCharge
+} from '../controllers/extraChargesController';
+
 const router = express.Router();
 
 // All routes require admin authentication
@@ -172,6 +179,7 @@ router.post('/bookings/:bookingId/items/:itemId/assign-location', assignServiceL
 router.patch('/bookings/:bookingId/items/:itemId/status', updateOrderItemStatus);
 router.put('/bookings/:bookingId/items/:itemId/hold', holdOrderItem);
 router.put('/bookings/:bookingId/items/:itemId/resume', resumeOrderItem);
+router.post('/bookings/:id/items/:itemId/extra-charges/:chargeId/waive', waiveExtraCharge);
 
 // Refund & Cancellation Policy routes
 router.get('/refund-cancellation-policies', getAllPolicies);
