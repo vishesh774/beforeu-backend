@@ -11,9 +11,10 @@ import UserPlan from '../models/UserPlan';
 import Plan from '../models/Plan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
 import { sendAddedAsFamilyMessage } from '../services/whatsappService';
-import Role from '../models/Role';
+import Role, { IPermission } from '../models/Role';
 import { createCRMLead } from '../services/crmService';
 import { assignCRMTask } from '../services/crmTaskService';
+import { createAndSendEmailOTP, verifyEmailOTP as verifyOTPService } from '../services/otpService';
 
 interface SignupRequest extends Request {
   body: {
@@ -195,17 +196,17 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
   }
 
   // Check if user has admin role or custom role
-  let permissions: any = {};
+  let permissions: Record<string, Omit<IPermission, 'resource'>> = {};
   let roleName: string = user.role;
 
   if (user.roleId) {
     const customRole = await Role.findById(user.roleId);
     if (customRole) {
       roleName = customRole.name;
-      permissions = customRole.permissions.reduce((acc: any, p: any) => {
+      permissions = customRole.permissions.reduce((acc, p) => {
         acc[p.resource] = { read: p.read, write: p.write, export: p.export };
         return acc;
-      }, {});
+      }, {} as Record<string, Omit<IPermission, 'resource'>>);
     } else {
       // Role ID exists but role not found? Treat as no role?
     }
@@ -249,7 +250,7 @@ export const adminLogin = asyncHandler(async (req: Request, res: Response, next:
     data: {
       user: {
         ...userData,
-        role: roleName as any, // Override role with custom role name if compatible
+        role: roleName as any, // Override role with custom role name
         permissions     // Add permissions map
       },
       token
@@ -639,6 +640,50 @@ export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response
   res.status(200).json({
     success: true,
     message: 'Account deleted successfully'
+  });
+});
+
+// @desc    Send OTP to email
+// @route   POST /api/auth/send-email-otp
+// @access  Public (or Private if logged in)
+export const sendEmailOTP = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return next(new AppError('Please provide an email address', 400));
+  }
+
+  const result = await createAndSendEmailOTP(email);
+
+  if (!result.success) {
+    return next(new AppError(result.message || 'Failed to send OTP', 400));
+  }
+
+  res.status(200).json({
+    success: true,
+    message: result.message
+  });
+});
+
+// @desc    Verify email OTP
+// @route   POST /api/auth/verify-email-otp
+// @access  Public (or Private if logged in)
+export const verifyEmailOTP = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    return next(new AppError('Please provide email and verification code', 400));
+  }
+
+  const result = await verifyOTPService(email, otp);
+
+  if (!result.success) {
+    return next(new AppError(result.message || 'Invalid or expired code', 400));
+  }
+
+  res.status(200).json({
+    success: true,
+    message: result.message
   });
 });
 

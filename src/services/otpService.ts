@@ -1,6 +1,6 @@
 import OTP from '../models/OTP';
-// import { generateOTP, getOTPExpiration } from '../utils/generateOTP';
 import { generateOTP, getOTPExpiration } from '../utils/generateOTP';
+import { sendOTPVerificationEmail } from './emailService';
 
 /**
  * Send OTP via SMS
@@ -82,7 +82,7 @@ const sendOTPViaBrevo = async (phone: string, otp: string): Promise<boolean> => 
       body: JSON.stringify(body)
     });
 
-    const responseData = await response.json() as any;
+    const responseData = await response.json() as { reference?: string };
 
     if (response.ok) {
       console.log('[SMS-Brevo] Sent successfully. Reference:', responseData.reference);
@@ -283,6 +283,121 @@ export const verifyOTP = async (phone: string, otp: string): Promise<{ success: 
     return {
       success: false,
       message: 'Failed to verify OTP. Please try again.'
+    };
+  }
+};
+
+/**
+ * Create and send Email OTP
+ */
+export const createAndSendEmailOTP = async (email: string): Promise<{ success: boolean; message?: string }> => {
+  try {
+    // Check for recent OTP (prevent spam)
+    const recentOTP = await OTP.findOne({
+      email,
+      verified: false,
+      createdAt: { $gte: new Date(Date.now() - 60000) } // Last 1 minute
+    });
+
+    if (recentOTP) {
+      return {
+        success: false,
+        message: 'Please wait 60 seconds before requesting a new OTP'
+      };
+    }
+
+    // Generate OTP
+    const otpCode = generateOTP();
+    const expiresAt = getOTPExpiration(10); // 10 minutes expiry
+
+    // Invalidate previous unverified OTPs for this email
+    await OTP.updateMany(
+      { email, verified: false },
+      { verified: true } // Mark as verified to invalidate (or you could delete)
+    );
+
+    // Save OTP to database
+    await OTP.create({
+      email,
+      otp: otpCode,
+      expiresAt,
+      attempts: 0,
+      verified: false
+    });
+
+    // Send OTP via Email
+    const sent = await sendOTPVerificationEmail(email, otpCode);
+
+    if (!sent) {
+      return {
+        success: false,
+        message: 'Failed to send email. Please check your email address or try again later.'
+      };
+    }
+
+    return {
+      success: true,
+      message: 'Verification code sent to your email'
+    };
+  } catch (error) {
+    console.error('Error creating Email OTP:', error);
+    return {
+      success: false,
+      message: 'Failed to send verification code. Please try again.'
+    };
+  }
+};
+
+/**
+ * Verify Email OTP
+ */
+export const verifyEmailOTP = async (email: string, otp: string): Promise<{ success: boolean; message?: string }> => {
+  try {
+    const otpRecord = await OTP.findOne({
+      email,
+      verified: false,
+      expiresAt: { $gt: new Date() }
+    }).sort({ createdAt: -1 });
+
+    if (!otpRecord) {
+      return {
+        success: false,
+        message: 'Invalid or expired code'
+      };
+    }
+
+    // Check attempts
+    if (otpRecord.attempts >= 5) {
+      return {
+        success: false,
+        message: 'Maximum verification attempts exceeded. Please request a new code.'
+      };
+    }
+
+    // Increment attempts
+    otpRecord.attempts += 1;
+    await otpRecord.save();
+
+    // Verify OTP
+    if (otpRecord.otp !== otp) {
+      return {
+        success: false,
+        message: 'Invalid verification code'
+      };
+    }
+
+    // Mark as verified and delete the OTP record
+    await OTP.findByIdAndDelete(otpRecord._id);
+
+    return {
+      success: true,
+      message: 'Email verified successfully'
+    };
+  } catch (error) {
+    console.error('Error verifying Email OTP:', error);
+    return {
+      success: false,
+      message: 'Failed to verify code. Please try again.'
     };
   }
 };

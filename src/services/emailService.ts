@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { Attachment } from 'nodemailer/lib/mailer';
 
 // Email Configuration
 const getEmailConfig = () => ({
@@ -18,7 +19,7 @@ export const sendEmail = async (options: {
     to: string | string[];
     subject: string;
     html: string;
-    attachments?: any[];
+    attachments?: Attachment[];
 }) => {
     try {
         const config = getEmailConfig();
@@ -167,5 +168,69 @@ export const notifyAccountsTeamOnPlanPurchase = async (data: {
                 content: data.pdfBuffer,
             }
         ]
+    });
+};
+
+export const sendOTPVerificationEmail = async (email: string, otp: string) => {
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #1e293b; background-color: #f8fafc; margin: 0; padding: 0; }
+        .wrapper { width: 100%; table-layout: fixed; background-color: #f8fafc; padding-bottom: 40px; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; margin-top: 40px; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1); border: 1px solid #e2e8f0; }
+        .header { background: linear-gradient(135deg, #4f46e5 0%, #3730a3 100%); padding: 40px 20px; text-align: center; }
+        .header h1 { color: #ffffff; margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.025em; }
+        .content { padding: 40px; text-align: center; }
+        .welcome-text { font-size: 18px; color: #475569; margin-bottom: 12px; font-weight: 500; }
+        .instruction { font-size: 16px; color: #64748b; margin-bottom: 32px; }
+        .otp-container { background-color: #f1f5f9; border-radius: 12px; padding: 24px; border: 2px dashed #cbd5e1; display: inline-block; margin-bottom: 32px; }
+        .otp-code { font-size: 36px; font-weight: 800; color: #4f46e5; letter-spacing: 0.25em; font-family: 'Courier New', Courier, monospace; }
+        .expiry-note { font-size: 14px; color: #94a3b8; margin-top: 8px; }
+        .warning-box { background-color: #fff7ed; border-radius: 8px; padding: 16px; border: 1px solid #ffedd5; margin-bottom: 32px; text-align: left; }
+        .warning-text { font-size: 13px; color: #9a3412; margin: 0; }
+        .footer { padding: 32px; text-align: center; background-color: #f8fafc; border-top: 1px solid #e2e8f0; }
+        .footer p { margin: 0; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+        .logo-placeholder { font-weight: 900; color: #4f46e5; font-size: 20px; margin-bottom: 24px; display: block; }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <div class="container">
+            <div class="header">
+                <h1>Verify Your Email</h1>
+            </div>
+            <div class="content">
+                <span class="logo-placeholder">BeforeU</span>
+                <p class="welcome-text">Security Verification Code</p>
+                <p class="instruction">To continue with your request, please use the following one-time password (OTP) to verify your email address.</p>
+                
+                <div class="otp-container">
+                    <div class="otp-code">${otp}</div>
+                    <div class="expiry-note">Valid for 10 minutes</div>
+                </div>
+
+                <div class="warning-box">
+                    <p class="warning-text"><strong>Security Note:</strong> If you did not request this verification, please ignore this email and secure your account. Do not share this code with anyone.</p>
+                </div>
+
+                <p style="font-size: 14px; color: #64748b; margin-top: 40px;">Thank you for choosing <strong>BeforeU</strong>.</p>
+            </div>
+            <div class="footer">
+                <p>&copy; ${new Date().getFullYear()} BeforeU System. All rights reserved.</p>
+                <p style="margin-top: 8px;">123 Business Street, Tech Hub, IN</p>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+
+    return await sendEmail({
+        to: email,
+        subject: `[BeforeU] Your Verification Code: ${otp}`,
+        html
     });
 };
