@@ -1000,28 +1000,55 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
     const user = await User.findById(userIdObj);
     if (!user) return next(new AppError('User not found', 404));
 
-    const razorpay = getRazorpayInstance();
+    const isManual = providedId === 'MANUAL';
     let successfulPayment: any = null;
     let finalOrderId: string | null = null;
+    let payedAmountInRupees = 0;
+    let manualPaymentDetails: any = null;
 
-    // 1. Verify Razorpay Payment
-    if (providedId.startsWith('pay_')) {
-      successfulPayment = await razorpay.payments.fetch(providedId);
-      if (successfulPayment.status !== 'captured') {
-        return next(new AppError(`Payment ${providedId} is not captured. Status: ${successfulPayment.status}`, 400));
+    if (isManual) {
+      if (!targetId.manualPaymentData) {
+        return next(new AppError('Manual payment data is required for manual mode', 400));
       }
-      finalOrderId = successfulPayment.order_id;
+      const { mode, transactionNumber, amount, date, bankName } = targetId.manualPaymentData;
+      if (!mode || !amount) {
+        return next(new AppError('Payment mode and amount are required for manual mode', 400));
+      }
+
+      payedAmountInRupees = Number(amount);
+      const adminName = req.user?.name || 'Admin';
+
+      manualPaymentDetails = {
+        bankName: bankName || 'N/A',
+        transactionNumber: transactionNumber || `MAN-${Date.now()}`,
+        amount: payedAmountInRupees,
+        paymentType: mode,
+        recordedBy: adminName,
+        recordedAt: date ? new Date(date) : new Date()
+      };
+
+      finalOrderId = `MANUAL_${Date.now()}`;
+      successfulPayment = { id: manualPaymentDetails.transactionNumber }; // Mock for shared logic below
     } else {
-      const payments = await razorpay.orders.fetchPayments(providedId);
-      successfulPayment = payments.items.find((p: any) => p.status === 'captured');
-      finalOrderId = providedId;
-    }
+      // 1. Verify Razorpay Payment
+      const razorpay = getRazorpayInstance();
+      if (providedId.startsWith('pay_')) {
+        successfulPayment = await razorpay.payments.fetch(providedId);
+        if (successfulPayment.status !== 'captured') {
+          return next(new AppError(`Payment ${providedId} is not captured. Status: ${successfulPayment.status}`, 400));
+        }
+        finalOrderId = successfulPayment.order_id;
+      } else {
+        const payments = await razorpay.orders.fetchPayments(providedId);
+        successfulPayment = payments.items.find((p: any) => p.status === 'captured');
+        finalOrderId = providedId;
+      }
 
-    if (!successfulPayment) {
-      return next(new AppError('No captured payment found for this ID on Razorpay', 400));
+      if (!successfulPayment) {
+        return next(new AppError('No captured payment found for this ID on Razorpay', 400));
+      }
+      payedAmountInRupees = successfulPayment.amount / 100;
     }
-
-    const payedAmountInRupees = successfulPayment.amount / 100;
 
     // 2. Prevent duplication (only if not linking to an existing specific system ID)
     const existingId = targetId.existingId;
@@ -1050,9 +1077,12 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
 
         // Update existing
         planTx.status = 'completed';
-        planTx.paymentId = successfulPayment.id;
-        planTx.paymentDetails = successfulPayment;
+        planTx.paymentDetails = isManual ? undefined : successfulPayment;
         planTx.orderId = orderIdToStore;
+        if (isManual) {
+          planTx.paymentMethod = 'MANUAL';
+          planTx.manualPaymentDetails = manualPaymentDetails;
+        }
         await planTx.save();
       } else {
         const plan = await Plan.findById(targetId.planId);
@@ -1118,8 +1148,10 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
             originalPrice: plan.originalPrice,
             finalPrice: plan.finalPrice
           },
-          paymentId: successfulPayment.id,
-          paymentDetails: successfulPayment,
+          paymentId: isManual ? undefined : successfulPayment.id,
+          paymentDetails: isManual ? undefined : successfulPayment,
+          paymentMethod: isManual ? 'MANUAL' : 'ONLINE',
+          manualPaymentDetails: isManual ? manualPaymentDetails : undefined,
           paymentBreakdown,
           status: 'completed',
           couponCode: targetId.couponCode?.toUpperCase(),
@@ -1164,9 +1196,13 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
         // Update existing booking
         booking.paymentStatus = 'paid';
         booking.status = 'confirmed';
-        booking.paymentId = successfulPayment.id;
-        booking.paymentDetails = successfulPayment;
+        booking.paymentId = isManual ? undefined : successfulPayment.id;
+        booking.paymentDetails = isManual ? undefined : successfulPayment;
         booking.orderId = orderIdToStore;
+        if (isManual) {
+          booking.paymentMethod = 'MANUAL';
+          booking.manualPaymentDetails = manualPaymentDetails;
+        }
         // Optionally update breakdown if we have a way to recalculate it or just store the final total
         await booking.save();
 
@@ -1263,8 +1299,10 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
         couponCode: couponCode?.toUpperCase(),
         discountAmount,
         paymentStatus: 'paid',
-        paymentId: successfulPayment.id,
-        paymentDetails: successfulPayment,
+        paymentMethod: isManual ? 'MANUAL' : 'ONLINE',
+        paymentId: isManual ? undefined : successfulPayment.id,
+        paymentDetails: isManual ? undefined : successfulPayment,
+        manualPaymentDetails: isManual ? manualPaymentDetails : undefined,
         status: 'confirmed',
         orderId: orderIdToStore,
         paymentBreakdown: calculation.breakdown

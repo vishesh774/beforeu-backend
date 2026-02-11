@@ -39,6 +39,8 @@ import {
   cancelBooking,
   assignServiceLocation,
   triggerManualSOS,
+  createBookingOnBehalf,
+  getCustomerApplicableCoupons,
   holdOrderItem,
   resumeOrderItem,
   updateBillingDetails
@@ -170,6 +172,8 @@ router.get('/bookings', getAllBookings);
 router.get('/bookings/:id', getBookingById);
 router.get('/bookings/:id/eligible-partners', getEligibleServicePartners);
 router.post('/bookings/:id/assign-partner', assignServicePartner);
+router.post('/bookings/create-on-behalf', createBookingOnBehalf);
+router.get('/bookings/user/:userId/applicable-coupons', getCustomerApplicableCoupons);
 router.post('/bookings/manual-sos', triggerManualSOS);
 router.post('/bookings/:id/reschedule', rescheduleBooking);
 router.post('/bookings/:id/cancel', cancelBooking);

@@ -2363,3 +2363,287 @@ export const updateBillingDetails = asyncHandler(async (req: AuthRequest, res: R
     }
   });
 });
+
+const normalizePhone = (p: string) => p.replace(/\D/g, '').slice(-10);
+
+// @desc    Get applicable coupons for a specific customer (Admin)
+// @route   GET /api/admin/bookings/user/:userId/applicable-coupons
+// @access  Private/Admin
+export const getCustomerApplicableCoupons = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { userId } = req.params;
+
+  const user = await User.findById(userId);
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  const userPhone = user.phone;
+  const currentDate = new Date();
+  const normalizedUserPhone = normalizePhone(userPhone);
+
+  const query = {
+    isActive: true,
+    $or: [
+      { expiryDate: { $exists: false } }, // No expiry
+      { expiryDate: { $gt: currentDate } } // Not expired
+    ],
+    $and: [
+      {
+        $or: [
+          { type: 'public' },
+          {
+            type: 'restricted',
+            allowedPhoneNumbers: normalizedUserPhone
+          }
+        ]
+      },
+      // Check maxUsage if not unlimited (-1)
+      {
+        $or: [
+          { maxUses: -1 },
+          { $expr: { $lt: ["$usedCount", "$maxUses"] } }
+        ]
+      }
+    ]
+  };
+
+  const coupons = await Coupon.find(query).sort({ discountValue: -1 });
+
+  res.status(200).json({
+    success: true,
+    data: coupons
+  });
+});
+
+// @desc    Create booking on behalf of customer (Admin)
+// @route   POST /api/admin/bookings/create-on-behalf
+// @access  Private/Admin
+export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const {
+    userId,
+    serviceId,
+    variantId,
+    addressId,
+    customAddress,
+    couponCode,
+    paymentMethod, // 'CREDITS' or 'MANUAL'
+    bankDetails,   // { bankName, transactionNumber, paymentType } - for MANUAL
+    scheduledDate,
+    scheduledTime,
+    notes,
+    assignedPartnerId
+  } = req.body;
+
+  const adminName = req.user?.name || 'Admin';
+
+  if (!userId || !serviceId || !variantId || !paymentMethod) {
+    return next(new AppError('Customer, Service, Variant and Payment Method are required', 400));
+  }
+
+  // 1. Fetch data
+  const [user, service, variant] = await Promise.all([
+    User.findById(userId),
+    Service.findOne({ $or: [{ _id: mongoose.isValidObjectId(serviceId) ? serviceId : null }, { id: serviceId }] }),
+    ServiceVariant.findOne({ $or: [{ _id: mongoose.isValidObjectId(variantId) ? variantId : null }, { id: variantId }] })
+  ]);
+
+  if (!user) return next(new AppError('Customer not found', 404));
+  if (!service) return next(new AppError('Service not found', 404));
+  if (!variant) return next(new AppError('Variant not found', 404));
+
+  // 2. Handle Address
+  let targetAddress: any;
+  if (addressId && addressId !== 'new') {
+    targetAddress = await Address.findOne({ id: addressId, userId: user._id });
+  } else if (customAddress) {
+    targetAddress = customAddress;
+  }
+
+  if (!targetAddress) {
+    return next(new AppError('Valid address or custom location is required', 400));
+  }
+
+  // 3. Handle Credits if selected
+  const planHolderId = await getPlanHolderId(user._id);
+  const userCredits = await UserCredits.findOne({ userId: planHolderId });
+  const creditsNeeded = variant.creditValue || 0;
+
+  if (paymentMethod === 'CREDITS') {
+    if (!userCredits || userCredits.credits < creditsNeeded) {
+      return next(new AppError(`Insufficient credits. Required: ${creditsNeeded}, Available: ${userCredits?.credits || 0}`, 400));
+    }
+  }
+
+  // 4. Handle Coupon
+  let discountAmount = 0;
+  let finalAppliedCoupon = undefined;
+
+  if (couponCode && paymentMethod !== 'CREDITS') {
+    const coupon = await Coupon.findOne({
+      code: couponCode.toUpperCase(),
+      isActive: true,
+      appliesTo: 'service'
+    });
+
+    if (coupon) {
+      // Validate Restricted
+      const normalizedUserPhone = normalizePhone(user.phone);
+      const isAllowed = coupon.type === 'public' || coupon.allowedPhoneNumbers.some(p => normalizePhone(p) === normalizedUserPhone);
+
+      // Check expiry & usage
+      const isNotExpired = !coupon.expiryDate || new Date() <= coupon.expiryDate;
+      const hasUsageLeft = coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses;
+
+      if (isAllowed && isNotExpired && hasUsageLeft) {
+        discountAmount = (variant.finalPrice * coupon.discountValue) / 100;
+        finalAppliedCoupon = coupon.code;
+      } else {
+        return next(new AppError('Coupon is not applicable for this customer or has expired.', 400));
+      }
+    }
+  }
+
+  // 5. Calculate Totals
+  const checkoutFields = await getActiveCheckoutFields();
+  const baseItemTotal = paymentMethod === 'CREDITS' ? 0 : variant.finalPrice;
+
+  const calculationResult = await calculateCheckoutTotal(
+    baseItemTotal,
+    checkoutFields,
+    discountAmount > 0 ? { amount: discountAmount, label: `Coupon (${finalAppliedCoupon})` } : undefined
+  );
+
+  // 6. Generate Booking ID
+  const now = new Date();
+  const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+  const count = await Booking.countDocuments({
+    bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) }
+  });
+  const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+  const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+
+  // 7. Create Booking
+  const bookingData: any = {
+    userId: user._id,
+    bookingId,
+    addressId: addressId || 'ADMIN_CREATED',
+    address: {
+      label: targetAddress.label || 'Assisted Booking',
+      fullAddress: targetAddress.fullAddress,
+      area: targetAddress.area,
+      coordinates: targetAddress.coordinates
+    },
+    bookingType: scheduledDate ? 'SCHEDULED' : 'ASAP',
+    scheduledDate: scheduledDate ? new Date(scheduledDate) : now,
+    scheduledTime: scheduledTime || now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+    totalAmount: calculationResult.total,
+    itemTotal: baseItemTotal,
+    totalOriginalAmount: variant.originalPrice,
+    creditsUsed: paymentMethod === 'CREDITS' ? creditsNeeded : 0,
+    couponCode: finalAppliedCoupon,
+    discountAmount,
+    paymentBreakdown: calculationResult.breakdown.length > 0 ? calculationResult.breakdown.map(b => {
+      const field = checkoutFields.find(f => f.fieldName === b.fieldName);
+      return {
+        ...b,
+        chargeType: field?.chargeType || 'fixed',
+        value: field?.value || 0
+      };
+    }) : undefined,
+    status: BookingStatus.CONFIRMED,
+    paymentStatus: 'paid', // Admin created bookings are assumed reconciled
+    paymentMethod,
+    notes: `ADMIN_CREATED: ${notes || 'No notes provided'}`,
+    actionLog: [{
+      action: 'ADMIN_CREATED',
+      performedBy: adminName,
+      timestamp: now,
+      details: `Created on behalf of ${user.name}. Payment: ${paymentMethod}`
+    }]
+  };
+
+  if (paymentMethod === 'MANUAL' && bankDetails) {
+    bookingData.manualPaymentDetails = {
+      bankName: bankDetails.bankName,
+      transactionNumber: bankDetails.transactionNumber,
+      amount: calculationResult.total,
+      paymentType: bankDetails.paymentType || 'Bank Transfer',
+      recordedBy: adminName,
+      recordedAt: now
+    };
+  }
+
+  const booking = new Booking(bookingData);
+  await booking.save();
+
+  // 8. Create Order Item
+  const orderItem = await OrderItem.create({
+    bookingId: booking._id,
+    serviceId: service._id,
+    serviceVariantId: variant._id,
+    serviceName: service.name,
+    variantName: variant.name,
+    quantity: 1,
+    originalPrice: variant.originalPrice,
+    finalPrice: variant.finalPrice,
+    creditValue: paymentMethod === 'CREDITS' ? creditsNeeded : 0,
+    estimatedTimeMinutes: variant.estimatedTimeMinutes || 30,
+    customerVisitRequired: true,
+    paidWithCredits: paymentMethod === 'CREDITS',
+    status: 'confirmed',
+    startJobOtp: 'NONE',
+    endJobOtp: generatedOtp
+  });
+
+  // 9. Deduct Credits if applicable
+  if (paymentMethod === 'CREDITS' && creditsNeeded > 0 && userCredits) {
+    userCredits.credits = Math.max(0, userCredits.credits - creditsNeeded);
+    await userCredits.save();
+  }
+
+  // 10. Handle Assignment if partner ID provided
+  if (assignedPartnerId) {
+    const partner = await ServicePartner.findById(assignedPartnerId);
+    if (partner && partner.isActive) {
+      booking.status = BookingStatus.ASSIGNED;
+      orderItem.status = 'assigned';
+      orderItem.assignedPartnerId = partner._id;
+      await Promise.all([booking.save(), orderItem.save()]);
+
+      // Trigger notification
+      try {
+        // Correct WhatsApp arguments
+        await sendBookingAssignmentMessage(
+          partner.phone,
+          partner.name,
+          user.name,
+          user.phone,
+          service.name,
+          booking.address.fullAddress
+        );
+
+        // Correct Push arguments
+        await sendJobNotification(partner._id.toString(), {
+          bookingId: booking.bookingId,
+          serviceName: service.name,
+          variantName: variant.name,
+          customerName: user.name,
+          address: booking.address.fullAddress,
+          scheduledDate: booking.scheduledDate ? booking.scheduledDate.toISOString().split('T')[0] : undefined,
+          scheduledTime: booking.scheduledTime
+        });
+      } catch (notifErr) {
+        console.error('[createBookingOnBehalf] Notification error:', notifErr);
+      }
+    }
+  }
+
+  res.status(201).json({
+    success: true,
+    message: 'Booking created successfully on behalf of customer',
+    data: {
+      booking,
+      orderItem
+    }
+  });
+});

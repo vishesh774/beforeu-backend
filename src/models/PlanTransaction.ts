@@ -18,6 +18,15 @@ export interface IPlanTransaction extends Document {
     transactionId: string;
     couponCode?: string;
     discountAmount?: number;
+    paymentMethod?: 'CREDITS' | 'ONLINE' | 'MIXED' | 'MANUAL';
+    manualPaymentDetails?: {
+        bankName?: string;
+        transactionNumber?: string;
+        amount?: number;
+        paymentType?: string; // e.g., 'Bank Transfer', 'Cash'
+        recordedBy: string; // Admin name
+        recordedAt: Date;
+    };
     createdAt: Date;
     updatedAt: Date;
 }
@@ -81,6 +90,19 @@ const PlanTransactionSchema = new Schema<IPlanTransaction>(
         discountAmount: {
             type: Number,
             default: 0
+        },
+        paymentMethod: {
+            type: String,
+            enum: ['CREDITS', 'ONLINE', 'MIXED', 'MANUAL'],
+            default: 'ONLINE'
+        },
+        manualPaymentDetails: {
+            bankName: { type: String, trim: true },
+            transactionNumber: { type: String, trim: true },
+            amount: { type: Number },
+            paymentType: { type: String, trim: true },
+            recordedBy: { type: String, trim: true },
+            recordedAt: { type: Date }
         }
     },
     {

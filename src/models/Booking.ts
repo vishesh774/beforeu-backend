@@ -41,10 +41,18 @@ export interface IBooking extends Document {
   }>;
   status: 'pending' | 'confirmed' | 'assigned' | 'en_route' | 'reached' | 'in_progress' | 'completed' | 'cancelled' | 'refund_initiated' | 'refunded';
   paymentStatus: 'pending' | 'paid' | 'refunded';
-  paymentMethod?: 'CREDITS' | 'ONLINE' | 'MIXED';
+  paymentMethod?: 'CREDITS' | 'ONLINE' | 'MIXED' | 'MANUAL';
   paymentId?: string; // Razorpay payment ID
   orderId?: string; // Razorpay order ID
   paymentDetails?: any; // Raw Razorpay response object
+  manualPaymentDetails?: {
+    bankName?: string;
+    transactionNumber?: string;
+    amount?: number;
+    paymentType?: string; // e.g., 'Bank Transfer', 'Cash'
+    recordedBy: string; // Admin name
+    recordedAt: Date;
+  };
   billingDetails?: {
     gstNumber?: string;
     billingName?: string;
@@ -186,8 +194,16 @@ const BookingSchema = new Schema<IBooking>(
     },
     paymentMethod: {
       type: String,
-      enum: ['CREDITS', 'ONLINE', 'MIXED'],
+      enum: ['CREDITS', 'ONLINE', 'MIXED', 'MANUAL'],
       default: undefined
+    },
+    manualPaymentDetails: {
+      bankName: { type: String, trim: true },
+      transactionNumber: { type: String, trim: true },
+      amount: { type: Number },
+      paymentType: { type: String, trim: true },
+      recordedBy: { type: String, trim: true },
+      recordedAt: { type: Date }
     },
     paymentId: {
       type: String,
@@ -225,7 +241,7 @@ BookingSchema.index({ createdAt: -1 });
 BookingSchema.index({ userId: 1, status: 1 });
 
 // Generate booking ID before saving
-BookingSchema.pre('save', async function () {
+BookingSchema.pre('save', async function (this: IBooking) {
   if (!this.bookingId) {
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
