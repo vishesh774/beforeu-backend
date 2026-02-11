@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema } from 'mongoose';
+import { generateNextInvoiceNumber } from '../utils/invoiceUtils';
 
 export interface IPlanTransaction extends Document {
     userId: mongoose.Types.ObjectId;
@@ -16,6 +17,7 @@ export interface IPlanTransaction extends Document {
     paymentDetails?: any;
     paymentBreakdown?: any[];
     transactionId: string;
+    invoiceNumber?: string;
     couponCode?: string;
     discountAmount?: number;
     paymentMethod?: 'CREDITS' | 'ONLINE' | 'MIXED' | 'MANUAL';
@@ -53,6 +55,12 @@ const PlanTransactionSchema = new Schema<IPlanTransaction>(
             type: String,
             required: true,
             unique: true,
+            trim: true
+        },
+        invoiceNumber: {
+            type: String,
+            unique: true,
+            sparse: true,
             trim: true
         },
         amount: {
@@ -127,6 +135,10 @@ PlanTransactionSchema.pre('save', async function () {
             }
         });
         this.transactionId = `PTX-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+    }
+
+    if (!this.invoiceNumber) {
+        this.invoiceNumber = await generateNextInvoiceNumber();
     }
 });
 

@@ -1,9 +1,11 @@
 import mongoose, { Document, Schema } from 'mongoose';
 import { BookingStatus } from '../constants/bookingStatus';
+import { generateNextInvoiceNumber } from '../utils/invoiceUtils';
 
 export interface IBooking extends Document {
   userId: mongoose.Types.ObjectId;
   bookingId: string; // Custom ID for frontend reference (e.g., 'BOOK-20240101-001')
+  invoiceNumber?: string; // Format: BUC/25-26/001
   addressId: string; // Reference to user's address ID
   address: {
     label: string;
@@ -75,6 +77,12 @@ const BookingSchema = new Schema<IBooking>(
       type: String,
       required: true,
       unique: true,
+      trim: true
+    },
+    invoiceNumber: {
+      type: String,
+      unique: true,
+      sparse: true,
       trim: true
     },
     addressId: {
@@ -254,6 +262,10 @@ BookingSchema.pre('save', async function (this: IBooking) {
       }
     });
     this.bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+  }
+
+  if (!this.invoiceNumber) {
+    this.invoiceNumber = await generateNextInvoiceNumber();
   }
 });
 

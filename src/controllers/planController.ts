@@ -171,6 +171,7 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
         status: '$status',
         orderId: '$orderId',
         transactionId: '$transactionId',
+        invoiceNumber: '$invoiceNumber',
         purchaseDate: '$createdAt',
         expiresAt: '$userPlan.expiresAt'
       }
@@ -541,7 +542,7 @@ export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Re
             invoicePrefix: "BU"
           };
           const settings = companySettings as any;
-          const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+          const invoiceNumber = planTx.invoiceNumber || `${settings.invoicePrefix}-${planTx.transactionId}`;
 
           const invoiceDataForEmail = {
             invoiceNumber,
@@ -1067,6 +1068,13 @@ export const getMyPlanDetails = asyncHandler(async (req: AuthRequest, res: Respo
     });
   }
 
+  // Get the most recent transaction for this user and plan to get the invoiceNumber
+  const lastTransaction = await PlanTransaction.findOne({
+    userId: userIdObj,
+    planId: userPlan.activePlanId,
+    status: 'paid'
+  }).sort({ createdAt: -1 });
+
   // Get the plan details
   const plan = await Plan.findById(userPlan.activePlanId);
   if (!plan) {
@@ -1136,6 +1144,7 @@ export const getMyPlanDetails = asyncHandler(async (req: AuthRequest, res: Respo
         finalPrice: plan.finalPrice,
         expiresAt: userPlan.expiresAt,
         purchaseDate: userPlan.updatedAt,
+        invoiceNumber: lastTransaction?.invoiceNumber,
         includedServices
       },
       credits: {

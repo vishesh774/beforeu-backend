@@ -276,7 +276,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
                   invoicePrefix: "BU"
                 };
                 const settings = companySettings as any;
-                const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+                const invoiceNumber = planTx.invoiceNumber || `${settings.invoicePrefix}-${planTx.transactionId}`;
 
                 const invoiceDataForEmail = {
                   invoiceNumber,
@@ -747,7 +747,7 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
                     invoicePrefix: "BU"
                   };
                   const settings = companySettings as any;
-                  const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+                  const invoiceNumber = planTx.invoiceNumber || `${settings.invoicePrefix}-${planTx.transactionId}`;
 
                   const invoiceDataForEmail = {
                     invoiceNumber,

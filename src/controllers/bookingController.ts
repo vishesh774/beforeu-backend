@@ -1202,6 +1202,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
     return {
       id: item._id, // Use OrderItem ID for uniqueness in table
       bookingId: item.booking.bookingId, // Display ID
+      invoiceNumber: item.booking.invoiceNumber,
       customer: {
         id: customer._id,
         name: customer.name || 'Unknown',
@@ -1302,6 +1303,7 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
   const bookingData = {
     id: booking._id,
     bookingId: booking.bookingId,
+    invoiceNumber: booking.invoiceNumber,
     customer: {
       id: (booking.userId as any)._id,
       name: (booking.userId as any).name,

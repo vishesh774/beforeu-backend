@@ -9,6 +9,7 @@
     "start:dev": "concurrently \"npm run build\" \"npm run start\"",
     "seed:admin": "ts-node src/scripts/seedAdmin.ts",
     "migrate:cleanup-emails": "ts-node src/scripts/cleanupEmptyEmails.ts",
+    "migrate:invoices": "ts-node src/scripts/migrateInvoiceNumbers.ts",
     "test": "jest",
     "test:coverage": "jest --coverage",
     "lint": "eslint 'src/**/*.ts'",
