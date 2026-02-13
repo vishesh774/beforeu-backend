@@ -2453,10 +2453,17 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
   if (!service) return next(new AppError('Service not found', 404));
   if (!variant) return next(new AppError('Variant not found', 404));
 
+  // 1.5 Handle Plan Holder (Shared Addresses/Credits)
+  const planHolderId = await getPlanHolderId(user._id);
+
   // 2. Handle Address
   let targetAddress: any;
   if (addressId && addressId !== 'new') {
-    targetAddress = await Address.findOne({ id: addressId, userId: user._id });
+    // Try finding by plan holder (primary) or the user themselves
+    targetAddress = await Address.findOne({
+      id: addressId,
+      $or: [{ userId: planHolderId }, { userId: user._id }]
+    });
   } else if (customAddress) {
     targetAddress = customAddress;
   }
@@ -2466,7 +2473,6 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
   }
 
   // 3. Handle Credits if selected
-  const planHolderId = await getPlanHolderId(user._id);
   const userCredits = await UserCredits.findOne({ userId: planHolderId });
   const creditsNeeded = variant.creditValue || 0;
 
