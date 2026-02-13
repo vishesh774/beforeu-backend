@@ -29,11 +29,20 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
         let invoiceData: any = {};
 
         if (isBooking) {
+            // Strip suffix if it's a human-readable booking ID (e.g. BOOK-20240101-001-1 -> BOOK-20240101-001)
+            let lookupId = id;
+            if (!mongoose.Types.ObjectId.isValid(id) && id.startsWith('BOOK-')) {
+                const parts = id.split('-');
+                if (parts.length >= 4) {
+                    lookupId = parts.slice(0, 3).join('-');
+                }
+            }
+
             let query = {};
-            if (mongoose.Types.ObjectId.isValid(id)) {
-                query = { _id: id };
+            if (mongoose.Types.ObjectId.isValid(lookupId)) {
+                query = { _id: lookupId };
             } else {
-                query = { bookingId: id };
+                query = { bookingId: lookupId };
             }
             const booking = await Booking.findOne(query).populate('userId');
             if (!booking) return next(new AppError('Booking not found', 404));
@@ -157,11 +166,20 @@ export const getUserInvoicePDF = asyncHandler(async (req: any, res: Response, ne
 
         const settings = companySettings as any;
 
+        // Strip suffix if it's a human-readable booking ID (e.g. BOOK-20240101-001-1 -> BOOK-20240101-001)
+        let lookupId = id;
+        if (!mongoose.Types.ObjectId.isValid(id) && id.startsWith('BOOK-')) {
+            const parts = id.split('-');
+            if (parts.length >= 4) {
+                lookupId = parts.slice(0, 3).join('-');
+            }
+        }
+
         let query = {};
-        if (mongoose.Types.ObjectId.isValid(id)) {
-            query = { _id: id, userId: userId };
+        if (mongoose.Types.ObjectId.isValid(lookupId)) {
+            query = { _id: lookupId, userId: userId };
         } else {
-            query = { bookingId: id, userId: userId };
+            query = { bookingId: lookupId, userId: userId };
         }
 
         const booking = await Booking.findOne(query).populate('userId');
