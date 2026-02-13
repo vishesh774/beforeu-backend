@@ -875,9 +875,8 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
   }
 
   const bookingData = {
-    _id: booking._id.toString(), // The actual primary key
     id: requestedId, // Return the requested ID (virtual or real)
-    bookingId: booking.bookingId, // The human-readable custom ID
+    bookingId: booking.bookingId, // The real database ID
     items: displayItems.map(item => ({
       id: item._id.toString(),
       serviceId: (item.serviceId as any).id || item.serviceId.toString(),

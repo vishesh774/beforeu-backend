@@ -8,7 +8,77 @@ import PlanTransaction from '../models/PlanTransaction';
 import CompanySettings from '../models/CompanySettings';
 import { generateInvoiceBuffer } from '../utils/pdfGenerator';
 
-// @desc    Generate Invoice PDF
+/**
+ * Normalizes a booking ID by removing item-specific suffixes (e.g., BOOK-XXX-1 -> BOOK-XXX)
+ */
+const normalizeBookingId = (id: string): string => {
+    if (!id || mongoose.Types.ObjectId.isValid(id)) return id;
+
+    // Check for human-readable BOOK- format with extra parts
+    if (id.startsWith('BOOK-')) {
+        const parts = id.split('-');
+        if (parts.length > 3) {
+            return parts.slice(0, 3).join('-');
+        }
+    }
+    return id;
+};
+
+/**
+ * Common logic to prepare invoice data from a booking and its items
+ */
+const prepareInvoiceData = (booking: any, orderItems: any[], settings: any) => {
+    // Gather paid extra charges from all items
+    const paidExtraCharges = orderItems.flatMap(item =>
+        (item.extraCharges || [])
+            .filter((charge: any) => charge.status === 'paid')
+            .map((charge: any) => ({
+                description: `Extra: ${charge.description} (${item.variantName})`,
+                quantity: 1,
+                price: charge.amount,
+                total: charge.amount
+            }))
+    );
+
+    const extraChargesTotal = paidExtraCharges.reduce((sum, c) => sum + c.total, 0);
+
+    // Determine payment method
+    let paymentMethod = 'Online';
+    if (booking.paymentDetails?.method) {
+        paymentMethod = booking.paymentDetails.method.charAt(0).toUpperCase() + booking.paymentDetails.method.slice(1);
+    } else if (booking.creditsUsed > 0 && booking.totalAmount === 0) {
+        paymentMethod = 'Credits';
+    }
+
+    return {
+        invoiceNumber: `${settings.invoicePrefix}-${booking.bookingId}`,
+        date: booking.createdAt,
+        customerName: booking.userId?.name,
+        customerPhone: booking.userId?.phone,
+        customerEmail: booking.userId?.email,
+        customerAddress: booking.address?.fullAddress,
+        billingDetails: booking.billingDetails || undefined,
+        items: [
+            ...orderItems.map(item => ({
+                description: `${item.serviceName} - ${item.variantName}`,
+                quantity: item.quantity,
+                price: item.finalPrice / item.quantity,
+                total: item.finalPrice
+            })),
+            ...paidExtraCharges
+        ],
+        subtotal: (booking.itemTotal || booking.totalOriginalAmount || 0) + extraChargesTotal,
+        discount: booking.discountAmount || 0,
+        creditsUsed: booking.creditsUsed || 0,
+        taxBreakdown: booking.paymentBreakdown || [],
+        total: (booking.totalAmount || 0) + extraChargesTotal,
+        paymentStatus: booking.paymentStatus,
+        paymentId: booking.paymentId,
+        paymentMethod: paymentMethod
+    };
+};
+
+// @desc    Generate Invoice PDF (Admin)
 // @route   GET /api/admin/invoices/booking/:id OR /api/admin/invoices/plan-transaction/:id
 // @access  Private/Admin
 export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, next: any) => {
@@ -18,97 +88,31 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
     try {
         const companySettings = (await CompanySettings.findOne()) || {
             name: "BeforeU",
-            address: "",
-            phone: "",
-            email: "",
-            gstNumber: "",
             invoicePrefix: "BU"
         };
-
         const settings = companySettings as any;
-        let invoiceData: any = {};
+
+        let invoiceData: any;
 
         if (isBooking) {
-            // Strip suffix if it's a human-readable booking ID (e.g. BOOK-20240101-001-1 -> BOOK-20240101-001)
-            let lookupId = id;
-            if (!mongoose.Types.ObjectId.isValid(id) && id.startsWith('BOOK-')) {
-                const parts = id.split('-');
-                if (parts.length >= 4) {
-                    lookupId = parts.slice(0, 3).join('-');
-                }
-            }
+            const lookupId = normalizeBookingId(id);
+            const query = mongoose.Types.ObjectId.isValid(lookupId)
+                ? { _id: lookupId }
+                : { bookingId: lookupId };
 
-            let query = {};
-            if (mongoose.Types.ObjectId.isValid(lookupId)) {
-                query = { _id: lookupId };
-            } else {
-                query = { bookingId: lookupId };
-            }
             const booking = await Booking.findOne(query).populate('userId');
             if (!booking) return next(new AppError('Booking not found', 404));
 
             const orderItems = await OrderItem.find({ bookingId: booking._id });
-            const customer = booking.userId as any;
-
-            // Gather paid extra charges from all items
-            const paidExtraCharges = orderItems.flatMap(item =>
-                (item.extraCharges || [])
-                    .filter(charge => charge.status === 'paid')
-                    .map(charge => ({
-                        description: `Extra: ${charge.description} (${item.variantName})`,
-                        quantity: 1,
-                        price: charge.amount, // Individual amount
-                        total: charge.amount
-                    }))
-            );
-
-            const extraChargesTotal = paidExtraCharges.reduce((sum, c) => sum + c.total, 0);
-
-            // Determine payment method
-            let paymentMethod = 'Online';
-            if (booking.paymentDetails?.method) {
-                paymentMethod = booking.paymentDetails.method;
-            } else if (booking.creditsUsed > 0 && booking.totalAmount === 0) {
-                paymentMethod = 'Credits';
-            }
-
-            invoiceData = {
-                invoiceNumber: `${settings.invoicePrefix}-${booking.bookingId}`,
-                date: booking.createdAt,
-                customerName: customer?.name,
-                customerPhone: customer?.phone,
-                customerEmail: customer?.email,
-                customerAddress: booking.address?.fullAddress,
-                // Billing details override (from admin panel)
-                billingDetails: booking.billingDetails || undefined,
-                items: [
-                    ...orderItems.map(item => ({
-                        description: `${item.serviceName} - ${item.variantName}`,
-                        quantity: item.quantity,
-                        price: item.finalPrice / item.quantity, // Unit Price derived from final price (per unit)
-                        total: item.finalPrice
-                    })),
-                    ...paidExtraCharges
-                ],
-                subtotal: (booking.itemTotal || booking.totalOriginalAmount || 0) + extraChargesTotal,
-                discount: booking.discountAmount || 0,
-                creditsUsed: booking.creditsUsed || 0,
-                taxBreakdown: booking.paymentBreakdown || [],
-                total: (booking.totalAmount || 0) + extraChargesTotal,
-                paymentStatus: booking.paymentStatus,
-                paymentId: booking.paymentId,
-                paymentMethod: paymentMethod
-            };
+            invoiceData = prepareInvoiceData(booking, orderItems, settings);
         } else {
             const planTx = await PlanTransaction.findById(id).populate('userId');
             if (!planTx) return next(new AppError('Plan Transaction not found', 404));
 
             const customer = planTx.userId as any;
-
-            let paymentMethod = 'Online';
-            if (planTx.paymentDetails?.method) {
-                paymentMethod = planTx.paymentDetails.method;
-            }
+            const paymentMethod = planTx.paymentDetails?.method
+                ? planTx.paymentDetails.method.charAt(0).toUpperCase() + planTx.paymentDetails.method.slice(1)
+                : 'Online';
 
             invoiceData = {
                 invoiceNumber: `${settings.invoicePrefix}-${planTx.transactionId}`,
@@ -120,7 +124,7 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
                 items: [{
                     description: `Plan Purchase: ${planTx.planSnapshot?.name || 'Plan'}`,
                     quantity: 1,
-                    price: planTx.planSnapshot?.finalPrice || planTx.amount, // Final price per unit
+                    price: planTx.planSnapshot?.finalPrice || planTx.amount,
                     total: planTx.planSnapshot?.finalPrice || planTx.amount
                 }],
                 subtotal: planTx.planSnapshot?.finalPrice || planTx.amount,
@@ -135,7 +139,6 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
         }
 
         const pdfBuffer = await generateInvoiceBuffer(invoiceData);
-
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Length', pdfBuffer.length);
         res.setHeader('Content-Disposition', `attachment; filename=Invoice_${invoiceData.invoiceNumber}.pdf`);
@@ -147,96 +150,32 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
     }
 });
 
-// @desc    Generate User Invoice PDF
+// @desc    Generate User Invoice PDF (Customer)
 // @route   GET /api/bookings/:id/invoice
 // @access  Private
 export const getUserInvoicePDF = asyncHandler(async (req: any, res: Response, next: any) => {
     const { id } = req.params;
-    const userId = req.user._id;
+    const userId = req.user.id; // Corrected: use req.user.id from auth middleware
 
     try {
         const companySettings = (await CompanySettings.findOne()) || {
             name: "BeforeU",
-            address: "",
-            phone: "",
-            email: "",
-            gstNumber: "",
             invoicePrefix: "BU"
         };
-
         const settings = companySettings as any;
 
-        // Strip suffix if it's a human-readable booking ID (e.g. BOOK-20240101-001-1 -> BOOK-20240101-001)
-        let lookupId = id;
-        if (!mongoose.Types.ObjectId.isValid(id) && id.startsWith('BOOK-')) {
-            const parts = id.split('-');
-            if (parts.length >= 4) {
-                lookupId = parts.slice(0, 3).join('-');
-            }
-        }
-
-        let query = {};
-        if (mongoose.Types.ObjectId.isValid(lookupId)) {
-            query = { _id: lookupId, userId: userId };
-        } else {
-            query = { bookingId: lookupId, userId: userId };
-        }
+        const lookupId = normalizeBookingId(id);
+        const query = mongoose.Types.ObjectId.isValid(lookupId)
+            ? { _id: lookupId, userId }
+            : { bookingId: lookupId, userId };
 
         const booking = await Booking.findOne(query).populate('userId');
         if (!booking) return next(new AppError('Invoice not found or access denied', 404));
 
         const orderItems = await OrderItem.find({ bookingId: booking._id });
-        const customer = booking.userId as any;
-
-        const paidExtraCharges = orderItems.flatMap(item =>
-            (item.extraCharges || [])
-                .filter(charge => charge.status === 'paid')
-                .map(charge => ({
-                    description: `Extra: ${charge.description} (${item.variantName})`,
-                    quantity: 1,
-                    price: charge.amount,
-                    total: charge.amount
-                }))
-        );
-
-        const extraChargesTotal = paidExtraCharges.reduce((sum, c) => sum + c.total, 0);
-
-        let paymentMethod = 'Online';
-        if (booking.paymentDetails?.method) {
-            paymentMethod = booking.paymentDetails.method;
-        } else if (booking.creditsUsed > 0 && booking.totalAmount === 0) {
-            paymentMethod = 'Credits';
-        }
-
-        const invoiceData = {
-            invoiceNumber: `${settings.invoicePrefix}-${booking.bookingId}`,
-            date: booking.createdAt,
-            customerName: customer?.name,
-            customerPhone: customer?.phone,
-            customerEmail: customer?.email,
-            customerAddress: booking.address?.fullAddress,
-            billingDetails: booking.billingDetails || undefined,
-            items: [
-                ...orderItems.map(item => ({
-                    description: `${item.serviceName} - ${item.variantName}`,
-                    quantity: item.quantity,
-                    price: item.finalPrice / item.quantity,
-                    total: item.finalPrice
-                })),
-                ...paidExtraCharges
-            ],
-            subtotal: (booking.itemTotal || booking.totalOriginalAmount || 0) + extraChargesTotal,
-            discount: booking.discountAmount || 0,
-            creditsUsed: booking.creditsUsed || 0,
-            taxBreakdown: booking.paymentBreakdown || [],
-            total: (booking.totalAmount || 0) + extraChargesTotal,
-            paymentStatus: booking.paymentStatus,
-            paymentId: booking.paymentId,
-            paymentMethod: paymentMethod
-        };
+        const invoiceData = prepareInvoiceData(booking, orderItems, settings);
 
         const pdfBuffer = await generateInvoiceBuffer(invoiceData);
-
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Length', pdfBuffer.length);
         res.setHeader('Content-Disposition', `attachment; filename=Invoice_${invoiceData.invoiceNumber}.pdf`);
