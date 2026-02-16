@@ -51,7 +51,7 @@ const prepareInvoiceData = (booking: any, orderItems: any[], settings: any) => {
     }
 
     return {
-        invoiceNumber: `${settings.invoicePrefix}-${booking.bookingId}`,
+        invoiceNumber: booking.invoiceNumber || `${settings.invoicePrefix}-${booking.bookingId}`,
         date: booking.createdAt,
         customerName: booking.userId?.name,
         customerPhone: booking.userId?.phone,
@@ -115,7 +115,7 @@ export const generateInvoicePDF = asyncHandler(async (req: any, res: Response, n
                 : 'Online';
 
             invoiceData = {
-                invoiceNumber: `${settings.invoicePrefix}-${planTx.transactionId}`,
+                invoiceNumber: planTx.invoiceNumber || `${settings.invoicePrefix}-${planTx.transactionId}`,
                 date: planTx.createdAt,
                 customerName: customer?.name,
                 customerPhone: customer?.phone,
