@@ -72,9 +72,62 @@ export const getCoupons = asyncHandler(async (_req: Request, res: Response, _nex
 // @desc    Get all coupons with associated users (for export and detailed list)
 // @route   GET /api/coupons/with-users
 // @access  Admin
-export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Response, _next: NextFunction) => {
-    // 1. Get all coupons
-    const coupons = await Coupon.find({}).sort({ createdAt: -1 });
+export const getCouponsWithUsers = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
+    const { search, type, appliesTo, status } = req.query;
+
+    const query: any = { $and: [] };
+
+    // 1. Search Filter
+    if (search) {
+        query.$and.push({
+            $or: [
+                { code: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ]
+        });
+    }
+
+    // 2. Type Filter
+    if (type && type !== 'all') {
+        query.type = type;
+    }
+
+    // 3. Applies To Filter
+    if (appliesTo && appliesTo !== 'all') {
+        query.appliesTo = appliesTo;
+    }
+
+    // 4. Status Filter
+    const now = new Date();
+    if (status === 'non-expired') {
+        query.$and.push({
+            $or: [
+                { expiryDate: { $exists: false } },
+                { expiryDate: null },
+                { expiryDate: { $gt: now } }
+            ]
+        });
+    } else if (status === 'expired') {
+        query.expiryDate = { $lt: now };
+    } else if (status === 'active') {
+        query.isActive = true;
+        query.$and.push({
+            $or: [
+                { expiryDate: { $exists: false } },
+                { expiryDate: null },
+                { expiryDate: { $gt: now } }
+            ]
+        });
+    } else if (status === 'inactive') {
+        query.isActive = false;
+    }
+
+    // If $and is empty, remove it to avoid empty query issues
+    const finalQuery = query.$and.length > 0 ? query : { ...query };
+    if (finalQuery.$and && finalQuery.$and.length === 0) delete finalQuery.$and;
+
+    // 1. Get filtered coupons
+    const coupons = await Coupon.find(finalQuery).sort({ createdAt: -1 });
 
     // 2. Identify all phone numbers from restricted coupons
     const allPhoneNumbers = new Set<string>();
