@@ -42,7 +42,10 @@ export const createCoupon = asyncHandler(async (req: Request, res: Response, nex
         discountValue,
         appliesTo,
         serviceId,
-        allowedPhoneNumbers: allowedPhoneNumbers ? allowedPhoneNumbers.map((p: string) => normalizePhone(p)) : [],
+        allowedPhoneNumbers: allowedPhoneNumbers ? allowedPhoneNumbers.map((p: string) => ({
+            phone: normalizePhone(p),
+            expiryDate: expiryDate ? new Date(expiryDate) : undefined
+        })) : [],
         maxUses: maxUses || -1,
         expiryDate,
         isActive: isActive !== undefined ? isActive : true
@@ -77,7 +80,10 @@ export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Respo
     const allPhoneNumbers = new Set<string>();
     coupons.forEach(coupon => {
         if (coupon.type === 'restricted' && coupon.allowedPhoneNumbers) {
-            coupon.allowedPhoneNumbers.forEach(phone => allPhoneNumbers.add(phone));
+            coupon.allowedPhoneNumbers.forEach((ap: any) => {
+                const phone = typeof ap === 'string' ? ap : ap.phone;
+                if (phone) allPhoneNumbers.add(phone);
+            });
         }
     });
 
@@ -106,7 +112,10 @@ export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Respo
     coupons.forEach(coupon => {
         if (coupon.type === 'restricted' && coupon.allowedPhoneNumbers) {
             const usersList: any[] = [];
-            coupon.allowedPhoneNumbers.forEach(phone => {
+            coupon.allowedPhoneNumbers.forEach((ap: any) => {
+                const phone = typeof ap === 'string' ? ap : ap.phone;
+                const expiryDate = typeof ap === 'string' ? coupon.expiryDate : ap.expiryDate;
+
                 const normPhone = normalizePhone(phone);
                 const foundUser = userMapByNormPhone.get(normPhone);
 
@@ -114,7 +123,8 @@ export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Respo
                     name: foundUser?.name || 'Unknown',
                     email: foundUser?.email || 'N/A',
                     phone: phone, // Keep original
-                    isRegistered: !!foundUser
+                    isRegistered: !!foundUser,
+                    expiryDate: expiryDate
                 });
             });
             mappedUsers[coupon._id.toString()] = usersList;
@@ -135,7 +145,8 @@ export const getCouponsWithUsers = asyncHandler(async (_req: Request, res: Respo
                     userName: u.name,
                     userEmail: u.email,
                     userPhone: u.phone,
-                    isRegistered: u.isRegistered
+                    isRegistered: u.isRegistered,
+                    userExpiry: u.expiryDate ? new Date(u.expiryDate).toLocaleDateString() : 'No expiry'
                 });
             });
         } else {
@@ -195,21 +206,21 @@ export const getApplicableCoupons = asyncHandler(async (req: any, res: Response,
 
     const query = {
         isActive: true,
-        $or: [
-            { expiryDate: { $exists: false } }, // No expiry
-            { expiryDate: { $gt: currentDate } } // Not expired
-        ],
         $and: [
+            // Root checks for public or basic restricted availability
             {
                 $or: [
                     { type: 'public' },
                     {
                         type: 'restricted',
-                        allowedPhoneNumbers: normalizePhone(userPhone)
+                        $or: [
+                            { allowedPhoneNumbers: normalizePhone(userPhone) },
+                            { 'allowedPhoneNumbers.phone': normalizePhone(userPhone) }
+                        ]
                     }
                 ]
             },
-            // Check maxUsage if not unlimited (-1)
+            // Check usage limit
             {
                 $or: [
                     { maxUses: -1 },
@@ -219,11 +230,45 @@ export const getApplicableCoupons = asyncHandler(async (req: any, res: Response,
         ]
     };
 
-    const coupons = await Coupon.find(query).sort({ discountValue: -1 });
+    const coupons = await Coupon.find(query as any).sort({ discountValue: -1 });
+
+    // 2. Post-fetch filter and map for mobile app response
+    const applicableCoupons = coupons.filter(coupon => {
+        if (coupon.type === 'public') {
+            return !coupon.expiryDate || new Date(coupon.expiryDate) > currentDate;
+        } else {
+            // Find the specific number entry
+            const normUserPhone = normalizePhone(userPhone);
+            const entry: any = coupon.allowedPhoneNumbers.find((ap: any) => {
+                const phone = typeof ap === 'string' ? ap : ap.phone;
+                return normalizePhone(phone) === normUserPhone;
+            });
+
+            if (!entry) return false;
+
+            // Check individual expiry
+            const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+            return !userExpiry || new Date(userExpiry) > currentDate;
+        }
+    }).map(coupon => {
+        const couponObj = coupon.toObject();
+        if (couponObj.type === 'restricted') {
+            const normUserPhone = normalizePhone(userPhone);
+            const entry = couponObj.allowedPhoneNumbers.find((ap: any) => {
+                const phone = typeof ap === 'string' ? ap : ap.phone;
+                return normalizePhone(phone) === normUserPhone;
+            });
+            // Overwrite the root expiryDate with the user-specific one for the UI
+            if (entry) {
+                couponObj.expiryDate = typeof entry === 'string' ? couponObj.expiryDate : entry.expiryDate;
+            }
+        }
+        return couponObj;
+    });
 
     res.status(200).json({
         success: true,
-        data: coupons
+        data: applicableCoupons
     });
 });
 
@@ -243,23 +288,27 @@ export const validateCoupon = asyncHandler(async (req: any, res: Response, next:
         return next(new AppError('Invalid coupon code', 404));
     }
 
-    // Check expiry
-    if (coupon.expiryDate && new Date() > coupon.expiryDate) {
-        return next(new AppError('Coupon has expired', 400));
-    }
-
-    // Check usage limit
-    if (coupon.maxUses !== -1 && coupon.usedCount >= coupon.maxUses) {
-        return next(new AppError('Coupon usage limit exceeded', 400));
-    }
-
     // Check Restricted
     if (coupon.type === 'restricted') {
         const normUserPhone = normalizePhone(userPhone);
-        const isAllowed = coupon.allowedPhoneNumbers.some(p => normalizePhone(p) === normUserPhone);
+        const entry: any = coupon.allowedPhoneNumbers.find((ap: any) => {
+            const phone = typeof ap === 'string' ? ap : ap.phone;
+            return normalizePhone(phone) === normUserPhone;
+        });
 
-        if (!isAllowed) {
+        if (!entry) {
             return next(new AppError('This coupon is not available for your account', 400));
+        }
+
+        // Check Individual Expiry Date
+        const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+        if (userExpiry && new Date() > userExpiry) {
+            return next(new AppError('Coupon has expired for your number', 400));
+        }
+    } else {
+        // For Public coupons, check root expiry
+        if (coupon.expiryDate && new Date() > coupon.expiryDate) {
+            return next(new AppError('Coupon has expired', 400));
         }
     }
 
@@ -323,11 +372,22 @@ export const appendPhoneNumbers = asyncHandler(async (req: Request, res: Respons
     const incomingNormalized = phoneNumbers.map((p: string) => normalizePhone(p));
 
     // Filter out numbers that are already in the list to avoid duplicates (comparing normalized)
-    const existingNormalized = coupon.allowedPhoneNumbers.map(p => normalizePhone(p));
+    const existingNormalized = coupon.allowedPhoneNumbers.map((ap: any) => {
+        const phone = typeof ap === 'string' ? ap : ap.phone;
+        return normalizePhone(phone);
+    });
     const newNumbers = incomingNormalized.filter(phone => !existingNormalized.includes(phone));
 
     if (newNumbers.length > 0) {
-        coupon.allowedPhoneNumbers.push(...newNumbers);
+        // Important: NEW numbers get the CURRENT global expiry date
+        const currentGlobalExpiry = coupon.expiryDate;
+
+        const entriesToAdd = newNumbers.map(p => ({
+            phone: p,
+            expiryDate: currentGlobalExpiry
+        }));
+
+        coupon.allowedPhoneNumbers.push(...entriesToAdd);
         await coupon.save();
     }
 
@@ -395,7 +455,27 @@ export const updateCoupon = asyncHandler(async (req: Request, res: Response, nex
     if (isActive !== undefined) coupon.isActive = isActive;
 
     if (allowedPhoneNumbers !== undefined && Array.isArray(allowedPhoneNumbers)) {
-        coupon.allowedPhoneNumbers = allowedPhoneNumbers.map(p => normalizePhone(p));
+        // Logic: Keep existing numbers with their ORIGINAL expiries.
+        // Add new numbers with the NEW global expiryDate (from req.body).
+
+        const existingMap = new Map();
+        coupon.allowedPhoneNumbers.forEach((ap: any) => {
+            const phone = typeof ap === 'string' ? ap : ap.phone;
+            const expiry = typeof ap === 'string' ? coupon.expiryDate : ap.expiryDate;
+            existingMap.set(normalizePhone(phone), expiry);
+        });
+
+        const newGlobalExpiry = expiryDate ? new Date(expiryDate) : coupon.expiryDate;
+
+        coupon.allowedPhoneNumbers = allowedPhoneNumbers.map(p => {
+            const norm = normalizePhone(p);
+            // If already existed, KEEP its old expiry. Otherwise, use the new one.
+            const oldExpiry = existingMap.get(norm);
+            return {
+                phone: p,
+                expiryDate: oldExpiry !== undefined ? oldExpiry : newGlobalExpiry
+            };
+        });
     }
 
     await coupon.save();

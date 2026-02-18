@@ -130,10 +130,25 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           let isAllowed = true;
           if (coupon.type === 'restricted') {
             const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
-            isAllowed = phoneVariants.some(variant => coupon.allowedPhoneNumbers.includes(variant));
+            const entry: any = coupon.allowedPhoneNumbers.find((ap: any) => {
+              const phone = typeof ap === 'string' ? ap : ap.phone;
+              return phoneVariants.includes(phone);
+            });
+            isAllowed = !!entry;
+
+            if (isAllowed) {
+              const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+              if (userExpiry && new Date() > userExpiry) {
+                isAllowed = false; // Individual/Legacy expiry check
+              }
+            }
+          } else {
+            if (coupon.expiryDate && new Date() > coupon.expiryDate) {
+              isAllowed = false; // Global expiry check
+            }
           }
 
-          if (isAllowed && (!coupon.expiryDate || new Date() <= coupon.expiryDate) && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
+          if (isAllowed && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
             discountAmount = (plan.finalPrice * coupon.discountValue) / 100;
           }
         }
@@ -444,7 +459,22 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           let isAllowed = true;
           if (coupon.type === 'restricted') {
             const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
-            isAllowed = phoneVariants.some(variant => coupon.allowedPhoneNumbers.includes(variant));
+            const entry: any = coupon.allowedPhoneNumbers.find((ap: any) => {
+              const phone = typeof ap === 'string' ? ap : ap.phone;
+              return phoneVariants.includes(phone);
+            });
+            isAllowed = !!entry;
+
+            if (isAllowed) {
+              const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+              if (userExpiry && new Date() > userExpiry) {
+                isAllowed = false; // Individual/Legacy expiry check
+              }
+            }
+          } else {
+            if (coupon.expiryDate && new Date() > coupon.expiryDate) {
+              isAllowed = false; // Global expiry check
+            }
           }
 
           // Check relevance if serviceId is specific
@@ -453,7 +483,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
             isRelevant = bookingData.items.some((item: any) => item.serviceId === coupon.serviceId);
           }
 
-          if (isAllowed && isRelevant && (!coupon.expiryDate || new Date() <= coupon.expiryDate) && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
+          if (isAllowed && isRelevant && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
             discountAmount = (totalAmount * coupon.discountValue) / 100;
             appliedCouponCode = coupon.code;
           }
@@ -831,6 +861,17 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       booking.paymentId = razorpay_payment_id;
       booking.status = 'confirmed'; // Confirmed after payment
       await booking.save();
+
+      // RECORD COUPON USAGE
+      if (booking.couponCode) {
+        await Coupon.findOneAndUpdate(
+          { code: booking.couponCode.toUpperCase() },
+          {
+            $inc: { usedCount: 1 },
+            $push: { usedBy: { userId: userIdObj, usedAt: new Date() } }
+          }
+        ).catch(err => console.error('[PaymentController] Failed to record booking coupon usage:', err));
+      }
 
       // 1. Deduct Credits
       if (booking.creditsUsed > 0) {

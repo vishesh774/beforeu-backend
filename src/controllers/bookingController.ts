@@ -339,16 +339,36 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     }
 
     // Validate Coupon
-    if (appliedCoupon.expiryDate && new Date() > appliedCoupon.expiryDate) {
-      return next(new AppError('Coupon has expired', 400));
-    }
-    if (appliedCoupon.maxUses !== -1 && appliedCoupon.usedCount >= appliedCoupon.maxUses) {
-      return next(new AppError('Coupon usage limit exceeded', 400));
+    const user = await mongoose.model('User').findById(userIdObj);
+    const userPhone = user.phone;
+    const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
+
+    let isAllowed = true;
+    if (appliedCoupon.type === 'restricted') {
+      const entry: any = appliedCoupon.allowedPhoneNumbers.find((ap: any) => {
+        const phone = typeof ap === 'string' ? ap : ap.phone;
+        return phoneVariants.includes(phone);
+      });
+      isAllowed = !!entry;
+
+      if (isAllowed) {
+        const userExpiry = typeof entry === 'string' ? appliedCoupon.expiryDate : entry.expiryDate;
+        if (userExpiry && new Date() > userExpiry) {
+          return next(new AppError('Coupon has expired for your number', 400));
+        }
+      }
+    } else {
+      if (appliedCoupon.expiryDate && new Date() > appliedCoupon.expiryDate) {
+        return next(new AppError('Coupon has expired', 400));
+      }
     }
 
-    const user = await mongoose.model('User').findById(userIdObj);
-    if (appliedCoupon.type === 'restricted' && !appliedCoupon.allowedPhoneNumbers.includes(user.phone)) {
+    if (!isAllowed) {
       return next(new AppError('Coupon not available for you', 400));
+    }
+
+    if (appliedCoupon.maxUses !== -1 && appliedCoupon.usedCount >= appliedCoupon.maxUses) {
+      return next(new AppError('Coupon usage limit exceeded', 400));
     }
 
     // Check Applicability
@@ -2399,7 +2419,10 @@ export const getCustomerApplicableCoupons = asyncHandler(async (req: Request, re
           { type: 'public' },
           {
             type: 'restricted',
-            allowedPhoneNumbers: normalizedUserPhone
+            $or: [
+              { allowedPhoneNumbers: normalizedUserPhone },
+              { 'allowedPhoneNumbers.phone': normalizedUserPhone }
+            ]
           }
         ]
       },
@@ -2413,7 +2436,7 @@ export const getCustomerApplicableCoupons = asyncHandler(async (req: Request, re
     ]
   };
 
-  const coupons = await Coupon.find(query).sort({ discountValue: -1 });
+  const coupons = await Coupon.find(query as any).sort({ discountValue: -1 });
 
   res.status(200).json({
     success: true,
@@ -2500,10 +2523,23 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
     if (coupon) {
       // Validate Restricted
       const normalizedUserPhone = normalizePhone(user.phone);
-      const isAllowed = coupon.type === 'public' || coupon.allowedPhoneNumbers.some(p => normalizePhone(p) === normalizedUserPhone);
+      let isAllowed = coupon.type === 'public';
+      let userSpecificExpiry = coupon.expiryDate;
+
+      if (!isAllowed) {
+        const entry: any = coupon.allowedPhoneNumbers.find((p: any) => {
+          const phone = typeof p === 'string' ? p : p.phone;
+          return normalizePhone(phone) === normalizedUserPhone;
+        });
+
+        if (entry) {
+          isAllowed = true;
+          userSpecificExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+        }
+      }
 
       // Check expiry & usage
-      const isNotExpired = !coupon.expiryDate || new Date() <= coupon.expiryDate;
+      const isNotExpired = !userSpecificExpiry || new Date() <= userSpecificExpiry;
       const hasUsageLeft = coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses;
 
       if (isAllowed && isNotExpired && hasUsageLeft) {

@@ -8,13 +8,13 @@ export interface ICoupon extends Document {
     discountValue: number; // 0-100
     appliesTo: 'plan' | 'service';
     serviceId?: string; // Required if appliesTo === 'service'
-    allowedPhoneNumbers: string[]; // Required if type === 'restricted'
-    maxUses: number; // Total number of times this coupon can be used globally (or per user allocation?)
-    // Request says "single use or even multi-use". 
-    // Let's assume this means global limit for now, or we can interpret "activatable against a number" implies specific assignment.
-    // If restricted, it's linked to numbers using allowedPhoneNumbers.
+    allowedPhoneNumbers: Array<{
+        phone: string;
+        expiryDate?: Date;
+    }>; // Required if type === 'restricted'
+    maxUses: number; // Total number of times this coupon can be used globally
     usedCount: number;
-    expiryDate?: Date;
+    expiryDate?: Date; // This acts as the "Current/Default" expiry for new numbers
     usedBy: Array<{
         userId: mongoose.Types.ObjectId;
         usedAt: Date;
@@ -68,10 +68,12 @@ const CouponSchema = new Schema<ICoupon>(
             trim: true,
             required: function (this: ICoupon) { return this.appliesTo === 'service'; }
         },
-        allowedPhoneNumbers: {
-            type: [String],
-            default: []
-        },
+        allowedPhoneNumbers: [
+            {
+                phone: { type: String, required: true },
+                expiryDate: { type: Date }
+            }
+        ],
         maxUses: {
             type: Number,
             default: -1 // -1 means unlimited
