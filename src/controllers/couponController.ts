@@ -4,7 +4,11 @@ import { AppError } from '../middleware/errorHandler';
 import Coupon from '../models/Coupon';
 import User from '../models/User';
 
-const normalizePhone = (p: string) => p.replace(/\D/g, '').slice(-10);
+const normalizePhone = (p: any) => {
+    if (!p || typeof p !== 'string') return '';
+    return p.replace(/\D/g, '').slice(-10);
+};
+
 
 // @desc    Create a new coupon
 // @route   POST /api/coupons
@@ -69,65 +73,72 @@ export const getCoupons = asyncHandler(async (_req: Request, res: Response, _nex
     });
 });
 
+
 // @desc    Get all coupons with associated users (for export and detailed list)
 // @route   GET /api/coupons/with-users
 // @access  Admin
 export const getCouponsWithUsers = asyncHandler(async (req: Request, res: Response, _next: NextFunction) => {
     const { search, type, appliesTo, status } = req.query;
 
-    const query: any = { $and: [] };
+    const mongoQuery: any = {};
+    const andConditions: any[] = [];
 
-    // 1. Search Filter
-    if (search) {
-        query.$and.push({
+    // 1. Search Filter (Case-insensitive regex search on code or description)
+    if (search && typeof search === 'string' && search.trim() !== '') {
+        const searchRegex = { $regex: search.trim(), $options: 'i' };
+        andConditions.push({
             $or: [
-                { code: { $regex: search, $options: 'i' } },
-                { description: { $regex: search, $options: 'i' } }
+                { code: searchRegex },
+                { description: searchRegex }
             ]
         });
     }
 
-    // 2. Type Filter
-    if (type && type !== 'all') {
-        query.type = type;
+    // 2. Type Filter (Ignore if 'all' or missing)
+    if (type && type !== 'all' && typeof type === 'string') {
+        mongoQuery.type = type;
     }
 
-    // 3. Applies To Filter
-    if (appliesTo && appliesTo !== 'all') {
-        query.appliesTo = appliesTo;
+    // 3. Applies To Filter (Ignore if 'all' or missing)
+    if (appliesTo && appliesTo !== 'all' && typeof appliesTo === 'string') {
+        mongoQuery.appliesTo = appliesTo;
     }
 
     // 4. Status Filter
     const now = new Date();
-    if (status === 'non-expired') {
-        query.$and.push({
-            $or: [
-                { expiryDate: { $exists: false } },
-                { expiryDate: null },
-                { expiryDate: { $gt: now } }
-            ]
-        });
-    } else if (status === 'expired') {
-        query.expiryDate = { $lt: now };
-    } else if (status === 'active') {
-        query.isActive = true;
-        query.$and.push({
-            $or: [
-                { expiryDate: { $exists: false } },
-                { expiryDate: null },
-                { expiryDate: { $gt: now } }
-            ]
-        });
-    } else if (status === 'inactive') {
-        query.isActive = false;
+    if (status && typeof status === 'string') {
+        if (status === 'non-expired') {
+            andConditions.push({
+                $or: [
+                    { expiryDate: { $exists: false } },
+                    { expiryDate: null },
+                    { expiryDate: { $gt: now } }
+                ]
+            });
+        } else if (status === 'expired') {
+            mongoQuery.expiryDate = { $lt: now };
+        } else if (status === 'active') {
+            mongoQuery.isActive = true;
+            andConditions.push({
+                $or: [
+                    { expiryDate: { $exists: false } },
+                    { expiryDate: null },
+                    { expiryDate: { $gt: now } }
+                ]
+            });
+        } else if (status === 'inactive') {
+            mongoQuery.isActive = false;
+        }
     }
 
-    // If $and is empty, remove it to avoid empty query issues
-    const finalQuery = query.$and.length > 0 ? query : { ...query };
-    if (finalQuery.$and && finalQuery.$and.length === 0) delete finalQuery.$and;
+    // Combine any $or conditions into the main $and query
+    if (andConditions.length > 0) {
+        mongoQuery.$and = andConditions;
+    }
 
-    // 1. Get filtered coupons
-    const coupons = await Coupon.find(finalQuery).sort({ createdAt: -1 });
+    // Fetch coupons from database
+    const coupons = await Coupon.find(mongoQuery).sort({ createdAt: -1 });
+    console.log(`[DEBUG] Found ${coupons.length} coupons`);
 
     // 2. Identify all phone numbers from restricted coupons
     const allPhoneNumbers = new Set<string>();
