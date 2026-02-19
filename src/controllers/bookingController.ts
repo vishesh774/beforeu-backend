@@ -2048,7 +2048,8 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
 
   const sosIdStr = `SOS-${dateStr}-${String(sosCount + 1).padStart(3, '0')}`;
   const bIdStr = `BOOK-${dateStr}-${String(bCount + 1).padStart(3, '0')}`;
-  const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  const endOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
   // 9. Create Booking
   const booking = await Booking.create({
@@ -2088,7 +2089,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
     status: partner ? 'assigned' : 'confirmed',
     assignedPartnerId: partner ? partner._id : undefined,
     startJobOtp: 'NONE',
-    endJobOtp: generatedOtp
+    endJobOtp: endOtp
   });
 
   // 11. Create SOS Alert
@@ -2105,7 +2106,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
   const newAlert = new SOSAlert({
     user: userId,
     sosId: sosIdStr,
-    otp: generatedOtp,
+    otp: endOtp,
     location: {
       latitude: targetAddress.coordinates?.lat || 0,
       longitude: targetAddress.coordinates?.lng || 0,
@@ -2597,7 +2598,8 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
     bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) }
   });
   const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
-  const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  const endOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
   // 7. Create Booking
   const bookingData: any = {
@@ -2668,8 +2670,8 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
     customerVisitRequired: true,
     paidWithCredits: paymentMethod === 'CREDITS',
     status: 'confirmed',
-    startJobOtp: 'NONE',
-    endJobOtp: generatedOtp
+    startJobOtp: startOtp,
+    endJobOtp: endOtp
   });
 
   // 9. Deduct Credits if applicable
