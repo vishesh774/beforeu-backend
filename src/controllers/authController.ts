@@ -648,9 +648,29 @@ export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response
 // @access  Public (or Private if logged in)
 export const sendEmailOTP = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { email } = req.body;
+  const authReq = req as AuthRequest;
+  const userId = authReq.user?.id;
 
   if (!email) {
     return next(new AppError('Please provide an email address', 400));
+  }
+
+  // Check if email is already in use by another profile
+  const existingUser = await User.findOne({ 
+    email: email.toLowerCase(),
+    isDeleted: false 
+  });
+
+  if (existingUser) {
+    // If user is logged in, check if this email belongs to someone else
+    if (userId) {
+      if (existingUser._id.toString() !== userId) {
+        return next(new AppError('This email is already registered with another account', 400));
+      }
+    } else {
+      // If not logged in (e.g. signup flow), just say it's already in use
+      return next(new AppError('This email is already registered', 400));
+    }
   }
 
   const result = await createAndSendEmailOTP(email);
@@ -684,6 +704,59 @@ export const verifyEmailOTP = asyncHandler(async (req: Request, res: Response, n
   res.status(200).json({
     success: true,
     message: result.message
+  });
+});
+
+// @desc    Update user email (requires OTP verification)
+// @route   POST /api/auth/update-email
+// @access  Private
+export const updateEmail = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { email, otp } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  if (!email || !otp) {
+    return next(new AppError('Please provide email and verification code', 400));
+  }
+
+  // 1. Verify OTP
+  const result = await verifyOTPService(email, otp);
+
+  if (!result.success) {
+    return next(new AppError(result.message || 'Invalid or expired code', 400));
+  }
+
+  // 2. Double check if email is already in use (to prevent race conditions)
+  const existingUser = await User.findOne({ 
+    email: email.toLowerCase(),
+    isDeleted: false
+  });
+  
+  if (existingUser && existingUser._id.toString() !== userId) {
+    return next(new AppError('This email is already registered with another account', 400));
+  }
+
+  // 3. Update user email
+  const user = await User.findById(userId);
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  user.email = email.toLowerCase();
+  await user.save();
+
+  // 4. Aggregate updated user data
+  const userData = await aggregateUserData(user._id);
+
+  res.status(200).json({
+    success: true,
+    message: 'Email updated successfully',
+    data: {
+      user: userData
+    }
   });
 });
 
