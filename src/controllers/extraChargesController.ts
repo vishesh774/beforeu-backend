@@ -318,7 +318,8 @@ export const createExtraChargeOrder = asyncHandler(async (req: AuthRequest, res:
                 fixed_amount: true,
                 payment_amount: Math.round(charge.amount * 100), // Amount in paise
                 description: charge.description.substring(0, 40), // Max 40 chars
-                customer_id: null, // Optional
+                // NOTE: customer_id is intentionally omitted — passing null causes Razorpay
+                // to throw "customer_id field is required" validation error.
                 close_by: closeBy,
                 notes: {
                     type: 'extra_charge',
