@@ -70,7 +70,7 @@ async function triggerClickToCall(phoneNumber: string): Promise<void> {
         {
             customer_number: normalizedNumber,
             customer_ring_timeout: CUSTOMER_RING_TIMEOUT,
-            async: 10,
+            async: 1,
             api_key: SMARTFLO_API_KEY
         },
         {
