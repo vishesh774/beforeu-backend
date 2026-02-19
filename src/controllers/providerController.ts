@@ -348,8 +348,16 @@ export const getPartnerSOSAlerts = asyncHandler(async (req: AuthRequest, res: Re
     }
 
     const sosServiceId = sosService._id.toString();
-    if (!partner.services.includes(sosServiceId)) {
-        return res.status(200).json({ success: true, data: { alerts: [] } });
+    const sosServiceSlug = (sosService as any).id;
+    const hasSosAccess = partner.services.includes(sosServiceId) ||
+        (sosServiceSlug && partner.services.includes(sosServiceSlug));
+
+    if (!hasSosAccess) {
+        return res.status(403).json({
+            success: false,
+            message: 'You do not have access to the SOS service',
+            data: { alerts: [] }
+        });
     }
 
     // Find all active SOS alerts
@@ -449,8 +457,19 @@ export const getUnassignedSOSAlerts = asyncHandler(async (req: AuthRequest, res:
 
     // Check if partner has SOS service
     const sosService = await Service.findOne({ name: { $regex: /^SOS/i } });
-    if (!sosService || !partner.services.includes(sosService._id.toString())) {
-        return res.status(200).json({ success: true, data: { alerts: [] } });
+    if (!sosService) return res.status(200).json({ success: true, data: { alerts: [] } });
+
+    const sosServiceId = sosService._id.toString();
+    const sosServiceSlug = (sosService as any).id;
+    const hasSosAccess = partner.services.includes(sosServiceId) ||
+        (sosServiceSlug && partner.services.includes(sosServiceSlug));
+
+    if (!hasSosAccess) {
+        return res.status(403).json({
+            success: false,
+            message: 'You do not have access to the SOS service',
+            data: { alerts: [] }
+        });
     }
 
     // Find TRIGGERED or ACKNOWLEDGED SOS alerts (not yet assigned to any partner)

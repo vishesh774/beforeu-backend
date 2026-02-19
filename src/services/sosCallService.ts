@@ -119,7 +119,10 @@ export async function triggerSOSCallsToPartners(
             return result;
         }
         const sosServiceId = sosService._id.toString();
-        console.log(`[SOSCallService] SOS Service found: ${sosService.name} (${sosServiceId})`);
+        const sosServiceSlug = (sosService as any).id; // 'sos'
+        const sosIdentifierFilter = sosServiceSlug ? [sosServiceId, sosServiceSlug] : [sosServiceId];
+
+        console.log(`[SOSCallService] SOS Service found: ${sosService.name} (${sosServiceId}), slug: ${sosServiceSlug}`);
 
         // --- Step 2: Collect all partner IDs to call ---
         const partnerIdSet = new Set<string>();
@@ -153,7 +156,7 @@ export async function triggerSOSCallsToPartners(
             );
             const allSosPartners = await ServicePartner.find({
                 isActive: true,
-                services: { $in: [sosServiceId] }
+                services: { $in: sosIdentifierFilter }
             });
             for (const p of allSosPartners) {
                 partnerIdSet.add(p._id.toString());
@@ -181,7 +184,7 @@ export async function triggerSOSCallsToPartners(
                 // Partners in matching regions OR partners with no region restrictions
                 regionalPartners = await ServicePartner.find({
                     isActive: true,
-                    services: { $in: [sosServiceId] },
+                    services: { $in: sosIdentifierFilter },
                     $or: [
                         { serviceRegions: { $in: matchingRegionIds } },
                         { serviceRegions: { $size: 0 } }
@@ -196,7 +199,7 @@ export async function triggerSOSCallsToPartners(
                 );
                 regionalPartners = await ServicePartner.find({
                     isActive: true,
-                    services: { $in: [sosServiceId] }
+                    services: { $in: sosIdentifierFilter }
                 });
             }
 
