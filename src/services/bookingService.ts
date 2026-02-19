@@ -144,6 +144,8 @@ export async function syncBookingStatus(bookingId: string | any, actor?: { id: a
         } else {
             if (statuses.some(s => s === BookingStatus.IN_PROGRESS || s === BookingStatus.COMPLETED)) {
                 newStatus = BookingStatus.IN_PROGRESS;
+            } else if (statuses.some(s => s === BookingStatus.ON_HOLD)) {
+                newStatus = BookingStatus.ON_HOLD;
             } else if (statuses.some(s => s === BookingStatus.REACHED)) {
                 newStatus = BookingStatus.REACHED;
             } else if (statuses.some(s => s === BookingStatus.EN_ROUTE)) {

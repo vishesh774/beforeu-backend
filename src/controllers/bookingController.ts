@@ -28,6 +28,7 @@ import { getSOSService } from '../utils/systemServices';
 import { getPlanHolderId } from '../utils/userHelpers';
 import { sendBookingAssignmentMessage } from '../services/whatsappService';
 import FamilyMember from '../models/FamilyMember';
+import { formatTimeToIST } from '../utils/dateUtils';
 import CustomerAppSettings from '../models/CustomerAppSettings';
 import { sendSosNotification, sendJobNotification } from '../services/pushNotificationService';
 import { triggerSOSCallsToPartners } from '../services/sosCallService';
@@ -2614,7 +2615,7 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
     },
     bookingType: scheduledDate ? 'SCHEDULED' : 'ASAP',
     scheduledDate: scheduledDate ? new Date(scheduledDate) : now,
-    scheduledTime: scheduledTime || now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+    scheduledTime: scheduledTime || formatTimeToIST(now),
     totalAmount: calculationResult.total,
     itemTotal: baseItemTotal,
     totalOriginalAmount: variant.originalPrice,
