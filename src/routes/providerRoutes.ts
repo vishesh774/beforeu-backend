@@ -9,7 +9,9 @@ import {
     getProfile,
     getPartnerSOSAlerts,
     getUnassignedSOSAlerts,
-    acceptSOSAlert
+    acceptSOSAlert,
+    holdJob,
+    resumeJob
 } from '../controllers/providerController';
 import {
     addExtraCharge,
@@ -35,6 +37,8 @@ router.get('/jobs/:id', getJobDetails);
 router.put('/jobs/:id/status', updateJobStatus);
 router.post('/jobs/:id/start', startJob);
 router.post('/jobs/:id/end', endJob);
+router.post('/jobs/:id/hold', holdJob);
+router.post('/jobs/:id/resume', resumeJob);
 router.get('/profile', getProfile);
 
 // SOS routes (for partners assigned to SOS service)

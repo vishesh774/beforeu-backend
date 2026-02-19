@@ -2048,7 +2048,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
 
   const sosIdStr = `SOS-${dateStr}-${String(sosCount + 1).padStart(3, '0')}`;
   const bIdStr = `BOOK-${dateStr}-${String(bCount + 1).padStart(3, '0')}`;
-  const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  // const startOtp = Math.floor(1000 + Math.random() * 9000).toString(); // Removed: Unused
   const endOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
   // 9. Create Booking

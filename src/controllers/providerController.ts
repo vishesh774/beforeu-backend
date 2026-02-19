@@ -682,3 +682,71 @@ export const acceptSOSAlert = asyncHandler(async (req: AuthRequest, res: Respons
         }
     });
 });
+// @desc    Hold job
+// @route   POST /api/provider/jobs/:id/hold
+// @access  Private (ServicePartner)
+export const holdJob = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const { reason, customRemark } = req.body;
+    const user = req.user;
+    if (!user) return next(new AppError('Not authenticated', 401));
+
+    const partner = await ServicePartner.findOne({ phone: user.phone });
+    if (!partner) return next(new AppError('Partner profile not found', 404));
+
+    const job = await OrderItem.findOne({ _id: id, assignedPartnerId: partner._id });
+    if (!job) return next(new AppError('Job not assigned to you', 403));
+
+    if (job.status !== BookingStatus.IN_PROGRESS) {
+        return next(new AppError('Job must be IN_PROGRESS to hold', 400));
+    }
+
+    job.holdHistory.push({
+        reason: reason || 'Partner Hold',
+        customRemark,
+        holdStartedAt: new Date(),
+        heldBy: partner.name
+    });
+
+    job.status = BookingStatus.ON_HOLD;
+    await job.save();
+    await syncBookingStatus(job.bookingId);
+
+    res.status(200).json({
+        success: true,
+        data: { job }
+    });
+});
+
+// @desc    Resume job
+// @route   POST /api/provider/jobs/:id/resume
+// @access  Private (ServicePartner)
+export const resumeJob = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const { id } = req.params;
+    const user = req.user;
+    if (!user) return next(new AppError('Not authenticated', 401));
+
+    const partner = await ServicePartner.findOne({ phone: user.phone });
+    if (!partner) return next(new AppError('Partner profile not found', 404));
+
+    const job = await OrderItem.findOne({ _id: id, assignedPartnerId: partner._id });
+    if (!job) return next(new AppError('Job not assigned to you', 403));
+
+    if (job.status !== BookingStatus.ON_HOLD) {
+        return next(new AppError('Job must be ON_HOLD to resume', 400));
+    }
+
+    const lastHold = job.holdHistory[job.holdHistory.length - 1];
+    if (lastHold && !lastHold.holdEndedAt) {
+        lastHold.holdEndedAt = new Date();
+    }
+
+    job.status = BookingStatus.IN_PROGRESS;
+    await job.save();
+    await syncBookingStatus(job.bookingId);
+
+    res.status(200).json({
+        success: true,
+        data: { job }
+    });
+});
