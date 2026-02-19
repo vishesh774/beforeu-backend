@@ -2005,8 +2005,24 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
   let targetAddress: any;
   if (addressId && addressId !== 'new') {
     targetAddress = await Address.findOne({ id: addressId });
+    if (!targetAddress) {
+      return next(new AppError(`Address with id "${addressId}" not found`, 404));
+    }
+    // Log what we found for debugging
+    console.log(`[triggerManualSOS] Resolved address "${targetAddress.label}": lat=${targetAddress.coordinates?.lat}, lng=${targetAddress.coordinates?.lng}`);
+    // Saved addresses should always have coordinates — surface the problem clearly
+    if (!targetAddress.coordinates?.lat || !targetAddress.coordinates?.lng) {
+      return next(new AppError(
+        `Address "${targetAddress.label}" is missing GPS coordinates. Please update the address with lat/lng before triggering SOS.`,
+        400
+      ));
+    }
   } else if (customAddress) {
     targetAddress = customAddress;
+    if (!targetAddress.fullAddress) {
+      return next(new AppError('Custom address must include a full address text', 400));
+    }
+    console.log(`[triggerManualSOS] Using custom address: "${targetAddress.fullAddress}", lat=${targetAddress.coordinates?.lat}, lng=${targetAddress.coordinates?.lng}`);
   }
 
   if (!targetAddress) {
@@ -2164,12 +2180,25 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
     console.error('[triggerManualSOS] Notification pipeline error:', notifErr);
   }
 
-  // Trigger phone calls to eligible SOS partners (fire-and-forget, non-blocking)
+  // Trigger phone calls to eligible SOS partners (fire-and-forget, non-blocking).
+  // The assigned partner is passed as a priority — they are ALWAYS called,
+  // plus any other region-eligible SOS partners.
+  const priorityPartnerIds = partner ? [partner._id.toString()] : [];
+  const sosLat = targetAddress.coordinates?.lat;
+  const sosLng = targetAddress.coordinates?.lng;
   triggerSOSCallsToPartners(
-    { latitude: targetAddress.coordinates?.lat || 0, longitude: targetAddress.coordinates?.lng || 0, address: targetAddress.fullAddress },
-    newAlert.sosId
+    {
+      latitude: sosLat ?? 0,
+      longitude: sosLng ?? 0,
+      address: targetAddress.fullAddress
+    },
+    newAlert.sosId,
+    priorityPartnerIds
   ).then(callResult => {
     console.log(`[triggerManualSOS] SOS call results for ${newAlert.sosId}: ${callResult.callsTriggered}/${callResult.totalPartners} calls triggered`);
+    callResult.details.forEach(d =>
+      console.log(`  ${d.success ? '✅' : '❌'} ${d.partnerName} (${d.phone}): ${d.success ? 'called' : d.error}`)
+    );
   }).catch(callError => {
     console.error(`[triggerManualSOS] SOS call workflow failed for ${newAlert.sosId}:`, callError);
   });

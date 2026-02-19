@@ -1,10 +1,14 @@
 /**
  * SOS Click-to-Call Service
- * 
+ *
  * When an SOS is triggered (from customer app or admin panel):
- * 1. Determine which service region the SOS location belongs to
- * 2. Find active service partners in that region assigned to the SOS service
- * 3. Trigger phone calls to all of them via Tata Teleservices Click-to-Call API
+ * 1. Always call explicitly assigned partner(s) first (e.g. admin-chosen partner)
+ * 2. Determine which service region the SOS location belongs to
+ * 3. Find all active SOS partners in that region and call them too
+ * 4. Deduplicate so no partner gets called twice
+ *
+ * Fallback: If coordinates are missing/invalid (0,0), skip region lookup and
+ * call ALL active SOS partners rather than silently calling nobody.
  */
 
 import axios from 'axios';
@@ -39,7 +43,7 @@ interface SOSCallResult {
 
 /**
  * Normalize a phone number to the 91XXXXXXXXXX format required by Tata Teleservices.
- * 
+ *
  * Handles formats like:
  *  - +919876543210  →  919876543210
  *  - 919876543210   →  919876543210
@@ -47,25 +51,10 @@ interface SOSCallResult {
  *  - 9876543210     →  919876543210
  */
 function normalizePhoneFor91(phone: string): string {
-    // Strip all non-digit characters
     let digits = phone.replace(/\D/g, '');
-
-    // If it starts with 91 and is 12 digits, it's already correct
-    if (digits.startsWith('91') && digits.length === 12) {
-        return digits;
-    }
-
-    // If it starts with 0, remove leading 0
-    if (digits.startsWith('0')) {
-        digits = digits.substring(1);
-    }
-
-    // If it's 10 digits (Indian mobile number), prepend 91
-    if (digits.length === 10) {
-        return `91${digits}`;
-    }
-
-    // Fallback: return whatever we have (may already be correct or edge case)
+    if (digits.startsWith('91') && digits.length === 12) return digits;
+    if (digits.startsWith('0')) digits = digits.substring(1);
+    if (digits.length === 10) return `91${digits}`;
     return digits;
 }
 
@@ -74,7 +63,6 @@ function normalizePhoneFor91(phone: string): string {
  */
 async function triggerClickToCall(phoneNumber: string): Promise<void> {
     const normalizedNumber = normalizePhoneFor91(phoneNumber);
-
     console.log(`[SOSCallService] Triggering click-to-call for: ${normalizedNumber}`);
 
     const response = await axios.post(
@@ -90,7 +78,7 @@ async function triggerClickToCall(phoneNumber: string): Promise<void> {
                 'accept': 'application/json',
                 'content-type': 'application/json'
             },
-            timeout: 15000 // 15 second timeout
+            timeout: 15000
         }
     );
 
@@ -99,17 +87,17 @@ async function triggerClickToCall(phoneNumber: string): Promise<void> {
 
 /**
  * Main function: Find partners for the SOS and call them all.
- * 
- * Flow:
- * 1. Get all active service regions
- * 2. Check which region(s) the SOS location falls in (point-in-polygon)
- * 3. Find the SOS service (system service with id 'sos')
- * 4. Find active service partners who:
- *    - Are in the matching region(s) OR have no region restrictions
- *    - Are assigned to the SOS service
- * 5. Trigger phone call to each partner
+ *
+ * @param location         - SOS coordinates + address
+ * @param sosId            - Human-readable SOS ID for logging
+ * @param priorityPartnerIds - Partner IDs that MUST be called regardless of region
+ *                            (e.g. the partner manually assigned by admin)
  */
-export async function triggerSOSCallsToPartners(location: SOSCallLocation, sosId?: string): Promise<SOSCallResult> {
+export async function triggerSOSCallsToPartners(
+    location: SOSCallLocation,
+    sosId?: string,
+    priorityPartnerIds: string[] = []
+): Promise<SOSCallResult> {
     const result: SOSCallResult = {
         totalPartners: 0,
         callsTriggered: 0,
@@ -118,64 +106,126 @@ export async function triggerSOSCallsToPartners(location: SOSCallLocation, sosId
     };
 
     try {
-        console.log(`[SOSCallService] Starting SOS call workflow for location: lat=${location.latitude}, lng=${location.longitude}${sosId ? `, SOS ID: ${sosId}` : ''}`);
+        console.log(
+            `[SOSCallService] Starting SOS call workflow for location: lat=${location.latitude}, lng=${location.longitude}` +
+            `${sosId ? `, SOS ID: ${sosId}` : ''}` +
+            `${priorityPartnerIds.length > 0 ? `, Priority partners: [${priorityPartnerIds.join(', ')}]` : ''}`
+        );
 
-        // 1. Find matching service regions
-        const activeRegions = await ServiceRegion.find({ isActive: true });
-        const matchingRegionIds: string[] = [];
-
-        for (const region of activeRegions) {
-            if (isPointInPolygon({ lat: location.latitude, lng: location.longitude }, region.polygon)) {
-                matchingRegionIds.push(region._id.toString());
-                console.log(`[SOSCallService] Location matched region: ${region.name} (${region._id})`);
-            }
-        }
-
-        if (matchingRegionIds.length === 0) {
-            console.warn(`[SOSCallService] No service region found for location lat=${location.latitude}, lng=${location.longitude}. Will try partners with no region restrictions.`);
-        }
-
-        // 2. Find the SOS service by name (case-insensitive)
+        // --- Step 1: Find the SOS service ---
         const sosService = await Service.findOne({ name: { $regex: /^SOS/i } });
         if (!sosService) {
             console.error('[SOSCallService] SOS service not found in database. Cannot determine eligible partners.');
             return result;
         }
-
         const sosServiceId = sosService._id.toString();
         console.log(`[SOSCallService] SOS Service found: ${sosService.name} (${sosServiceId})`);
 
-        // 3. Build partner filter
-        const partnerFilter: any = {
-            isActive: true,
-            services: { $in: [sosServiceId] }
-        };
+        // --- Step 2: Collect all partner IDs to call ---
+        const partnerIdSet = new Set<string>();
 
-        // If we found matching regions, filter by those regions (or partners with no restrictions)
-        if (matchingRegionIds.length > 0) {
-            partnerFilter.$or = [
-                { serviceRegions: { $in: matchingRegionIds } },
-                { serviceRegions: { $size: 0 } } // Partners available in all regions
-            ];
+        // 2a. Always include explicitly assigned (priority) partners
+        if (priorityPartnerIds.length > 0) {
+            const priorityPartners = await ServicePartner.find({
+                _id: { $in: priorityPartnerIds },
+                isActive: true
+            });
+            for (const p of priorityPartners) {
+                partnerIdSet.add(p._id.toString());
+                console.log(`[SOSCallService] Priority partner added: ${p.name} (${p._id})`);
+            }
+            if (priorityPartners.length < priorityPartnerIds.length) {
+                console.warn(`[SOSCallService] Some priority partner IDs were not found or are inactive.`);
+            }
         }
-        // If no region matched, only get partners with no region restrictions
-        else {
-            partnerFilter.serviceRegions = { $size: 0 };
+
+        // 2b. Region-based lookup for additional partners
+        const hasValidCoords =
+            location.latitude !== 0 ||
+            location.longitude !== 0;
+
+        if (!hasValidCoords) {
+            // Coordinates are 0,0 — region lookup would be useless.
+            // Fall back: call ALL active SOS partners.
+            console.warn(
+                `[SOSCallService] Coordinates are 0,0 for SOS ${sosId}. ` +
+                `Falling back to calling ALL active SOS partners.`
+            );
+            const allSosPartners = await ServicePartner.find({
+                isActive: true,
+                services: { $in: [sosServiceId] }
+            });
+            for (const p of allSosPartners) {
+                partnerIdSet.add(p._id.toString());
+            }
+            console.log(
+                `[SOSCallService] Fallback: found ${allSosPartners.length} active SOS partner(s).`
+            );
+        } else {
+            // Normal path: region polygon lookup
+            const activeRegions = await ServiceRegion.find({ isActive: true });
+            const matchingRegionIds: string[] = [];
+
+            for (const region of activeRegions) {
+                if (isPointInPolygon(
+                    { lat: location.latitude, lng: location.longitude },
+                    region.polygon
+                )) {
+                    matchingRegionIds.push(region._id.toString());
+                    console.log(`[SOSCallService] Location matched region: ${region.name} (${region._id})`);
+                }
+            }
+
+            let regionalPartners;
+            if (matchingRegionIds.length > 0) {
+                // Partners in matching regions OR partners with no region restrictions
+                regionalPartners = await ServicePartner.find({
+                    isActive: true,
+                    services: { $in: [sosServiceId] },
+                    $or: [
+                        { serviceRegions: { $in: matchingRegionIds } },
+                        { serviceRegions: { $size: 0 } }
+                    ]
+                });
+            } else {
+                // No region matched — warn and broaden to ALL active SOS partners
+                // (avoids silently skipping everyone when GPS is slightly off)
+                console.warn(
+                    `[SOSCallService] No service region matched lat=${location.latitude}, lng=${location.longitude}. ` +
+                    `Broadening to all active SOS partners.`
+                );
+                regionalPartners = await ServicePartner.find({
+                    isActive: true,
+                    services: { $in: [sosServiceId] }
+                });
+            }
+
+            for (const p of regionalPartners) {
+                partnerIdSet.add(p._id.toString());
+            }
+            console.log(
+                `[SOSCallService] Region lookup added ${regionalPartners.length} partner(s). ` +
+                `Total unique: ${partnerIdSet.size}.`
+            );
         }
 
-        // 4. Find eligible partners
-        const eligiblePartners = await ServicePartner.find(partnerFilter);
-        result.totalPartners = eligiblePartners.length;
+        // --- Step 3: Fetch full partner docs for phone numbers ---
+        const allPartnerIds = Array.from(partnerIdSet);
+        result.totalPartners = allPartnerIds.length;
 
-        console.log(`[SOSCallService] Found ${eligiblePartners.length} eligible partner(s) for SOS calls`);
-
-        if (eligiblePartners.length === 0) {
+        if (allPartnerIds.length === 0) {
             console.warn('[SOSCallService] No eligible partners found to call for this SOS.');
             return result;
         }
 
-        // 5. Trigger phone calls to all eligible partners (in parallel)
-        const callPromises = eligiblePartners.map(async (partner) => {
+        const partnersToCall = await ServicePartner.find({
+            _id: { $in: allPartnerIds }
+        });
+
+        console.log(`[SOSCallService] Placing calls to ${partnersToCall.length} partner(s)...`);
+
+        // --- Step 4: Trigger calls in parallel ---
+        const callPromises = partnersToCall.map(async (partner) => {
             const detail = {
                 partnerId: partner._id.toString(),
                 partnerName: partner.name,
@@ -201,7 +251,10 @@ export async function triggerSOSCallsToPartners(location: SOSCallLocation, sosId
 
         await Promise.all(callPromises);
 
-        console.log(`[SOSCallService] SOS call workflow complete. Triggered: ${result.callsTriggered}, Failed: ${result.callsFailed}`);
+        console.log(
+            `[SOSCallService] SOS call workflow complete. ` +
+            `Triggered: ${result.callsTriggered}, Failed: ${result.callsFailed}`
+        );
 
     } catch (error: any) {
         console.error('[SOSCallService] Critical error in SOS call workflow:', error);

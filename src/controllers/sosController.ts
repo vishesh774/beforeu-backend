@@ -228,6 +228,9 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
             sosIdStr
         ).then(callResult => {
             console.log(`[triggerSOS] SOS call results for ${sosIdStr}: ${callResult.callsTriggered}/${callResult.totalPartners} calls triggered`);
+            callResult.details.forEach(d =>
+                console.log(`  ${d.success ? '✅' : '❌'} ${d.partnerName} (${d.phone}): ${d.success ? 'called' : d.error}`)
+            );
         }).catch(callError => {
             console.error(`[triggerSOS] SOS call workflow failed for ${sosIdStr}:`, callError);
         });
