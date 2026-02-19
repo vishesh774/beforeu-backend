@@ -1,5 +1,5 @@
 import express from 'express';
-import { signup, login, adminLogin, getMe, addAddress, updateAddress, deleteAddress, addFamilyMember, deleteFamilyMember, deleteAccount } from '../controllers/authController';
+import { signup, login, adminLogin, getMe, addAddress, updateAddress, deleteAddress, addFamilyMember, deleteFamilyMember, deleteAccount, sendEmailOTP, verifyEmailOTP, updateEmail } from '../controllers/authController';
 import { sendOTP, verifyOTPController, completeProfile } from '../controllers/otpController';
 import { getAllPlans, purchasePlan, getMyPlanDetails } from '../controllers/planController';
 import { getAllFAQs } from '../controllers/faqController';
@@ -12,10 +12,23 @@ import { protect } from '../middleware/auth';
 
 const router = express.Router();
 
-// OTP-based authentication
+// OTP-based authentication (Phone)
 router.post('/send-otp', sendOTP);
 router.post('/verify-otp', verifyOTPController);
 router.post('/complete-profile', completeProfile);
+
+// Email Verification OTP
+router.post('/send-email-otp', (req, res, next) => {
+    // Optionally use protect if token is present, but don't enforce it
+    // This allows sendEmailOTP to check if email belongs to current user if they are logged in
+    if (req.headers.authorization) {
+        protect(req, res, next);
+    } else {
+        next();
+    }
+}, sendEmailOTP);
+router.post('/verify-email-otp', verifyEmailOTP);
+router.post('/update-email', protect, updateEmail);
 
 // Traditional email/password authentication
 router.post('/signup', validate(signupValidator), signup);

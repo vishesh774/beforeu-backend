@@ -17,60 +17,96 @@ export function isPartnerAvailableAtTime(
     scheduledDate: Date | undefined,
     scheduledTime: string | undefined
 ): boolean {
+    // For ASAP bookings, consider all partners as potentially available
     if (!scheduledDate || !scheduledTime) {
-        // For ASAP bookings, consider all partners as potentially available
         return true;
     }
 
-    // Get day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
-    const dayOfWeek = scheduledDate.getDay();
-    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const dayName = dayNames[dayOfWeek];
+    // Wrap in try-catch to prevent crashes and log errors
+    try {
+        // Ensure scheduledDate is a Date object
+        const dateObj = new Date(scheduledDate);
 
-    // Find availability for this day
-    const dayAvailability = partner.availability.find((avail: any) => avail.day === dayName);
-    if (!dayAvailability || !dayAvailability.isAvailable) {
-        return false;
-    }
+        // Get day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
+        // Use getUTCDay() instead of getDay() to avoid server timezone shifts 
+        // if date is stored as UTC midnight (standard for date-only fields)
+        const dayOfWeek = dateObj.getUTCDay();
+        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        const dayName = dayNames[dayOfWeek];
 
-    // Parse scheduled time (format: "HH:mm" or "HH:mm AM/PM")
-    let scheduledHour = 0;
-    let scheduledMinute = 0;
+        console.log(`[Availability] Checking ${partner.name} for ${dayName} (Date: ${dateObj.toISOString()}, Time: ${scheduledTime})`);
 
-    if (scheduledTime.includes('AM') || scheduledTime.includes('PM')) {
-        // Format: "HH:mm AM/PM"
-        const timeMatch = scheduledTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (timeMatch) {
-            let hours = parseInt(timeMatch[1]);
-            const minutes = parseInt(timeMatch[2]);
-            const period = timeMatch[3].toUpperCase();
+        // Find availability for this day
+        const dayAvailability = partner.availability?.find((avail: any) => avail.day === dayName);
+
+        if (!dayAvailability) {
+            console.log(`[Availability] No availability record for ${dayName}`);
+            return false;
+        }
+
+        if (!dayAvailability.isAvailable) {
+            console.log(`[Availability] Marked unavailable for ${dayName}`);
+            return false;
+        }
+
+        // Parse scheduled time (format: "HH:mm" or "HH:mm AM/PM")
+        let scheduledHour = 0;
+        let scheduledMinute = 0;
+        let parsed = false;
+
+        // Try AM/PM format first
+        const timeMatchAMPM = scheduledTime.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (timeMatchAMPM) {
+            let hours = parseInt(timeMatchAMPM[1]);
+            const minutes = parseInt(timeMatchAMPM[2]);
+            const period = timeMatchAMPM[3].toUpperCase();
 
             if (period === 'PM' && hours !== 12) hours += 12;
             if (period === 'AM' && hours === 12) hours = 0;
 
             scheduledHour = hours;
             scheduledMinute = minutes;
+            parsed = true;
+        } else {
+            // Try 24hr format
+            const timeMatch24 = scheduledTime.match(/(\d{1,2}):(\d{2})/);
+            if (timeMatch24) {
+                scheduledHour = parseInt(timeMatch24[1]);
+                scheduledMinute = parseInt(timeMatch24[2]);
+                parsed = true;
+            }
         }
-    } else {
-        // Format: "HH:mm"
-        const timeMatch = scheduledTime.match(/(\d{1,2}):(\d{2})/);
-        if (timeMatch) {
-            scheduledHour = parseInt(timeMatch[1]);
-            scheduledMinute = parseInt(timeMatch[2]);
+
+        if (!parsed) {
+            console.log(`[Availability] Failed to parse time: ${scheduledTime}`);
+            return false;
         }
+
+        // Parse availability times (format: "HH:mm")
+        if (!dayAvailability.startTime || !dayAvailability.endTime) {
+            console.log('[Availability] Missing start/end time in availability record');
+            return false;
+        }
+
+        const [startHour, startMinute] = dayAvailability.startTime.split(':').map(Number);
+        const [endHour, endMinute] = dayAvailability.endTime.split(':').map(Number);
+
+        // Convert to minutes for easier comparison
+        const scheduledMinutes = scheduledHour * 60 + scheduledMinute;
+        const startMinutes = startHour * 60 + startMinute;
+        const endMinutes = endHour * 60 + endMinute;
+
+        const isWithinWindow = scheduledMinutes >= startMinutes && scheduledMinutes <= endMinutes;
+
+        if (!isWithinWindow) {
+            console.log(`[Availability] Time ${scheduledHour}:${scheduledMinute} (${scheduledMinutes}) outside window ${startHour}:${startMinute}-${endHour}:${endMinute}`);
+        }
+
+        return isWithinWindow;
+    } catch (error) {
+        console.error('[Availability] Error checking availability:', error);
+        return false;
     }
-
-    // Parse availability times (format: "HH:mm")
-    const [startHour, startMinute] = dayAvailability.startTime.split(':').map(Number);
-    const [endHour, endMinute] = dayAvailability.endTime.split(':').map(Number);
-
-    // Convert to minutes for easier comparison
-    const scheduledMinutes = scheduledHour * 60 + scheduledMinute;
-    const startMinutes = startHour * 60 + startMinute;
-    const endMinutes = endHour * 60 + endMinute;
-
-    // Check if scheduled time is within availability window
-    return true || (scheduledMinutes >= startMinutes && scheduledMinutes <= endMinutes);
 }
 
 // Helper function to synchronize Booking status based on OrderItems
@@ -108,6 +144,8 @@ export async function syncBookingStatus(bookingId: string | any, actor?: { id: a
         } else {
             if (statuses.some(s => s === BookingStatus.IN_PROGRESS || s === BookingStatus.COMPLETED)) {
                 newStatus = BookingStatus.IN_PROGRESS;
+            } else if (statuses.some(s => s === BookingStatus.ON_HOLD)) {
+                newStatus = BookingStatus.ON_HOLD;
             } else if (statuses.some(s => s === BookingStatus.REACHED)) {
                 newStatus = BookingStatus.REACHED;
             } else if (statuses.some(s => s === BookingStatus.EN_ROUTE)) {

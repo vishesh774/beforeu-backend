@@ -132,7 +132,8 @@ export const getServicePartner = asyncHandler(async (req: Request, res: Response
 // @route   POST /api/admin/service-partners
 // @access  Private/Admin
 export const createServicePartner = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  let { name, phone, email, services, serviceRegions, availability, isActive } = req.body;
+  const { name, email, services, serviceRegions, availability, isActive } = req.body;
+  let { phone } = req.body;
 
   // Validate required fields
   if (!name || !phone || !services || !Array.isArray(services) || services.length === 0) {
@@ -270,7 +271,8 @@ export const createServicePartner = asyncHandler(async (req: Request, res: Respo
 // @access  Private/Admin
 export const updateServicePartner = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
-  let { name, phone, email, services, serviceRegions, availability, isActive } = req.body;
+  const { name, email, services, serviceRegions, availability, isActive } = req.body;
+  let { phone } = req.body;
 
   const servicePartner = await ServicePartner.findById(id);
   if (!servicePartner) {

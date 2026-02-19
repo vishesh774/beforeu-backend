@@ -6,7 +6,7 @@ export const normalizePhone = (phone: string): string => {
     if (!phone) return phone;
 
     // 1. Remove all non-digit characters except '+'
-    let normalized = phone.replace(/[^\d+]/g, '');
+    const normalized = phone.replace(/[^\d+]/g, '');
 
     // 2. Handle Indian numbers (+91 or 91 prefix or 10 digits)
     if (normalized.startsWith('+91')) {

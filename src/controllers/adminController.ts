@@ -3,6 +3,8 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { AdminRequest } from '../middleware/adminAuth';
 import User from '../models/User';
+import Role from '../models/Role';
+import ServicePartner from '../models/ServicePartner';
 import { initializeUserRecords } from '../utils/userHelpers';
 
 // @desc    Get all admin users (excluding customers) with pagination and filters
@@ -148,8 +150,7 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
   // Validate roleId if provided
   if (roleId) {
     // Import Role dynamically if needed or assume it's imported at top (I will add import)
-    const RoleModel = require('../models/Role').default;
-    const validRole = await RoleModel.findById(roleId);
+    const validRole = await Role.findById(roleId);
     if (!validRole) {
       return next(new AppError('Invalid Role ID provided', 400));
     }
@@ -183,10 +184,9 @@ export const createUser = asyncHandler(async (req: Request, res: Response, next:
 
   // If role is ServicePartner, ensure a ServicePartner profile exists
   if (role === 'ServicePartner') {
-    const ServicePartnerModel = require('../models/ServicePartner').default;
-    const existingPartner = await ServicePartnerModel.findOne({ phone });
+    const existingPartner = await ServicePartner.findOne({ phone });
     if (!existingPartner) {
-      await ServicePartnerModel.create({
+      await ServicePartner.create({
         name,
         phone,
         email: email && email.trim() ? email.trim().toLowerCase() : undefined,
@@ -262,8 +262,7 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
     if (roleId === null || roleId === '') {
       user.roleId = undefined;
     } else {
-      const RoleModel = require('../models/Role').default;
-      const validRole = await RoleModel.findById(roleId);
+      const validRole = await Role.findById(roleId);
       if (!validRole) {
         return next(new AppError('Invalid Role ID provided', 400));
       }
@@ -279,10 +278,9 @@ export const updateUser = asyncHandler(async (req: Request, res: Response, next:
 
   // If role is now ServicePartner, ensure profile exists
   if (user.role === 'ServicePartner') {
-    const ServicePartnerModel = require('../models/ServicePartner').default;
-    const existingPartner = await ServicePartnerModel.findOne({ phone: user.phone });
+    const existingPartner = await ServicePartner.findOne({ phone: user.phone });
     if (!existingPartner) {
-      await ServicePartnerModel.create({
+      await ServicePartner.create({
         name: user.name,
         phone: user.phone,
         email: user.email,

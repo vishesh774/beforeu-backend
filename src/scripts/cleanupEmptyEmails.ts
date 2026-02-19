@@ -32,7 +32,7 @@ const cleanupEmptyEmails = async () => {
           console.log(`   ⚠️  Could not drop index: ${error.message}`);
         }
       }
-      
+
       // Create sparse unique index (allows multiple null/undefined values)
       await User.collection.createIndex({ email: 1 }, { unique: true, sparse: true });
       console.log('   ✅ Created/recreated sparse unique index on email');
@@ -44,7 +44,7 @@ const cleanupEmptyEmails = async () => {
     // Find all users with empty email strings
     console.log('\n🔍 Searching for users with empty email strings...');
     const usersWithEmptyEmail = await User.find({ email: '' });
-    
+
     console.log(`📊 Found ${usersWithEmptyEmail.length} user(s) with empty email strings`);
 
     if (usersWithEmptyEmail.length === 0) {
@@ -54,7 +54,7 @@ const cleanupEmptyEmails = async () => {
     }
 
     // Check how many users already have null/undefined email
-    const usersWithNullEmail = await User.countDocuments({ 
+    const usersWithNullEmail = await User.countDocuments({
       $or: [
         { email: null },
         { email: { $exists: false } }
@@ -69,13 +69,13 @@ const cleanupEmptyEmails = async () => {
     });
 
     // Check if there are any users with null email already
-    const existingNullEmailUsers = await User.find({ 
+    const existingNullEmailUsers = await User.find({
       $or: [
         { email: null },
         { email: { $exists: false } }
       ]
     }).select('_id name phone');
-    
+
     if (existingNullEmailUsers.length > 0) {
       console.log(`\n⚠️  Found ${existingNullEmailUsers.length} user(s) with null/undefined email:`);
       existingNullEmailUsers.forEach((u, i) => {
@@ -99,7 +99,7 @@ const cleanupEmptyEmails = async () => {
           { _id: user._id },
           { $set: { email: null } }
         );
-        
+
         if (result.modifiedCount > 0) {
           successCount++;
           console.log(`   ✅ Updated: ${user.name}`);
@@ -122,7 +122,7 @@ const cleanupEmptyEmails = async () => {
               successCount++;
               console.log(`   ✅ Updated (native driver): ${user.name}`);
             } else {
-              throw new Error('Database connection not available');
+              throw new Error('Database connection not available', { cause: error });
             }
           } catch (nativeError: any) {
             skippedCount++;
@@ -158,7 +158,7 @@ const cleanupEmptyEmails = async () => {
     console.log(`   - Users updated: ${successCount}`);
     console.log(`   - Users skipped: ${skippedCount}`);
     console.log(`   - Users remaining with empty emails: ${remainingEmptyEmails.length}`);
-    
+
     if (errors.length > 0) {
       console.log('\n⚠️  Errors encountered:');
       errors.forEach((error, index) => {

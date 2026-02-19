@@ -2,8 +2,7 @@ import { Response } from 'express';
 import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
-// @ts-ignore - Razorpay doesn't have proper TypeScript definitions
-const Razorpay = require('razorpay');
+import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
 import Booking from '../models/Booking';
@@ -131,10 +130,25 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           let isAllowed = true;
           if (coupon.type === 'restricted') {
             const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
-            isAllowed = phoneVariants.some(variant => coupon.allowedPhoneNumbers.includes(variant));
+            const entry: any = coupon.allowedPhoneNumbers.find((ap: any) => {
+              const phone = typeof ap === 'string' ? ap : ap.phone;
+              return phoneVariants.includes(phone);
+            });
+            isAllowed = !!entry;
+
+            if (isAllowed) {
+              const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+              if (userExpiry && new Date() > userExpiry) {
+                isAllowed = false; // Individual/Legacy expiry check
+              }
+            }
+          } else {
+            if (coupon.expiryDate && new Date() > coupon.expiryDate) {
+              isAllowed = false; // Global expiry check
+            }
           }
 
-          if (isAllowed && (!coupon.expiryDate || new Date() <= coupon.expiryDate) && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
+          if (isAllowed && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
             discountAmount = (plan.finalPrice * coupon.discountValue) / 100;
           }
         }
@@ -222,7 +236,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         const validityDays = plan.validity || 365;
         expiryDate.setDate(expiryDate.getDate() + validityDays);
 
-        let userPlan = await UserPlan.findOne({ userId: userIdObj });
+        const userPlan = await UserPlan.findOne({ userId: userIdObj });
         if (!userPlan) {
           await UserPlan.create({
             userId: userIdObj,
@@ -235,7 +249,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           await userPlan.save();
         }
 
-        let userCredits = await UserCredits.findOne({ userId: userIdObj });
+        const userCredits = await UserCredits.findOne({ userId: userIdObj });
         if (!userCredits) {
           await UserCredits.create({ userId: userIdObj, credits: plan.totalCredits });
         } else {
@@ -277,7 +291,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
                   invoicePrefix: "BU"
                 };
                 const settings = companySettings as any;
-                const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+                const invoiceNumber = planTx.invoiceNumber || `${settings.invoicePrefix}-${planTx.transactionId}`;
 
                 const invoiceDataForEmail = {
                   invoiceNumber,
@@ -358,7 +372,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
       // 1. Calculate base item total and validate items
       let totalAmount = 0;
       let totalOriginalAmount = 0;
-      let orderItems = [];
+      const orderItems = [];
 
       for (const item of bookingData.items) {
         const service = await Service.findOne({
@@ -445,7 +459,22 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           let isAllowed = true;
           if (coupon.type === 'restricted') {
             const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
-            isAllowed = phoneVariants.some(variant => coupon.allowedPhoneNumbers.includes(variant));
+            const entry: any = coupon.allowedPhoneNumbers.find((ap: any) => {
+              const phone = typeof ap === 'string' ? ap : ap.phone;
+              return phoneVariants.includes(phone);
+            });
+            isAllowed = !!entry;
+
+            if (isAllowed) {
+              const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+              if (userExpiry && new Date() > userExpiry) {
+                isAllowed = false; // Individual/Legacy expiry check
+              }
+            }
+          } else {
+            if (coupon.expiryDate && new Date() > coupon.expiryDate) {
+              isAllowed = false; // Global expiry check
+            }
           }
 
           // Check relevance if serviceId is specific
@@ -454,7 +483,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
             isRelevant = bookingData.items.some((item: any) => item.serviceId === coupon.serviceId);
           }
 
-          if (isAllowed && isRelevant && (!coupon.expiryDate || new Date() <= coupon.expiryDate) && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
+          if (isAllowed && isRelevant && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
             discountAmount = (totalAmount * coupon.discountValue) / 100;
             appliedCouponCode = coupon.code;
           }
@@ -748,7 +777,7 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
                     invoicePrefix: "BU"
                   };
                   const settings = companySettings as any;
-                  const invoiceNumber = `${settings.invoicePrefix}-${planTx.transactionId}`;
+                  const invoiceNumber = planTx.invoiceNumber || `${settings.invoicePrefix}-${planTx.transactionId}`;
 
                   const invoiceDataForEmail = {
                     invoiceNumber,
@@ -832,6 +861,17 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       booking.paymentId = razorpay_payment_id;
       booking.status = 'confirmed'; // Confirmed after payment
       await booking.save();
+
+      // RECORD COUPON USAGE
+      if (booking.couponCode) {
+        await Coupon.findOneAndUpdate(
+          { code: booking.couponCode.toUpperCase() },
+          {
+            $inc: { usedCount: 1 },
+            $push: { usedBy: { userId: userIdObj, usedAt: new Date() } }
+          }
+        ).catch(err => console.error('[PaymentController] Failed to record booking coupon usage:', err));
+      }
 
       // 1. Deduct Credits
       if (booking.creditsUsed > 0) {
@@ -932,7 +972,7 @@ export const getRazorpayOrderDetails = asyncHandler(async (req: any, res: Respon
             order = await razorpay.orders.fetch(orderId);
             const allPayments = await razorpay.orders.fetchPayments(orderId);
             payments = allPayments.items;
-          } catch (e) {
+          } catch {
             // Order might not exist if it was a direct payment
             payments = [capturedPayment];
           }
@@ -1001,28 +1041,55 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
     const user = await User.findById(userIdObj);
     if (!user) return next(new AppError('User not found', 404));
 
-    const razorpay = getRazorpayInstance();
+    const isManual = providedId === 'MANUAL';
     let successfulPayment: any = null;
     let finalOrderId: string | null = null;
+    let payedAmountInRupees = 0;
+    let manualPaymentDetails: any = null;
 
-    // 1. Verify Razorpay Payment
-    if (providedId.startsWith('pay_')) {
-      successfulPayment = await razorpay.payments.fetch(providedId);
-      if (successfulPayment.status !== 'captured') {
-        return next(new AppError(`Payment ${providedId} is not captured. Status: ${successfulPayment.status}`, 400));
+    if (isManual) {
+      if (!targetId.manualPaymentData) {
+        return next(new AppError('Manual payment data is required for manual mode', 400));
       }
-      finalOrderId = successfulPayment.order_id;
+      const { mode, transactionNumber, amount, date, bankName } = targetId.manualPaymentData;
+      if (!mode || !amount) {
+        return next(new AppError('Payment mode and amount are required for manual mode', 400));
+      }
+
+      payedAmountInRupees = Number(amount);
+      const adminName = req.user?.name || 'Admin';
+
+      manualPaymentDetails = {
+        bankName: bankName || 'N/A',
+        transactionNumber: transactionNumber || `MAN-${Date.now()}`,
+        amount: payedAmountInRupees,
+        paymentType: mode,
+        recordedBy: adminName,
+        recordedAt: date ? new Date(date) : new Date()
+      };
+
+      finalOrderId = `MANUAL_${Date.now()}`;
+      successfulPayment = { id: manualPaymentDetails.transactionNumber }; // Mock for shared logic below
     } else {
-      const payments = await razorpay.orders.fetchPayments(providedId);
-      successfulPayment = payments.items.find((p: any) => p.status === 'captured');
-      finalOrderId = providedId;
-    }
+      // 1. Verify Razorpay Payment
+      const razorpay = getRazorpayInstance();
+      if (providedId.startsWith('pay_')) {
+        successfulPayment = await razorpay.payments.fetch(providedId);
+        if (successfulPayment.status !== 'captured') {
+          return next(new AppError(`Payment ${providedId} is not captured. Status: ${successfulPayment.status}`, 400));
+        }
+        finalOrderId = successfulPayment.order_id;
+      } else {
+        const payments = await razorpay.orders.fetchPayments(providedId);
+        successfulPayment = payments.items.find((p: any) => p.status === 'captured');
+        finalOrderId = providedId;
+      }
 
-    if (!successfulPayment) {
-      return next(new AppError('No captured payment found for this ID on Razorpay', 400));
+      if (!successfulPayment) {
+        return next(new AppError('No captured payment found for this ID on Razorpay', 400));
+      }
+      payedAmountInRupees = successfulPayment.amount / 100;
     }
-
-    const payedAmountInRupees = successfulPayment.amount / 100;
 
     // 2. Prevent duplication (only if not linking to an existing specific system ID)
     const existingId = targetId.existingId;
@@ -1051,9 +1118,12 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
 
         // Update existing
         planTx.status = 'completed';
-        planTx.paymentId = successfulPayment.id;
-        planTx.paymentDetails = successfulPayment;
+        planTx.paymentDetails = isManual ? undefined : successfulPayment;
         planTx.orderId = orderIdToStore;
+        if (isManual) {
+          planTx.paymentMethod = 'MANUAL';
+          planTx.manualPaymentDetails = manualPaymentDetails;
+        }
         await planTx.save();
       } else {
         const plan = await Plan.findById(targetId.planId);
@@ -1119,8 +1189,10 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
             originalPrice: plan.originalPrice,
             finalPrice: plan.finalPrice
           },
-          paymentId: successfulPayment.id,
-          paymentDetails: successfulPayment,
+          paymentId: isManual ? undefined : successfulPayment.id,
+          paymentDetails: isManual ? undefined : successfulPayment,
+          paymentMethod: isManual ? 'MANUAL' : 'ONLINE',
+          manualPaymentDetails: isManual ? manualPaymentDetails : undefined,
           paymentBreakdown,
           status: 'completed',
           couponCode: targetId.couponCode?.toUpperCase(),
@@ -1135,7 +1207,7 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
       const expiryDate = new Date();
       expiryDate.setDate(expiryDate.getDate() + (planToActivate.validity || 365));
 
-      let userPlan = await UserPlan.findOne({ userId: userIdObj });
+      const userPlan = await UserPlan.findOne({ userId: userIdObj });
       if (!userPlan) {
         await UserPlan.create({ userId: userIdObj, activePlanId: planToActivate._id.toString(), expiresAt: expiryDate });
       } else {
@@ -1144,7 +1216,7 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
         await userPlan.save();
       }
 
-      let userCredits = await UserCredits.findOne({ userId: userIdObj });
+      const userCredits = await UserCredits.findOne({ userId: userIdObj });
       if (!userCredits) {
         await UserCredits.create({ userId: userIdObj, credits: planTx.credits });
       } else {
@@ -1165,9 +1237,13 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
         // Update existing booking
         booking.paymentStatus = 'paid';
         booking.status = 'confirmed';
-        booking.paymentId = successfulPayment.id;
-        booking.paymentDetails = successfulPayment;
+        booking.paymentId = isManual ? undefined : successfulPayment.id;
+        booking.paymentDetails = isManual ? undefined : successfulPayment;
         booking.orderId = orderIdToStore;
+        if (isManual) {
+          booking.paymentMethod = 'MANUAL';
+          booking.manualPaymentDetails = manualPaymentDetails;
+        }
         // Optionally update breakdown if we have a way to recalculate it or just store the final total
         await booking.save();
 
@@ -1184,7 +1260,7 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
 
       let totalAmount = 0;
       let totalOriginalAmount = 0;
-      let orderItemsData = [];
+      const orderItemsData = [];
       let creditsToDeduct = 0;
 
       for (const item of items) {
@@ -1264,8 +1340,10 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
         couponCode: couponCode?.toUpperCase(),
         discountAmount,
         paymentStatus: 'paid',
-        paymentId: successfulPayment.id,
-        paymentDetails: successfulPayment,
+        paymentMethod: isManual ? 'MANUAL' : 'ONLINE',
+        paymentId: isManual ? undefined : successfulPayment.id,
+        paymentDetails: isManual ? undefined : successfulPayment,
+        manualPaymentDetails: isManual ? manualPaymentDetails : undefined,
         status: 'confirmed',
         orderId: orderIdToStore,
         paymentBreakdown: calculation.breakdown

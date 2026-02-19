@@ -7,6 +7,7 @@ import Plan from '../models/Plan';
 import mongoose from 'mongoose';
 import { SOSAlert } from '../models/SOSAlert';
 import CustomerAppSettings from '../models/CustomerAppSettings';
+import PlanTransaction from '../models/PlanTransaction';
 
 export interface AggregatedUserData {
   id: string;
@@ -30,6 +31,7 @@ export interface AggregatedUserData {
     totalMembers: number;
     extraDiscount?: number;
     expiresAt?: Date;
+    invoiceNumber?: string;
   };
   familyMembers: Array<{
     id: string;
@@ -136,11 +138,15 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
 
   // Fetch related data
   // Family members and addresses are SHARED under the plan holder
-  const [familyMembers, addresses, userCredits, userPlan] = await Promise.all([
+  const [familyMembers, addresses, userCredits, userPlan, latestTransaction] = await Promise.all([
     FamilyMember.find({ userId: planHolderId }).sort({ createdAt: 1 }), // Shared list
     Address.find({ userId: planHolderId }).sort({ createdAt: 1 }),      // Shared addresses under plan holder
     UserCredits.findOne({ userId: planHolderId }),
-    UserPlan.findOne({ userId: planHolderId })
+    UserPlan.findOne({ userId: planHolderId }),
+    PlanTransaction.findOne({
+      userId: planHolderId,
+      status: 'completed'
+    }).sort({ createdAt: -1 })
   ]);
 
   // Map family members
@@ -179,9 +185,14 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
         finalPrice: plan.finalPrice,
         totalMembers: plan.totalMembers,
         extraDiscount: plan.extraDiscount,
-        expiresAt: userPlan.expiresAt
+        expiresAt: userPlan.expiresAt,
+        invoiceNumber: latestTransaction?.invoiceNumber
       };
     }
+  }
+
+  if (activePlan && latestTransaction?.invoiceNumber) {
+    activePlan.invoiceNumber = latestTransaction.invoiceNumber;
   }
 
   // Calculate SOS Eligibility

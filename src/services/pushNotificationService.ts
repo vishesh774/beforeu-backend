@@ -245,12 +245,9 @@ export async function sendBatchNotification(
     let failed = 0;
 
     for (const partnerId of partnerIds) {
-        let sent = false;
-        if (type === 'SOS') {
-            sent = await sendSosNotification(partnerId, data as SOSNotificationData);
-        } else {
-            sent = await sendJobNotification(partnerId, data as JobNotificationData);
-        }
+        const sent = type === 'SOS'
+            ? await sendSosNotification(partnerId, data as SOSNotificationData)
+            : await sendJobNotification(partnerId, data as JobNotificationData);
 
         if (sent) {
             success++;

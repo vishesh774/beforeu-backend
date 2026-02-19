@@ -28,8 +28,10 @@ import { getSOSService } from '../utils/systemServices';
 import { getPlanHolderId } from '../utils/userHelpers';
 import { sendBookingAssignmentMessage } from '../services/whatsappService';
 import FamilyMember from '../models/FamilyMember';
+import { formatTimeToIST } from '../utils/dateUtils';
 import CustomerAppSettings from '../models/CustomerAppSettings';
 import { sendSosNotification, sendJobNotification } from '../services/pushNotificationService';
+import { triggerSOSCallsToPartners } from '../services/sosCallService';
 
 
 // @desc    Get all active services (without location requirement)
@@ -338,16 +340,36 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     }
 
     // Validate Coupon
-    if (appliedCoupon.expiryDate && new Date() > appliedCoupon.expiryDate) {
-      return next(new AppError('Coupon has expired', 400));
-    }
-    if (appliedCoupon.maxUses !== -1 && appliedCoupon.usedCount >= appliedCoupon.maxUses) {
-      return next(new AppError('Coupon usage limit exceeded', 400));
+    const user = await mongoose.model('User').findById(userIdObj);
+    const userPhone = user.phone;
+    const phoneVariants = [userPhone, userPhone.replace(/^\+91/, ''), userPhone.startsWith('+91') ? userPhone : `+91${userPhone}`];
+
+    let isAllowed = true;
+    if (appliedCoupon.type === 'restricted') {
+      const entry: any = appliedCoupon.allowedPhoneNumbers.find((ap: any) => {
+        const phone = typeof ap === 'string' ? ap : ap.phone;
+        return phoneVariants.includes(phone);
+      });
+      isAllowed = !!entry;
+
+      if (isAllowed) {
+        const userExpiry = typeof entry === 'string' ? appliedCoupon.expiryDate : entry.expiryDate;
+        if (userExpiry && new Date() > userExpiry) {
+          return next(new AppError('Coupon has expired for your number', 400));
+        }
+      }
+    } else {
+      if (appliedCoupon.expiryDate && new Date() > appliedCoupon.expiryDate) {
+        return next(new AppError('Coupon has expired', 400));
+      }
     }
 
-    const user = await mongoose.model('User').findById(userIdObj);
-    if (appliedCoupon.type === 'restricted' && !appliedCoupon.allowedPhoneNumbers.includes(user.phone)) {
+    if (!isAllowed) {
       return next(new AppError('Coupon not available for you', 400));
+    }
+
+    if (appliedCoupon.maxUses !== -1 && appliedCoupon.usedCount >= appliedCoupon.maxUses) {
+      return next(new AppError('Coupon usage limit exceeded', 400));
     }
 
     // Check Applicability
@@ -434,7 +456,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
 
   // Determine payment method
-  let paymentMethod: 'CREDITS' | 'ONLINE' | 'MIXED' = 'ONLINE';
+  let paymentMethod: 'CREDITS' | 'ONLINE' | 'MIXED';
   if (creditsUsed > 0 && calculationResult.total === 0) {
     paymentMethod = 'CREDITS';
   } else if (creditsUsed > 0 && calculationResult.total > 0) {
@@ -877,6 +899,7 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
     id: requestedId, // Return the requested ID (virtual or real)
     bookingId: booking.bookingId, // The real database ID
     items: displayItems.map(item => ({
+      id: item._id.toString(),
       serviceId: (item.serviceId as any).id || item.serviceId.toString(),
       variantId: (item.serviceVariantId as any).id || item.serviceVariantId.toString(),
       variantName: item.variantName,
@@ -895,7 +918,25 @@ export const getUserBookingById = asyncHandler(async (req: AuthRequest, res: Res
         address: (item.assignedServiceLocationId as any).address,
         contactNumber: (item.assignedServiceLocationId as any).contactNumber,
         contactPerson: (item.assignedServiceLocationId as any).contactPerson
-      } : null
+      } : null,
+      // Extra charges added by service partner
+      extraCharges: (item.extraCharges || []).map(charge => ({
+        id: charge.id,
+        amount: charge.amount,
+        description: charge.description,
+        status: charge.status,
+        paymentMethod: charge.paymentMethod,
+        addedByName: charge.addedByName,
+        addedAt: charge.addedAt,
+        paidAt: charge.paidAt
+      })),
+      extraChargesSummary: {
+        total: (item.extraCharges || []).length,
+        pending: (item.extraCharges || []).filter(c => c.status === 'pending').length,
+        paid: (item.extraCharges || []).filter(c => c.status === 'paid').length,
+        totalPendingAmount: (item.extraCharges || []).filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0),
+        totalPaidAmount: (item.extraCharges || []).filter(c => c.status === 'paid').reduce((sum, c) => sum + c.amount, 0)
+      }
     })),
     // If specific item, show its price. Otherwise show total.
     totalAmount: specificItem ? specificItem.finalPrice : booking.totalAmount,
@@ -1018,16 +1059,20 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
   });
   pipeline.push({ $unwind: '$booking' });
 
-  // Mandatory filter: Do not show bookings with pending payment (unless free/confirmed)
-  pipeline.push({
-    $match: {
-      $or: [
-        { 'booking.paymentStatus': 'paid' },
-        { 'booking.paymentStatus': 'refunded' },
-        { 'booking.totalAmount': 0 }
-      ]
-    }
-  });
+  // Mandatory filter: Do not show bookings with pending payment (unless explicitly requested via status filter)
+  const isPendingExplicitly = statusFilter === BookingStatus.PENDING || statusFilter === 'pending';
+
+  if (!isPendingExplicitly) {
+    pipeline.push({
+      $match: {
+        $or: [
+          { 'booking.paymentStatus': 'paid' },
+          { 'booking.paymentStatus': 'refunded' },
+          { 'booking.totalAmount': 0 }
+        ]
+      }
+    });
+  }
 
   // Filter by Booking fields (paymentStatus, dates)
   const bookingMatch: any = {};
@@ -1182,6 +1227,7 @@ export const getAllBookings = asyncHandler(async (req: Request, res: Response) =
     return {
       id: item._id, // Use OrderItem ID for uniqueness in table
       bookingId: item.booking.bookingId, // Display ID
+      invoiceNumber: item.booking.invoiceNumber,
       customer: {
         id: customer._id,
         name: customer.name || 'Unknown',
@@ -1282,6 +1328,7 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
   const bookingData = {
     id: booking._id,
     bookingId: booking.bookingId,
+    invoiceNumber: booking.invoiceNumber,
     customer: {
       id: (booking.userId as any)._id,
       name: (booking.userId as any).name,
@@ -1316,7 +1363,28 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
         address: (item.assignedServiceLocationId as any).address,
         contactNumber: (item.assignedServiceLocationId as any).contactNumber
       } : null,
-      paidWithCredits: item.paidWithCredits || false
+      paidWithCredits: item.paidWithCredits || false,
+      // Extra charges added by service partner
+      extraCharges: (item.extraCharges || []).map(charge => ({
+        id: charge.id,
+        amount: charge.amount,
+        description: charge.description,
+        status: charge.status,
+        paymentMethod: charge.paymentMethod,
+        razorpayOrderId: charge.razorpayOrderId,
+        razorpayPaymentId: charge.razorpayPaymentId,
+        addedByName: charge.addedByName,
+        addedAt: charge.addedAt,
+        paidAt: charge.paidAt,
+        notes: charge.notes
+      })),
+      extraChargesSummary: {
+        total: (item.extraCharges || []).length,
+        pending: (item.extraCharges || []).filter(c => c.status === 'pending').length,
+        paid: (item.extraCharges || []).filter(c => c.status === 'paid').length,
+        totalPendingAmount: (item.extraCharges || []).filter(c => c.status === 'pending').reduce((sum, c) => sum + c.amount, 0),
+        totalPaidAmount: (item.extraCharges || []).filter(c => c.status === 'paid').reduce((sum, c) => sum + c.amount, 0)
+      }
     })),
     address: booking.address,
     bookingType: booking.bookingType,
@@ -1336,6 +1404,7 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     status: specificItem ? specificItem.status : booking.status,
     paymentStatus: booking.paymentStatus,
     notes: booking.notes,
+    billingDetails: booking.billingDetails || null,
     createdAt: booking.createdAt,
     updatedAt: booking.updatedAt,
     actionLog: booking.actionLog,
@@ -1937,8 +2006,24 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
   let targetAddress: any;
   if (addressId && addressId !== 'new') {
     targetAddress = await Address.findOne({ id: addressId });
+    if (!targetAddress) {
+      return next(new AppError(`Address with id "${addressId}" not found`, 404));
+    }
+    // Log what we found for debugging
+    console.log(`[triggerManualSOS] Resolved address "${targetAddress.label}": lat=${targetAddress.coordinates?.lat}, lng=${targetAddress.coordinates?.lng}`);
+    // Saved addresses should always have coordinates — surface the problem clearly
+    if (!targetAddress.coordinates?.lat || !targetAddress.coordinates?.lng) {
+      return next(new AppError(
+        `Address "${targetAddress.label}" is missing GPS coordinates. Please update the address with lat/lng before triggering SOS.`,
+        400
+      ));
+    }
   } else if (customAddress) {
     targetAddress = customAddress;
+    if (!targetAddress.fullAddress) {
+      return next(new AppError('Custom address must include a full address text', 400));
+    }
+    console.log(`[triggerManualSOS] Using custom address: "${targetAddress.fullAddress}", lat=${targetAddress.coordinates?.lat}, lng=${targetAddress.coordinates?.lng}`);
   }
 
   if (!targetAddress) {
@@ -1964,7 +2049,8 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
 
   const sosIdStr = `SOS-${dateStr}-${String(sosCount + 1).padStart(3, '0')}`;
   const bIdStr = `BOOK-${dateStr}-${String(bCount + 1).padStart(3, '0')}`;
-  const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  // const startOtp = Math.floor(1000 + Math.random() * 9000).toString(); // Removed: Unused
+  const endOtp = Math.floor(1000 + Math.random() * 9000).toString();
 
   // 9. Create Booking
   const booking = await Booking.create({
@@ -2004,7 +2090,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
     status: partner ? 'assigned' : 'confirmed',
     assignedPartnerId: partner ? partner._id : undefined,
     startJobOtp: 'NONE',
-    endJobOtp: generatedOtp
+    endJobOtp: endOtp
   });
 
   // 11. Create SOS Alert
@@ -2021,7 +2107,7 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
   const newAlert = new SOSAlert({
     user: userId,
     sosId: sosIdStr,
-    otp: generatedOtp,
+    otp: endOtp,
     location: {
       latitude: targetAddress.coordinates?.lat || 0,
       longitude: targetAddress.coordinates?.lng || 0,
@@ -2095,6 +2181,29 @@ export const triggerManualSOS = asyncHandler(async (req: AuthRequest, res: Respo
   } catch (notifErr) {
     console.error('[triggerManualSOS] Notification pipeline error:', notifErr);
   }
+
+  // Trigger phone calls to eligible SOS partners (fire-and-forget, non-blocking).
+  // The assigned partner is passed as a priority — they are ALWAYS called,
+  // plus any other region-eligible SOS partners.
+  const priorityPartnerIds = partner ? [partner._id.toString()] : [];
+  const sosLat = targetAddress.coordinates?.lat;
+  const sosLng = targetAddress.coordinates?.lng;
+  triggerSOSCallsToPartners(
+    {
+      latitude: sosLat ?? 0,
+      longitude: sosLng ?? 0,
+      address: targetAddress.fullAddress
+    },
+    newAlert.sosId,
+    priorityPartnerIds
+  ).then(callResult => {
+    console.log(`[triggerManualSOS] SOS call results for ${newAlert.sosId}: ${callResult.callsTriggered}/${callResult.totalPartners} calls triggered`);
+    callResult.details.forEach(d =>
+      console.log(`  ${d.success ? '✅' : '❌'} ${d.partnerName} (${d.phone}): ${d.success ? 'called' : d.error}`)
+    );
+  }).catch(callError => {
+    console.error(`[triggerManualSOS] SOS call workflow failed for ${newAlert.sosId}:`, callError);
+  });
 
   res.status(201).json({
     success: true,
@@ -2188,5 +2297,433 @@ export const resumeOrderItem = asyncHandler(async (req: AuthRequest, res: Respon
     success: true,
     message: 'Item resumed',
     data: { status: BookingStatus.IN_PROGRESS }
+  });
+});
+
+
+// ──────────────────────────────────────────────────────────────
+// GST Validation Utilities
+// ──────────────────────────────────────────────────────────────
+
+/**
+ * Validates a GST Number (GSTIN) format.
+ * Format: 2-digit State Code | 10-char PAN | Entity Code (1-9/A-Z) | Z | Check Digit
+ * Total: 15 characters
+ * For Maharashtra, must start with '27'.
+ */
+function validateGSTNumber(gst: string): { valid: boolean; error?: string } {
+  if (!gst || typeof gst !== 'string') {
+    return { valid: false, error: 'GST number is required' };
+  }
+
+  const gstin = gst.trim().toUpperCase();
+
+  // Length check
+  if (gstin.length !== 15) {
+    return { valid: false, error: 'GST number must be exactly 15 characters' };
+  }
+
+  // Format regex: 2-digit state code, 5 alpha PAN holder, 4 digit PAN, 1 alpha PAN type, 1 entity code, Z, 1 check
+  const gstRegex = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/;
+  if (!gstRegex.test(gstin)) {
+    return { valid: false, error: 'Invalid GST number format. Expected format: 27XXXXX1234X1ZX' };
+  }
+
+  // State code check - must be 27 for Maharashtra
+  const stateCode = gstin.substring(0, 2);
+  if (stateCode !== '27') {
+    return { valid: false, error: 'GST number must start with 27 (Maharashtra). We currently operate only in Maharashtra.' };
+  }
+
+  // Checksum validation (Luhn-like for GSTIN)
+  const chars = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  let sum = 0;
+  for (let i = 0; i < 14; i++) {
+    const charIndex = chars.indexOf(gstin[i]);
+    if (charIndex === -1) return { valid: false, error: 'Invalid characters in GST number' };
+
+    let value = charIndex;
+    if (i % 2 !== 0) {
+      value = value * 2;
+      const quotient = Math.floor(value / 36);
+      const remainder = value % 36;
+      value = quotient + remainder;
+    }
+    sum += value;
+  }
+
+  const expectedCheckChar = chars[(36 - (sum % 36)) % 36];
+  if (gstin[14] !== expectedCheckChar) {
+    return { valid: false, error: 'GST number checksum validation failed. Please verify the number.' };
+  }
+
+  return { valid: true };
+}
+
+
+// @desc    Update billing details for a booking (Admin)
+// @route   PUT /api/admin/bookings/:id/billing-details
+// @access  Private/Admin
+export const updateBillingDetails = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const { id } = req.params;
+  const { gstNumber, billingName, billingAddress } = req.body;
+  const adminName = req.user?.name || 'Admin';
+
+  // Find booking
+  const query = mongoose.Types.ObjectId.isValid(id)
+    ? { _id: id }
+    : { bookingId: id };
+
+  const booking = await Booking.findOne(query);
+  if (!booking) {
+    return next(new AppError('Booking not found', 404));
+  }
+
+  // Validate GST number if provided
+  if (gstNumber) {
+    const gstValidation = validateGSTNumber(gstNumber);
+    if (!gstValidation.valid) {
+      return next(new AppError(gstValidation.error || 'Invalid GST number', 400));
+    }
+  }
+
+  // Build the update
+  const previousBilling = booking.billingDetails || {};
+  const updatedBilling = {
+    gstNumber: gstNumber?.trim().toUpperCase() || previousBilling.gstNumber || undefined,
+    billingName: billingName?.trim() || previousBilling.billingName || undefined,
+    billingAddress: billingAddress?.trim() || previousBilling.billingAddress || undefined,
+  };
+
+  booking.billingDetails = updatedBilling;
+
+  // Add action log entry
+  const changes: string[] = [];
+  if (gstNumber && gstNumber !== previousBilling.gstNumber) changes.push(`GST: ${gstNumber.toUpperCase()}`);
+  if (billingName && billingName !== previousBilling.billingName) changes.push(`Name: ${billingName}`);
+  if (billingAddress && billingAddress !== previousBilling.billingAddress) changes.push(`Address: ${billingAddress}`);
+
+  booking.actionLog.push({
+    action: 'BILLING_DETAILS_UPDATED',
+    performedBy: adminName,
+    timestamp: new Date(),
+    details: `Billing details updated: ${changes.join(', ') || 'No changes'}`
+  });
+
+  await booking.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Billing details updated successfully',
+    data: {
+      billingDetails: booking.billingDetails
+    }
+  });
+});
+
+const normalizePhone = (p: string) => p.replace(/\D/g, '').slice(-10);
+
+// @desc    Get applicable coupons for a specific customer (Admin)
+// @route   GET /api/admin/bookings/user/:userId/applicable-coupons
+// @access  Private/Admin
+export const getCustomerApplicableCoupons = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
+  const { userId } = req.params;
+
+  const user = await User.findById(userId);
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  const userPhone = user.phone;
+  const currentDate = new Date();
+  const normalizedUserPhone = normalizePhone(userPhone);
+
+  const query = {
+    isActive: true,
+    $or: [
+      { expiryDate: { $exists: false } }, // No expiry
+      { expiryDate: { $gt: currentDate } } // Not expired
+    ],
+    $and: [
+      {
+        $or: [
+          { type: 'public' },
+          {
+            type: 'restricted',
+            $or: [
+              { allowedPhoneNumbers: normalizedUserPhone },
+              { 'allowedPhoneNumbers.phone': normalizedUserPhone }
+            ]
+          }
+        ]
+      },
+      // Check maxUsage if not unlimited (-1)
+      {
+        $or: [
+          { maxUses: -1 },
+          { $expr: { $lt: ["$usedCount", "$maxUses"] } }
+        ]
+      }
+    ]
+  };
+
+  const coupons = await Coupon.find(query as any).sort({ discountValue: -1 });
+
+  res.status(200).json({
+    success: true,
+    data: coupons
+  });
+});
+
+// @desc    Create booking on behalf of customer (Admin)
+// @route   POST /api/admin/bookings/create-on-behalf
+// @access  Private/Admin
+export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const {
+    userId,
+    serviceId,
+    variantId,
+    addressId,
+    customAddress,
+    couponCode,
+    paymentMethod, // 'CREDITS' or 'MANUAL'
+    bankDetails,   // { bankName, transactionNumber, paymentType } - for MANUAL
+    scheduledDate,
+    scheduledTime,
+    notes,
+    assignedPartnerId
+  } = req.body;
+
+  const adminName = req.user?.name || 'Admin';
+
+  if (!userId || !serviceId || !variantId || !paymentMethod) {
+    return next(new AppError('Customer, Service, Variant and Payment Method are required', 400));
+  }
+
+  // 1. Fetch data
+  const [user, service, variant] = await Promise.all([
+    User.findById(userId),
+    Service.findOne({ $or: [{ _id: mongoose.isValidObjectId(serviceId) ? serviceId : null }, { id: serviceId }] }),
+    ServiceVariant.findOne({ $or: [{ _id: mongoose.isValidObjectId(variantId) ? variantId : null }, { id: variantId }] })
+  ]);
+
+  if (!user) return next(new AppError('Customer not found', 404));
+  if (!service) return next(new AppError('Service not found', 404));
+  if (!variant) return next(new AppError('Variant not found', 404));
+
+  // 1.5 Handle Plan Holder (Shared Addresses/Credits)
+  const planHolderId = await getPlanHolderId(user._id);
+
+  // 2. Handle Address
+  let targetAddress: any;
+  if (addressId && addressId !== 'new') {
+    // Try finding by plan holder (primary) or the user themselves
+    targetAddress = await Address.findOne({
+      id: addressId,
+      $or: [{ userId: planHolderId }, { userId: user._id }]
+    });
+  } else if (customAddress) {
+    targetAddress = customAddress;
+  }
+
+  if (!targetAddress) {
+    return next(new AppError('Valid address or custom location is required', 400));
+  }
+
+  // 3. Handle Credits if selected
+  const userCredits = await UserCredits.findOne({ userId: planHolderId });
+  const creditsNeeded = variant.creditValue || 0;
+
+  if (paymentMethod === 'CREDITS') {
+    if (!userCredits || userCredits.credits < creditsNeeded) {
+      return next(new AppError(`Insufficient credits. Required: ${creditsNeeded}, Available: ${userCredits?.credits || 0}`, 400));
+    }
+  }
+
+  // 4. Handle Coupon
+  let discountAmount = 0;
+  let finalAppliedCoupon = undefined;
+
+  if (couponCode && paymentMethod !== 'CREDITS') {
+    const coupon = await Coupon.findOne({
+      code: couponCode.toUpperCase(),
+      isActive: true,
+      appliesTo: 'service'
+    });
+
+    if (coupon) {
+      // Validate Restricted
+      const normalizedUserPhone = normalizePhone(user.phone);
+      let isAllowed = coupon.type === 'public';
+      let userSpecificExpiry = coupon.expiryDate;
+
+      if (!isAllowed) {
+        const entry: any = coupon.allowedPhoneNumbers.find((p: any) => {
+          const phone = typeof p === 'string' ? p : p.phone;
+          return normalizePhone(phone) === normalizedUserPhone;
+        });
+
+        if (entry) {
+          isAllowed = true;
+          userSpecificExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+        }
+      }
+
+      // Check expiry & usage
+      const isNotExpired = !userSpecificExpiry || new Date() <= userSpecificExpiry;
+      const hasUsageLeft = coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses;
+
+      if (isAllowed && isNotExpired && hasUsageLeft) {
+        discountAmount = (variant.finalPrice * coupon.discountValue) / 100;
+        finalAppliedCoupon = coupon.code;
+      } else {
+        return next(new AppError('Coupon is not applicable for this customer or has expired.', 400));
+      }
+    }
+  }
+
+  // 5. Calculate Totals
+  const checkoutFields = await getActiveCheckoutFields();
+  const baseItemTotal = paymentMethod === 'CREDITS' ? 0 : variant.finalPrice;
+
+  const calculationResult = await calculateCheckoutTotal(
+    baseItemTotal,
+    checkoutFields,
+    discountAmount > 0 ? { amount: discountAmount, label: `Coupon (${finalAppliedCoupon})` } : undefined
+  );
+
+  // 6. Generate Booking ID
+  const now = new Date();
+  const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+  const count = await Booking.countDocuments({
+    bookingId: { $regex: new RegExp(`^BOOK-${dateStr}-`) }
+  });
+  const bookingId = `BOOK-${dateStr}-${String(count + 1).padStart(3, '0')}`;
+  const startOtp = Math.floor(1000 + Math.random() * 9000).toString();
+  const endOtp = Math.floor(1000 + Math.random() * 9000).toString();
+
+  // 7. Create Booking
+  const bookingData: any = {
+    userId: user._id,
+    bookingId,
+    addressId: addressId || 'ADMIN_CREATED',
+    address: {
+      label: targetAddress.label || 'Assisted Booking',
+      fullAddress: targetAddress.fullAddress,
+      area: targetAddress.area,
+      coordinates: targetAddress.coordinates
+    },
+    bookingType: scheduledDate ? 'SCHEDULED' : 'ASAP',
+    scheduledDate: scheduledDate ? new Date(scheduledDate) : now,
+    scheduledTime: scheduledTime || formatTimeToIST(now),
+    totalAmount: calculationResult.total,
+    itemTotal: baseItemTotal,
+    totalOriginalAmount: variant.originalPrice,
+    creditsUsed: paymentMethod === 'CREDITS' ? creditsNeeded : 0,
+    couponCode: finalAppliedCoupon,
+    discountAmount,
+    paymentBreakdown: calculationResult.breakdown.length > 0 ? calculationResult.breakdown.map(b => {
+      const field = checkoutFields.find(f => f.fieldName === b.fieldName);
+      return {
+        ...b,
+        chargeType: field?.chargeType || 'fixed',
+        value: field?.value || 0
+      };
+    }) : undefined,
+    status: BookingStatus.CONFIRMED,
+    paymentStatus: 'paid', // Admin created bookings are assumed reconciled
+    paymentMethod,
+    notes: `ADMIN_CREATED: ${notes || 'No notes provided'}`,
+    actionLog: [{
+      action: 'ADMIN_CREATED',
+      performedBy: adminName,
+      timestamp: now,
+      details: `Created on behalf of ${user.name}. Payment: ${paymentMethod}`
+    }]
+  };
+
+  if (paymentMethod === 'MANUAL' && bankDetails) {
+    bookingData.manualPaymentDetails = {
+      bankName: bankDetails.bankName,
+      transactionNumber: bankDetails.transactionNumber,
+      amount: calculationResult.total,
+      paymentType: bankDetails.paymentType || 'Bank Transfer',
+      recordedBy: adminName,
+      recordedAt: now
+    };
+  }
+
+  const booking = new Booking(bookingData);
+  await booking.save();
+
+  // 8. Create Order Item
+  const orderItem = await OrderItem.create({
+    bookingId: booking._id,
+    serviceId: service._id,
+    serviceVariantId: variant._id,
+    serviceName: service.name,
+    variantName: variant.name,
+    quantity: 1,
+    originalPrice: variant.originalPrice,
+    finalPrice: variant.finalPrice,
+    creditValue: paymentMethod === 'CREDITS' ? creditsNeeded : 0,
+    estimatedTimeMinutes: variant.estimatedTimeMinutes || 30,
+    customerVisitRequired: true,
+    paidWithCredits: paymentMethod === 'CREDITS',
+    status: 'confirmed',
+    startJobOtp: startOtp,
+    endJobOtp: endOtp
+  });
+
+  // 9. Deduct Credits if applicable
+  if (paymentMethod === 'CREDITS' && creditsNeeded > 0 && userCredits) {
+    userCredits.credits = Math.max(0, userCredits.credits - creditsNeeded);
+    await userCredits.save();
+  }
+
+  // 10. Handle Assignment if partner ID provided
+  if (assignedPartnerId) {
+    const partner = await ServicePartner.findById(assignedPartnerId);
+    if (partner && partner.isActive) {
+      booking.status = BookingStatus.ASSIGNED;
+      orderItem.status = 'assigned';
+      orderItem.assignedPartnerId = partner._id;
+      await Promise.all([booking.save(), orderItem.save()]);
+
+      // Trigger notification
+      try {
+        // Correct WhatsApp arguments
+        await sendBookingAssignmentMessage(
+          partner.phone,
+          partner.name,
+          user.name,
+          user.phone,
+          service.name,
+          booking.address.fullAddress
+        );
+
+        // Correct Push arguments
+        await sendJobNotification(partner._id.toString(), {
+          bookingId: booking.bookingId,
+          serviceName: service.name,
+          variantName: variant.name,
+          customerName: user.name,
+          address: booking.address.fullAddress,
+          scheduledDate: booking.scheduledDate ? booking.scheduledDate.toISOString().split('T')[0] : undefined,
+          scheduledTime: booking.scheduledTime
+        });
+      } catch (notifErr) {
+        console.error('[createBookingOnBehalf] Notification error:', notifErr);
+      }
+    }
+  }
+
+  res.status(201).json({
+    success: true,
+    message: 'Booking created successfully on behalf of customer',
+    data: {
+      booking,
+      orderItem
+    }
   });
 });

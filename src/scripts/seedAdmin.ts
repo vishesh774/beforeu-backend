@@ -18,26 +18,26 @@ const createAdminUser = async () => {
     await connectDB();
 
     // Check if admin user already exists (check by email: admin@beforeu.com)
-    const adminEmail = 'admin@beforeu.com';
+    const adminEmail = 'admin2@beforeu.com';
     const existingAdmin = await User.findOne({ email: adminEmail });
-    
+
     if (existingAdmin) {
       console.log('✅ Admin user already exists');
       console.log(`   Email: ${existingAdmin.email}`);
       console.log(`   Role: ${existingAdmin.role}`);
-      
+
       // Update role if needed
       if (existingAdmin.role !== 'Admin') {
         existingAdmin.role = 'Admin';
         await existingAdmin.save();
         console.log('   ✅ Role updated to Admin');
       }
-      
+
       // Update password to 'admin' if needed
-      existingAdmin.password = 'admin';
+      existingAdmin.password = 'admin2';
       await existingAdmin.save();
       console.log('   ✅ Password reset to "admin"');
-      
+
       await mongoose.connection.close();
       process.exit(0);
     }

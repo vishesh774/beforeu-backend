@@ -33,7 +33,7 @@ export const protectPartner = async (req: Request, _res: Response, next: NextFun
 
         (req as any).user = partner;
         next();
-    } catch (error) {
+    } catch {
         return next(new AppError('Not authorized to access this route', 401));
     }
 };

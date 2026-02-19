@@ -14,7 +14,8 @@ import { normalizePhone } from '../utils/phoneUtils';
 // @route   POST /api/auth/send-otp
 // @access  Public
 export const sendOTP = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  let { phone, role } = req.body;
+  const { role } = req.body;
+  let { phone } = req.body;
 
   if (!phone) {
     return next(new AppError('Phone number is required', 400));
@@ -68,7 +69,8 @@ export const sendOTP = asyncHandler(async (req: Request, res: Response, next: Ne
 // @route   POST /api/auth/verify-otp
 // @access  Public
 export const verifyOTPController = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  let { phone, otp, role, pushToken } = req.body;
+  const { otp, role, pushToken } = req.body;
+  let { phone } = req.body;
 
   if (!phone || !otp) {
     return next(new AppError('Phone number and OTP are required', 400));
@@ -84,7 +86,7 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
   }
 
   // Check if user exists, if not, create a temporary record
-  let user = await User.findOne({ phone });
+  const user = await User.findOne({ phone });
 
   if (!user) {
     // User doesn't exist yet - they'll complete profile after OTP verification

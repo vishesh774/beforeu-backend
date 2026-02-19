@@ -20,11 +20,9 @@ const formatPhoneNumber = (phone: string): string => {
     if (formattedPhone.length === 10) {
         formattedPhone = '91' + formattedPhone;
     } else if (formattedPhone.length === 12 && formattedPhone.startsWith('91')) {
-        // If 12 digits starting with 91, prepend +
-        formattedPhone = '91' + formattedPhone;
+        // If 12 digits starting with 91, it's already in the correct format
     } else {
-        // Otherwise just ensure it has a + if it doesn't (though we stripped it above, so we just prepend +)
-        formattedPhone = formattedPhone;
+        // Otherwise just ensure it has a prefix if needed (omitted for now as we prefer 91XXXXX)
     }
     return formattedPhone;
 };
