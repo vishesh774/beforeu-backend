@@ -100,13 +100,38 @@ export const getJobDetails = asyncHandler(async (req: AuthRequest, res: Response
         return next(new AppError('No partner profile associated with your account', 404));
     }
 
-    const job = await OrderItem.findById(id)
+    let job = await OrderItem.findById(id)
         .populate({
             path: 'bookingId',
             populate: { path: 'userId', select: 'name phone' }
         })
         .populate('serviceId', 'name icon')
         .populate('serviceVariantId', 'name description');
+
+    if (!job) {
+        // Fallback: Check if the provided ID is a Booking ID
+        job = await OrderItem.findOne({ bookingId: id })
+            .populate({
+                path: 'bookingId',
+                populate: { path: 'userId', select: 'name phone' }
+            })
+            .populate('serviceId', 'name icon')
+            .populate('serviceVariantId', 'name description');
+    }
+
+    if (!job) {
+        // Fallback 2: Check if the provided ID is an SOS Alert ID
+        const alert = await SOSAlert.findById(id);
+        if (alert && alert.bookingId) {
+            job = await OrderItem.findOne({ bookingId: alert.bookingId })
+                .populate({
+                    path: 'bookingId',
+                    populate: { path: 'userId', select: 'name phone' }
+                })
+                .populate('serviceId', 'name icon')
+                .populate('serviceVariantId', 'name description');
+        }
+    }
 
     if (!job) {
         return next(new AppError('Job not found', 404));
@@ -424,15 +449,19 @@ export const getPartnerSOSAlerts = asyncHandler(async (req: AuthRequest, res: Re
         let assignedPartnerId: string | null = null;
         let assignedPartnerName: string | null = null;
         let isAssignedToMe = false;
+        let jobId: string | null = null;
 
         if (alert.bookingId) {
             const orderItem = await OrderItem.findOne({ bookingId: alert.bookingId })
                 .populate('assignedPartnerId', 'name phone');
-            if (orderItem?.assignedPartnerId) {
-                const assigned = orderItem.assignedPartnerId as any;
-                assignedPartnerId = assigned._id?.toString() || null;
-                assignedPartnerName = assigned.name || null;
-                isAssignedToMe = assignedPartnerId === partner._id.toString();
+            if (orderItem) {
+                jobId = orderItem._id.toString();
+                if (orderItem.assignedPartnerId) {
+                    const assigned = orderItem.assignedPartnerId as any;
+                    assignedPartnerId = assigned._id?.toString() || null;
+                    assignedPartnerName = assigned.name || null;
+                    isAssignedToMe = assignedPartnerId === partner._id.toString();
+                }
             }
         }
 
@@ -451,6 +480,7 @@ export const getPartnerSOSAlerts = asyncHandler(async (req: AuthRequest, res: Re
                 phone: (alert.familyMemberId as any).phone,
             } : null,
             bookingId: alert.bookingId,
+            jobId,
             assignedPartnerId,
             assignedPartnerName,
             isAssignedToMe,
@@ -535,22 +565,35 @@ export const getUnassignedSOSAlerts = asyncHandler(async (req: AuthRequest, res:
         });
     }
 
-    const transformedAlerts = filteredAlerts.map(alert => ({
-        id: alert._id,
-        sosId: alert.sosId,
-        status: alert.status,
-        location: alert.location,
-        customer: alert.user ? {
-            name: (alert.user as any).name,
-            phone: (alert.user as any).phone,
-        } : null,
-        familyMember: alert.familyMemberId ? {
-            name: (alert.familyMemberId as any).name,
-            relationship: (alert.familyMemberId as any).relationship,
-            phone: (alert.familyMemberId as any).phone,
-        } : null,
-        bookingId: alert.bookingId,
-        createdAt: alert.createdAt,
+    const transformedAlerts = await Promise.all(filteredAlerts.map(async (alert) => {
+        let jobId: string | null = null;
+        if (alert.bookingId) {
+            const orderItem = await OrderItem.findOne({ bookingId: alert.bookingId });
+            if (orderItem) {
+                jobId = orderItem._id.toString();
+            }
+        }
+
+        return {
+            id: alert._id,
+            sosId: alert.sosId,
+            status: alert.status,
+            location: alert.location,
+            customer: alert.user ? {
+                name: (alert.user as any).name,
+                phone: (alert.user as any).phone,
+            } : null,
+            familyMember: alert.familyMemberId ? {
+                name: (alert.familyMemberId as any).name,
+                relationship: (alert.familyMemberId as any).relationship,
+                phone: (alert.familyMemberId as any).phone,
+            } : null,
+            bookingId: alert.bookingId,
+            jobId,
+            isAssignedToMe: false,
+            isReadOnly: true,
+            createdAt: alert.createdAt,
+        };
     }));
 
     res.status(200).json({

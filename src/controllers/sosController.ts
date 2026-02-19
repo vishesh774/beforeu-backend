@@ -489,34 +489,46 @@ export const getSOSAlertByBookingId = async (req: AuthRequest, res: Response) =>
         const { bookingId } = req.params;
         console.log(`[getSOSAlertByBookingId] ID from params: "${bookingId}"`);
 
-        if (!mongoose.Types.ObjectId.isValid(bookingId)) {
-            res.status(400).json({ success: false, error: 'Invalid ID format' });
-            return;
-        }
+        let alert = null;
 
-        const requestedIdObj = new mongoose.Types.ObjectId(bookingId);
+        if (mongoose.Types.ObjectId.isValid(bookingId)) {
+            const requestedIdObj = new mongoose.Types.ObjectId(bookingId);
 
-        // 1. Try finding by bookingId directly
-        let alert = await SOSAlert.findOne({ bookingId: requestedIdObj })
-            .populate('user', 'name phone email')
-            .populate('familyMemberId', 'name relationship phone');
+            // 0. Try finding by SOS Alert _id directly (new fallback)
+            alert = await SOSAlert.findById(requestedIdObj)
+                .populate('user', 'name phone email')
+                .populate('familyMemberId', 'name relationship phone');
 
-        // 2. If not found, maybe the provided ID is an OrderItem ID?
-        if (!alert) {
-            console.log(`[getSOSAlertByBookingId] No alert for bookingId ${bookingId}, checking if it is an OrderItem ID...`);
-            const item = await OrderItem.findById(requestedIdObj);
-            if (item && item.bookingId) {
-                console.log(`[getSOSAlertByBookingId] Found OrderItem ${bookingId}, using its bookingId: ${item.bookingId}`);
-                alert = await SOSAlert.findOne({ bookingId: item.bookingId })
+            // 1. Try finding by bookingId directly
+            if (!alert) {
+                alert = await SOSAlert.findOne({ bookingId: requestedIdObj })
                     .populate('user', 'name phone email')
                     .populate('familyMemberId', 'name relationship phone');
             }
-        }
 
-        // 3. Last fallback: check serviceId field on SOSAlert (sometimes used for OrderItem)
-        if (!alert) {
-            console.log(`[getSOSAlertByBookingId] Still no alert, checking serviceId field...`);
-            alert = await SOSAlert.findOne({ serviceId: requestedIdObj })
+            // 2. If not found, maybe the provided ID is an OrderItem ID?
+            if (!alert) {
+                console.log(`[getSOSAlertByBookingId] No alert for bookingId ${bookingId}, checking if it is an OrderItem ID...`);
+                const item = await OrderItem.findById(requestedIdObj);
+                if (item && item.bookingId) {
+                    console.log(`[getSOSAlertByBookingId] Found OrderItem ${bookingId}, using its bookingId: ${item.bookingId}`);
+                    alert = await SOSAlert.findOne({ bookingId: item.bookingId })
+                        .populate('user', 'name phone email')
+                        .populate('familyMemberId', 'name relationship phone');
+                }
+            }
+
+            // 3. Fallback: check serviceId field on SOSAlert (sometimes used for OrderItem)
+            if (!alert) {
+                console.log(`[getSOSAlertByBookingId] Still no alert, checking serviceId field...`);
+                alert = await SOSAlert.findOne({ serviceId: requestedIdObj })
+                    .populate('user', 'name phone email')
+                    .populate('familyMemberId', 'name relationship phone');
+            }
+        } else {
+            // Not a valid ObjectId - try finding by human-readable sosId
+            console.log(`[getSOSAlertByBookingId] Not an ObjectId, checking as human-readable sosId: ${bookingId}`);
+            alert = await SOSAlert.findOne({ sosId: bookingId })
                 .populate('user', 'name phone email')
                 .populate('familyMemberId', 'name relationship phone');
         }
