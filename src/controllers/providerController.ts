@@ -551,7 +551,14 @@ export const acceptSOSAlert = asyncHandler(async (req: AuthRequest, res: Respons
 
     // Verify partner has SOS service
     const sosService = await Service.findOne({ name: { $regex: /^SOS/i } });
-    if (!sosService || !partner.services.includes(sosService._id.toString())) {
+    if (!sosService) return next(new AppError('SOS service not found', 404));
+
+    const sosServiceId = sosService._id.toString();
+    const sosServiceSlug = (sosService as any).id;
+    const hasSosAccess = partner.services.includes(sosServiceId) ||
+        (sosServiceSlug && partner.services.includes(sosServiceSlug));
+
+    if (!hasSosAccess) {
         return next(new AppError('You are not authorized for SOS service', 403));
     }
 
