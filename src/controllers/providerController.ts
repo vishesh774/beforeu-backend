@@ -472,9 +472,10 @@ export const getUnassignedSOSAlerts = asyncHandler(async (req: AuthRequest, res:
         });
     }
 
-    // Find TRIGGERED or ACKNOWLEDGED SOS alerts (not yet assigned to any partner)
-    const unassignedStatuses = [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED];
-    const potentialAlerts = await SOSAlert.find({ status: { $in: unassignedStatuses } })
+    // Find all SOS alerts that are not terminal (RESOLVED or CANCELLED)
+    const potentialAlerts = await SOSAlert.find({
+        status: { $nin: [SOSStatus.RESOLVED, SOSStatus.CANCELLED] }
+    })
         .populate('user', 'name phone email')
         .populate('familyMemberId', 'name relationship phone')
         .sort({ createdAt: -1 });
