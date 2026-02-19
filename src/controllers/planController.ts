@@ -12,7 +12,7 @@ import OrderItem from '../models/OrderItem';
 import mongoose from 'mongoose';
 import { getPlanPurchaseService } from '../utils/systemServices';
 import { getRazorpayInstance } from './paymentController';
-import { getFamilyGroupIds } from '../utils/userHelpers';
+import { getFamilyGroupIds, getPlanHolderId } from '../utils/userHelpers';
 import { sendPlanPurchaseMessage, sendInternalPlanPurchaseNotification } from '../services/whatsappService';
 import { scheduleWhatsAppMessage } from '../services/schedulerService';
 import FamilyMember from '../models/FamilyMember';
@@ -1055,8 +1055,11 @@ export const getMyPlanDetails = asyncHandler(async (req: AuthRequest, res: Respo
 
   const userIdObj = new mongoose.Types.ObjectId(userId);
 
-  // Get user's active plan
-  const userPlan = await UserPlan.findOne({ userId: userIdObj });
+  // Find the primary user if this user is a family member sharing a plan
+  const planHolderId = await getPlanHolderId(userIdObj);
+
+  // Get user's active plan (from plan holder)
+  const userPlan = await UserPlan.findOne({ userId: planHolderId });
 
   if (!userPlan || !userPlan.activePlanId) {
     return res.status(200).json({
@@ -1070,7 +1073,7 @@ export const getMyPlanDetails = asyncHandler(async (req: AuthRequest, res: Respo
 
   // Get the most recent transaction for this user and plan to get the invoiceNumber
   const lastTransaction = await PlanTransaction.findOne({
-    userId: userIdObj,
+    userId: planHolderId,
     planId: userPlan.activePlanId,
     status: 'paid'
   }).sort({ createdAt: -1 });
@@ -1087,12 +1090,12 @@ export const getMyPlanDetails = asyncHandler(async (req: AuthRequest, res: Respo
     });
   }
 
-  // Get user credits
-  const userCredits = await UserCredits.findOne({ userId: userIdObj });
+  // Get user credits (from plan holder)
+  const userCredits = await UserCredits.findOne({ userId: planHolderId });
   const remainingCredits = userCredits?.credits || 0;
 
-  // Get family member IDs for this user (to include their bookings)
-  const familyIds = await getFamilyGroupIds(userIdObj);
+  // Get family member IDs for this group (to include all family bookings)
+  const familyIds = await getFamilyGroupIds(planHolderId);
 
   // Calculate credits used from completed bookings
   const creditUsageAgg = await Booking.aggregate([
