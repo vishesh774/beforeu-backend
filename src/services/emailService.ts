@@ -11,7 +11,7 @@ const getEmailConfig = () => ({
         pass: process.env.SMTP_PASS || '', // Brevo SMTP Key
     },
     fromName: process.env.SMTP_FROM_NAME || 'BeforeU System',
-    fromEmail: process.env.SMTP_FROM_EMAIL || 'system@beforeu.in',
+    fromEmail: process.env.SMTP_FROM_EMAIL || 'noreply@beforeu.in',
     accountsTeamEmails: process.env.ACCOUNTS_TEAM_EMAILS || '',
 });
 
