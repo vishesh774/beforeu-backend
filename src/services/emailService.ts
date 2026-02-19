@@ -218,10 +218,6 @@ export const sendOTPVerificationEmail = async (email: string, otp: string) => {
 
                 <p style="font-size: 14px; color: #64748b; margin-top: 40px;">Thank you for choosing <strong>BeforeU</strong>.</p>
             </div>
-            <div class="footer">
-                <p>&copy; ${new Date().getFullYear()} BeforeU System. All rights reserved.</p>
-                <p style="margin-top: 8px;">123 Business Street, Tech Hub, IN</p>
-            </div>
         </div>
     </div>
 </body>
