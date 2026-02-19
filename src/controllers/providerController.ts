@@ -100,10 +100,7 @@ export const getJobDetails = asyncHandler(async (req: AuthRequest, res: Response
         return next(new AppError('No partner profile associated with your account', 404));
     }
 
-    const job = await OrderItem.findOne({
-        _id: id,
-        assignedPartnerId: partner._id
-    })
+    const job = await OrderItem.findById(id)
         .populate({
             path: 'bookingId',
             populate: { path: 'userId', select: 'name phone' }
@@ -112,10 +109,34 @@ export const getJobDetails = asyncHandler(async (req: AuthRequest, res: Response
         .populate('serviceVariantId', 'name description');
 
     if (!job) {
-        return next(new AppError('Job not found or not assigned to you', 404));
+        return next(new AppError('Job not found', 404));
     }
 
     const booking = job.bookingId as any;
+    const isSOS = booking?.bookingType === 'SOS';
+
+    // Access control:
+    // 1. If assigned to this partner, always allow
+    // 2. If it is an SOS job, allow if partner has SOS service access
+    // 3. Otherwise, deny access
+    const isAssignedToMe = job.assignedPartnerId?.toString() === partner._id.toString();
+
+    let hasAccess = isAssignedToMe;
+
+    if (!hasAccess && isSOS) {
+        const sosService = await Service.findOne({ name: { $regex: /^SOS/i } });
+        if (sosService) {
+            const sosServiceId = sosService._id.toString();
+            const sosServiceSlug = (sosService as any).id;
+            hasAccess = partner.services.includes(sosServiceId) ||
+                (sosServiceSlug && partner.services.includes(sosServiceSlug));
+        }
+    }
+
+    if (!hasAccess) {
+        return next(new AppError('You are not authorized to view this job', 403));
+    }
+
     const customer = booking.userId;
 
     const isCompleted = COMPLETED_BOOKING_STATUSES.includes(job.status as BookingStatus);
