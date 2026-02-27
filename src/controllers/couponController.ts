@@ -279,7 +279,11 @@ export const getApplicableCoupons = asyncHandler(async (req: any, res: Response,
                         type: 'restricted',
                         $or: [
                             { allowedPhoneNumbers: normalizePhone(userPhone) },
-                            { 'allowedPhoneNumbers.phone': normalizePhone(userPhone) }
+                            { allowedPhoneNumbers: userPhone },
+                            { allowedPhoneNumbers: { $regex: normalizePhone(userPhone) + '$' } },
+                            { 'allowedPhoneNumbers.phone': normalizePhone(userPhone) },
+                            { 'allowedPhoneNumbers.phone': userPhone },
+                            { 'allowedPhoneNumbers.phone': { $regex: normalizePhone(userPhone) + '$' } }
                         ]
                     }
                 ]
@@ -536,7 +540,7 @@ export const updateCoupon = asyncHandler(async (req: Request, res: Response, nex
             // If already existed, KEEP its old expiry. Otherwise, use the new one.
             const oldExpiry = existingMap.get(norm);
             return {
-                phone: p,
+                phone: normalizePhone(p),
                 expiryDate: oldExpiry !== undefined ? oldExpiry : newGlobalExpiry
             };
         });
