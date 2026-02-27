@@ -11,7 +11,7 @@ export interface ICoupon extends Document {
     allowedPhoneNumbers: Array<{
         phone: string;
         expiryDate?: Date;
-    }>; // Required if type === 'restricted'
+    } | string>; // Required if type === 'restricted'
     maxUses: number; // Total number of times this coupon can be used globally
     usedCount: number;
     expiryDate?: Date; // This acts as the "Current/Default" expiry for new numbers
@@ -68,12 +68,10 @@ const CouponSchema = new Schema<ICoupon>(
             trim: true,
             required: function (this: ICoupon) { return this.appliesTo === 'service'; }
         },
-        allowedPhoneNumbers: [
-            {
-                phone: { type: String, required: true },
-                expiryDate: { type: Date }
-            }
-        ],
+        allowedPhoneNumbers: {
+            type: [Schema.Types.Mixed],
+            default: []
+        },
         maxUses: {
             type: Number,
             default: -1 // -1 means unlimited
