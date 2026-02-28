@@ -16,6 +16,7 @@ import { getFamilyGroupIds, getPlanHolderId } from '../utils/userHelpers';
 import { sendPlanPurchaseMessage, sendInternalPlanPurchaseNotification } from '../services/whatsappService';
 import { scheduleWhatsAppMessage } from '../services/schedulerService';
 import FamilyMember from '../models/FamilyMember';
+import Address from '../models/Address';
 import { assignCRMTask } from '../services/crmTaskService';
 import { notifyAccountsTeamOnPlanPurchase } from '../services/emailService';
 import { generateInvoiceBuffer } from '../utils/pdfGenerator';
@@ -246,10 +247,35 @@ export const getPlanTransactions = asyncHandler(async (_: Request, res: Response
   allTransactions.sort((a, b) => new Date(b.purchaseDate).getTime() - new Date(a.purchaseDate).getTime());
 
 
+  // Fetch addresses for each transaction's family group
+  const transactionsWithAddresses = await Promise.all(allTransactions.map(async (tx) => {
+    try {
+      const familyIds = await getFamilyGroupIds(tx.userId);
+      const addresses = await Address.find({ userId: { $in: familyIds } }).sort({ createdAt: -1 }).lean();
+
+      // Get names of users in group for "addedBy" info
+      const usersInGroup = await User.find({ _id: { $in: familyIds } }).select('name').lean();
+      const userMap = new Map(usersInGroup.map(u => [u._id.toString(), u.name]));
+
+      const mappedAddresses = addresses.map(addr => ({
+        ...addr,
+        addedBy: userMap.get(addr.userId.toString()) || 'Unknown'
+      }));
+
+      return {
+        ...tx,
+        addresses: mappedAddresses
+      };
+    } catch (err) {
+      console.error(`Error fetching addresses for transaction ${tx._id}:`, err);
+      return { ...tx, addresses: [] };
+    }
+  }));
+
   res.status(200).json({
     success: true,
     data: {
-      transactions: allTransactions
+      transactions: transactionsWithAddresses
     }
   });
 });
@@ -354,7 +380,16 @@ export const getPlanTransactionDetails = asyncHandler(async (req: Request, res: 
         expiryDate: userPlan?.expiresAt || 'Lifetime'
       },
       familyMembers,
-      bookings: mappedBookings
+      bookings: mappedBookings,
+      addresses: await (async () => {
+        const addresses = await Address.find({ userId: { $in: familyIds } }).sort({ createdAt: -1 }).lean();
+        const usersInGroup = await User.find({ _id: { $in: familyIds } }).select('name').lean();
+        const userMap = new Map(usersInGroup.map(u => [u._id.toString(), u.name]));
+        return addresses.map(addr => ({
+          ...addr,
+          addedBy: userMap.get(addr.userId.toString()) || 'Unknown'
+        }));
+      })()
     }
   });
 });
