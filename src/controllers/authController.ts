@@ -15,6 +15,7 @@ import Role, { IPermission } from '../models/Role';
 import { createCRMLead } from '../services/crmService';
 import { assignCRMTask } from '../services/crmTaskService';
 import { createAndSendEmailOTP, verifyEmailOTP as verifyOTPService } from '../services/otpService';
+import { signupWithReferral } from './referralController';
 
 interface SignupRequest extends Request {
   body: {
@@ -22,6 +23,7 @@ interface SignupRequest extends Request {
     email: string;
     phone: string;
     password: string;
+    referralCode?: string;
   };
 }
 
@@ -29,7 +31,7 @@ interface SignupRequest extends Request {
 // @route   POST /api/auth/signup
 // @access  Public
 export const signup = asyncHandler(async (req: SignupRequest, res: Response, next: NextFunction) => {
-  const { name, email, phone, password } = req.body;
+  const { name, email, phone, password, referralCode } = req.body;
 
   // Check if user already exists (case-insensitive)
   const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -54,6 +56,12 @@ export const signup = asyncHandler(async (req: SignupRequest, res: Response, nex
 
   // Initialize user-related records (credits and plan)
   await initializeUserRecords(user._id);
+
+  // --- Referral Integration ---
+  if (referralCode) {
+    await signupWithReferral(user._id as any, referralCode);
+  }
+  // ----------------------------
 
   // Aggregate user data
   const userData = await aggregateUserData(user._id);
@@ -656,9 +664,9 @@ export const sendEmailOTP = asyncHandler(async (req: Request, res: Response, nex
   }
 
   // Check if email is already in use by another profile
-  const existingUser = await User.findOne({ 
+  const existingUser = await User.findOne({
     email: email.toLowerCase(),
-    isDeleted: false 
+    isDeleted: false
   });
 
   if (existingUser) {
@@ -730,11 +738,11 @@ export const updateEmail = asyncHandler(async (req: AuthRequest, res: Response, 
   }
 
   // 2. Double check if email is already in use (to prevent race conditions)
-  const existingUser = await User.findOne({ 
+  const existingUser = await User.findOne({
     email: email.toLowerCase(),
     isDeleted: false
   });
-  
+
   if (existingUser && existingUser._id.toString() !== userId) {
     return next(new AppError('This email is already registered with another account', 400));
   }

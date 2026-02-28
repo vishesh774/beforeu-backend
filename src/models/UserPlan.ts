@@ -3,6 +3,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 export interface IUserPlan extends Document {
   userId: mongoose.Types.ObjectId;
   activePlanId?: string;
+  referralCode?: string;
   expiresAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -20,6 +21,12 @@ const UserPlanSchema = new Schema<IUserPlan>(
     activePlanId: {
       type: String,
       default: null
+    },
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true
     },
     expiresAt: {
       type: Date,
