@@ -316,11 +316,11 @@ export const processReferralReward = async (userId: mongoose.Types.ObjectId, pur
             await Promise.all([
                 // Grant Referrer the benefit
                 Coupon.findByIdAndUpdate(config.referrerCouponId, {
-                    $addToSet: { allowedPhoneNumbers: referrer.phone }
+                    $push: { allowedPhoneNumbers: referrer.phone }
                 }),
-                // Grant Referee the benefit
+                // Grant Referee the benefit (though referee only gets it once per signup, push is safer for consistency)
                 Coupon.findByIdAndUpdate(config.refereeCouponId, {
-                    $addToSet: { allowedPhoneNumbers: referee.phone }
+                    $push: { allowedPhoneNumbers: referee.phone }
                 })
             ]);
 

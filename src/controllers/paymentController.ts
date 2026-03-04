@@ -24,6 +24,7 @@ import { assignCRMTask } from '../services/crmTaskService';
 import { notifyAccountsTeamOnPlanPurchase } from '../services/emailService';
 import { generateInvoiceBuffer } from '../utils/pdfGenerator';
 import CompanySettings from '../models/CompanySettings';
+import { processReferralReward } from './referralController';
 
 // Initialize Razorpay - Lazy initialization to ensure env vars are loaded
 let razorpay: any = null;
@@ -714,6 +715,22 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
       planTx.paymentId = razorpay_payment_id;
       // Fetch and save details asynchronously if needed, or skip for speed
       await planTx.save();
+
+      // RECORD COUPON USAGE FOR PLAN
+      if (planTx.couponCode) {
+        await Coupon.findOneAndUpdate(
+          { code: planTx.couponCode.toUpperCase() },
+          {
+            $inc: { usedCount: 1 },
+            $push: { usedBy: { userId: userIdObj, usedAt: new Date() } }
+          }
+        ).catch(err => console.error('[PaymentController] Failed to record plan coupon usage:', err));
+      }
+
+      // --- Referral Integration: Process Rewards ---
+      processReferralReward(planTx.userId as any, planTx._id as any)
+        .catch(err => console.error('[PaymentController] Referral reward processing failed:', err));
+      // ---------------------------------------------
 
       // Update User Plan & Credits
       const plan = await Plan.findById(planTx.planId);
