@@ -13,7 +13,4 @@ router.get('/verify/:code', verifyReferralCode);
 // Private customer routes
 router.get('/my-code', protect, getMyReferralInfo);
 
-// Private customer routes
-router.get('/my-code', protect, getMyReferralInfo);
-
 export default router;

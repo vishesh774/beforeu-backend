@@ -850,7 +850,8 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
           plan: {
             id: plan?._id.toString(),
             planName: plan?.planName,
-            finalPrice: plan?.finalPrice,
+            finalPrice: planTx.amount, // Return the actual amount paid including tax
+            invoiceNumber: planTx.invoiceNumber, // Return the generated invoice number
           },
           user: user?.toObject(),
         },
