@@ -8,7 +8,6 @@ import ReferralRecord from '../models/ReferralRecord';
 import User from '../models/User';
 import Coupon from '../models/Coupon';
 
-
 // @desc    Get Referral Configuration
 // @route   GET /api/admin/referral/config
 // @access  Private/Admin
@@ -51,7 +50,7 @@ export const updateReferralConfig = asyncHandler(async (req: Request, res: Respo
         });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
         success: true,
         data: config
     });
@@ -61,59 +60,74 @@ export const updateReferralConfig = asyncHandler(async (req: Request, res: Respo
 // @route   GET /api/referral/my-code
 // @access  Private/Customer
 export const getMyReferralInfo = asyncHandler(async (req: any, res: Response) => {
-    const userId = req.user._id;
+    const userId = req.user.id;
 
     // Get config
     const config = await ReferralConfig.findOne();
     const isActive = config ? config.isActive : true;
 
-    // Get the user record
+    // 1. Get current user record
     let user = await User.findById(userId);
-
     if (!user) {
         return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    // If no referral code, generate one that's unique and persist it permanently
-    if (!user.referralCode) {
-        const prefix = (user.name.substring(0, 3).replace(/[^a-zA-Z]/g, '').toUpperCase() || 'BU');
+    // 2. Legacy Migration: If user has no code in User document, check the old UserPlan record
+    if (!user.referralCode || user.referralCode.trim() === '') {
+        const legacyPlan = await UserPlan.findOne({ userId: user._id });
+        if (legacyPlan?.referralCode) {
+            // Save it to User model permanently via atomic update
+            const migrated: any = await User.findOneAndUpdate(
+                { _id: userId, referralCode: { $in: [null, ''] } },
+                { $set: { referralCode: legacyPlan.referralCode.toUpperCase() } },
+                { new: true }
+            );
+            if (migrated) {
+                user = migrated;
+            }
+        }
+    }
 
-        let savedCorrectly = false;
+    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+    // 3. Generation: If still no referral code, generate one (Permanent Lock)
+    if (!user!.referralCode || user!.referralCode.trim() === '') {
+        const prefix = (user!.name.substring(0, 3).replace(/[^a-zA-Z]/g, '').toUpperCase() || 'BU');
         let attempts = 0;
+        let savedCorrectly = false;
 
         while (!savedCorrectly && attempts < 5) {
             attempts++;
-            const random = Math.random().toString(36).substring(2, 6).toUpperCase();
-            const candidateCode = prefix + random;
+            const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+            const candidateCode = prefix + randomSuffix;
 
             try {
-                // Use findOneAndUpdate with a query that ensures we only set it if it's still missing
-                const updated = await User.findOneAndUpdate(
-                    { _id: userId, $or: [{ referralCode: null }, { referralCode: { $exists: false } }] },
+                // Atomic persist - only sets if still missing
+                const updated: any = await User.findOneAndUpdate(
+                    { _id: userId, referralCode: { $in: [null, ''] } },
                     { $set: { referralCode: candidateCode } },
                     { new: true }
                 );
 
                 if (updated && updated.referralCode) {
+                    console.log(`[REFERRAL] Generated and locked new code ${candidateCode} for User ${userId}`);
                     user = updated;
                     savedCorrectly = true;
                 } else {
-                    // Refetch to see if it was set
+                    // Refetch to see if it was set by concurrent request
                     const refetched = await User.findById(userId);
-                    if (refetched?.referralCode) {
+                    if (refetched) {
                         user = refetched;
-                        savedCorrectly = true;
+                        if (user.referralCode) savedCorrectly = true;
                     }
                 }
             } catch (err) {
-                console.log(err);
-                console.error(`Referral code collision for ${candidateCode}, retrying...`);
+                console.error(`Referral collision for ${candidateCode}, attempt ${attempts}:`, err);
             }
         }
     }
 
     // Get stats from ReferralRecord
-    // Referrals are tracked by userId
     const [signups, purchases] = await Promise.all([
         ReferralRecord.countDocuments({ referrerId: userId }),
         ReferralRecord.countDocuments({
@@ -137,7 +151,7 @@ export const getMyReferralInfo = asyncHandler(async (req: any, res: Response) =>
     return res.status(200).json({
         success: true,
         data: {
-            referralCode: user.referralCode,
+            referralCode: user?.referralCode || '',
             isActive: isActive,
             stats: {
                 totalSignups: signups,
@@ -196,22 +210,22 @@ export const getAdminUserReferralStats = asyncHandler(async (req: Request, res: 
         return res.status(404).json({ success: false, message: 'User not found' });
     }
 
-    if (!user.referralCode) {
-        const prefix = (user.name.substring(0, 3).replace(/[^a-zA-Z]/g, '').toUpperCase() || 'BU');
+    if (!user!.referralCode) {
+        const prefix = (user!.name.substring(0, 3).replace(/[^a-zA-Z]/g, '').toUpperCase() || 'BU');
         const random = Math.random().toString(36).substring(2, 6).toUpperCase();
         const candidateCode = prefix + random;
 
-        // Use atomic update to set it only if still missing
-        const updated = await User.findOneAndUpdate(
-            { _id: userId, $or: [{ referralCode: null }, { referralCode: { $exists: false } }] },
+        const updated: any = await User.findOneAndUpdate(
+            { _id: userId, referralCode: { $in: [null, ''] } },
             { $set: { referralCode: candidateCode } },
             { new: true }
         );
 
-        if (updated) {
+        if (updated && updated.referralCode) {
             user = updated;
         } else {
-            user = await User.findById(userId) || user;
+            const refetched = await User.findById(userId);
+            if (refetched) user = refetched;
         }
     }
 
@@ -224,7 +238,7 @@ export const getAdminUserReferralStats = asyncHandler(async (req: Request, res: 
     return res.status(200).json({
         success: true,
         data: {
-            referralCode: user.referralCode,
+            referralCode: user?.referralCode || '',
             referredBy: referredByRecord,
             referrals: referralsTable,
             summary: {
@@ -239,15 +253,15 @@ export const getAdminUserReferralStats = asyncHandler(async (req: Request, res: 
 export const signupWithReferral = async (userId: mongoose.Types.ObjectId, referralCode: string) => {
     try {
         const uppercaseCode = referralCode.toUpperCase();
-        // Find the UserPlan with this code (shared plan holder)
-        const userPlan = await UserPlan.findOne({ referralCode: uppercaseCode });
-        if (!userPlan) {
+        // Find the User with this code
+        const referrerUser = await User.findOne({ referralCode: uppercaseCode });
+        if (!referrerUser) {
             console.error(`Referral signup failed: Invalid code ${uppercaseCode}`);
             return;
         }
 
         // Check for self-referral
-        if (userPlan.userId.toString() === userId.toString()) {
+        if (referrerUser._id.toString() === userId.toString()) {
             console.error(`Referral signup failed: Self-referral for user ${userId}`);
             return;
         }
@@ -261,7 +275,7 @@ export const signupWithReferral = async (userId: mongoose.Types.ObjectId, referr
 
         // Record the referral
         await ReferralRecord.create({
-            referrerId: userPlan.userId,
+            referrerId: referrerUser._id,
             refereeId: userId,
             referralCode: uppercaseCode,
             status: 'joined'
