@@ -63,14 +63,25 @@ export const updateReferralConfig = asyncHandler(async (req: Request, res: Respo
 export const getMyReferralInfo = asyncHandler(async (req: any, res: Response) => {
     const userId = req.user._id;
 
+    // Get config
+    const config = await ReferralConfig.findOne();
+    const isActive = config ? config.isActive : true; // Default to true if not configured
+
     // Get plan holder ID for shared plans
     const planHolderId = await getPlanHolderId(userId);
 
-    // Get the referral code from the plan holder's plan record
-    const userPlan = await UserPlan.findOne({ userId: planHolderId });
+    // Get or create the user plan record to ensure they have a code
+    let userPlan = await UserPlan.findOne({ userId: planHolderId });
 
-    // If they have an active plan but no referral code, generate one
-    if (userPlan && userPlan.activePlanId && !userPlan.referralCode) {
+    if (!userPlan) {
+        // Create an empty user plan record just to hold the referral code
+        userPlan = new UserPlan({
+            userId: planHolderId,
+        });
+    }
+
+    // If no referral code, generate one (on the fly)
+    if (!userPlan.referralCode) {
         const user = await User.findById(planHolderId);
         // Generate a code: 3 letters of name + 3 random alphanumeric
         const prefix = (user?.name?.substring(0, 3).replace(/[^a-zA-Z]/g, '').toUpperCase() || 'BU');
@@ -84,14 +95,28 @@ export const getMyReferralInfo = asyncHandler(async (req: any, res: Response) =>
     const signups = await ReferralRecord.countDocuments({ referrerId: planHolderId });
     const purchases = await ReferralRecord.countDocuments({ referrerId: planHolderId, status: { $in: ['purchased', 'rewarded'] } });
 
+    // Get reward info if active
+    let referrerReward = null;
+    if (config?.referrerCouponId) {
+        const coupon = await Coupon.findById(config.referrerCouponId);
+        if (coupon) {
+            referrerReward = {
+                type: coupon.discountType,
+                value: coupon.discountValue
+            };
+        }
+    }
+
     res.status(200).json({
         success: true,
         data: {
-            referralCode: userPlan?.referralCode || null,
+            referralCode: userPlan.referralCode,
+            isActive: isActive,
             stats: {
-                signups,
-                purchases
-            }
+                totalSignups: signups,
+                totalPurchases: purchases
+            },
+            referrerReward
         }
     });
 });
@@ -137,6 +162,21 @@ export const verifyReferralCode = asyncHandler(async (req: Request, res: Respons
 export const getAdminUserReferralStats = asyncHandler(async (req: Request, res: Response) => {
     const { userId } = req.params;
 
+    // Ensure a UserPlan record exists and has a referralCode
+    let userPlan = await UserPlan.findOne({ userId });
+    if (!userPlan) {
+        userPlan = await UserPlan.create({ userId });
+    }
+
+    if (!userPlan.referralCode) {
+        const user = await User.findById(userId);
+        const prefix = (user?.name?.substring(0, 3).replace(/[^a-zA-Z]/g, '').toUpperCase() || 'BU');
+        const random = Math.random().toString(36).substring(2, 5).toUpperCase();
+        const code = prefix + random;
+        userPlan.referralCode = code;
+        await userPlan.save();
+    }
+
     // Check if this user was referred by someone
     const referredByRecord = await ReferralRecord.findOne({ refereeId: userId }).populate('referrerId', 'name phone');
 
@@ -146,6 +186,7 @@ export const getAdminUserReferralStats = asyncHandler(async (req: Request, res: 
     res.status(200).json({
         success: true,
         data: {
+            referralCode: userPlan.referralCode,
             referredBy: referredByRecord,
             referrals: referralsTable,
             summary: {
