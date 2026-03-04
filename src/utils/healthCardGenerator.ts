@@ -75,13 +75,16 @@ export const generateHealthCardBuffer = async (data: HealthCardData): Promise<Bu
 
             drawField('Name', data.name, contentY);
             // drawField('Gender/Age', `${data.gender || '-'}${data.dob ? ' / ' + calculateAge(data.dob) : ''}`, contentY + 25);
-            drawField('Health ID', data.uhid || 'PENDING', contentY + 25);
+            doc.font('Helvetica-Bold').fontSize(9).fillColor(textGray).text('HEALTH ID', labelX, contentY + 25);
+            doc.font('Helvetica-Bold').fontSize(11).fillColor(brandPurple).text(data.uhid || 'PENDING', labelX + valueOffset, contentY + 25);
             drawField('Emergency', data.emergencyContact || 'N/A', contentY + 50);
 
             // Expiry / Validity
-            const validityStr = data.validity ? new Date(data.validity).toLocaleDateString('en-GB') : 'PERMANENT';
-            doc.font('Helvetica').fontSize(8).fillColor(textGray).text('VALID TILL:', 340, contentY + 50);
-            doc.font('Helvetica-Bold').fontSize(9).fillColor(textBlack).text(validityStr, 400, contentY + 50);
+            const validityStr = data.validity ? new Date(data.validity).toLocaleDateString('en-GB') : '';
+            if (validityStr?.length > 0) {
+                doc.font('Helvetica').fontSize(8).fillColor(textGray).text('VALID TILL:', 340, contentY + 50);
+                doc.font('Helvetica-Bold').fontSize(9).fillColor(textBlack).text(validityStr, 400, contentY + 50);
+            }
 
             // --- Partners Section (Bottom) ---
             doc.rect(0, 220, 486, 86).fill('#f8fafc');
