@@ -55,8 +55,12 @@ export const getAllServices = asyncHandler(async (_req: Request, res: Response, 
     const serviceVariants = variants
       .filter(v => v.serviceId.toString() === service._id.toString());
 
-    // Extract sub-service names
-    const subServicesNames = serviceVariants.map(v => v.name);
+    // Extract sub-service data
+    const subServices = serviceVariants.map(v => ({
+      id: v.id,
+      name: v.name
+    }));
+    const subServicesNames = subServices.map(v => v.name);
 
     return {
       id: service.id, // Service ID
@@ -65,7 +69,8 @@ export const getAllServices = asyncHandler(async (_req: Request, res: Response, 
       icon: service.icon, // Service Icon
       description: service.description || '', // Description
       highlight: service.highlight || '', // Highlight
-      subServicesNames: subServicesNames, // SubServices Names
+      subServices: subServices, // SubServices with IDs
+      subServicesNames: subServicesNames, // SubServices Names (legacy)
       tags: service.tags || [] // Service Tags
     };
   }).filter(service => service.subServicesNames.length > 0); // Only return services with active variants
@@ -129,8 +134,12 @@ export const getServicesByLocation = asyncHandler(async (req: Request, res: Resp
     const serviceVariants = variants
       .filter(v => v.serviceId.toString() === service._id.toString());
 
-    // Extract sub-service names
-    const subServicesNames = serviceVariants.map(v => v.name);
+    // Extract sub-service data
+    const subServices = serviceVariants.map(v => ({
+      id: v.id,
+      name: v.name
+    }));
+    const subServicesNames = subServices.map(v => v.name);
 
     return {
       id: service.id, // Service ID
@@ -139,7 +148,8 @@ export const getServicesByLocation = asyncHandler(async (req: Request, res: Resp
       icon: service.icon, // Service Icon
       description: service.description || '', // Description
       highlight: service.highlight || '', // Highlight
-      subServicesNames: subServicesNames, // SubServices Names
+      subServices: subServices, // SubServices with IDs
+      subServicesNames: subServicesNames, // SubServices Names (legacy)
       tags: service.tags || [] // Service Tags
     };
   }).filter(service => service.subServicesNames.length > 0); // Only return services with active variants
