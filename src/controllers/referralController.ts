@@ -60,40 +60,85 @@ export const updateReferralConfig = asyncHandler(async (req: Request, res: Respo
 // @desc    Get current user's referral code and stats
 // @route   GET /api/referral/my-code
 // @access  Private/Customer
+// @desc    Get current user's referral code and stats
+// @route   GET /api/referral/my-code
+// @access  Private/Customer
 export const getMyReferralInfo = asyncHandler(async (req: any, res: Response) => {
     const userId = req.user._id;
 
     // Get config
     const config = await ReferralConfig.findOne();
-    const isActive = config ? config.isActive : true; // Default to true if not configured
+    const isActive = config ? config.isActive : true;
 
     // Get plan holder ID for shared plans
     const planHolderId = await getPlanHolderId(userId);
 
-    // Get or create the user plan record to ensure they have a code
+    // Get the user plan record
     let userPlan = await UserPlan.findOne({ userId: planHolderId });
 
+    // If not found, create it (atomic ensure)
     if (!userPlan) {
-        // Create an empty user plan record just to hold the referral code
-        userPlan = new UserPlan({
-            userId: planHolderId,
-        });
+        userPlan = await UserPlan.findOneAndUpdate(
+            { userId: planHolderId },
+            { $setOnInsert: { userId: planHolderId } },
+            { upsert: true, new: true }
+        );
     }
 
-    // If no referral code, generate one (on the fly)
+    if (!userPlan) {
+        return res.status(500).json({ success: false, message: 'Failed to initialize referral record' });
+    }
+
+    // If no referral code, generate one that's unique and persist it permanently
     if (!userPlan.referralCode) {
         const user = await User.findById(planHolderId);
-        // Generate a code: 3 letters of name + 3 random alphanumeric
         const prefix = (user?.name?.substring(0, 3).replace(/[^a-zA-Z]/g, '').toUpperCase() || 'BU');
-        const random = Math.random().toString(36).substring(2, 5).toUpperCase();
-        const code = prefix + random;
-        userPlan.referralCode = code;
-        await userPlan.save();
+
+        let savedCorrectly = false;
+        let attempts = 0;
+
+        while (!savedCorrectly && attempts < 5) {
+            attempts++;
+            // Generate a 4-character random suffix for better uniqueness
+            const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+            const candidateCode = prefix + random;
+
+            try {
+                // Use findOneAndUpdate with a query that ensures we only set it if it's still missing
+                // This prevents race conditions where two family members hit the page at once
+                const updated = await UserPlan.findOneAndUpdate(
+                    { userId: planHolderId, $or: [{ referralCode: null }, { referralCode: { $exists: false } }] },
+                    { $set: { referralCode: candidateCode } },
+                    { new: true }
+                );
+
+                if (updated && updated.referralCode) {
+                    userPlan = updated;
+                    savedCorrectly = true;
+                } else {
+                    // It was likely set by someone else just now, refetch to be sure
+                    const refetched = await UserPlan.findOne({ userId: planHolderId });
+                    if (refetched?.referralCode) {
+                        userPlan = refetched;
+                        savedCorrectly = true;
+                    }
+                }
+            } catch (_err) {
+                // If it's a duplicate code error, the while loop will retry with a new code
+                console.error(`Referral code collision for ${candidateCode}, retrying...`);
+                console.log(_err);
+            }
+        }
     }
 
     // Get stats
-    const signups = await ReferralRecord.countDocuments({ referrerId: planHolderId });
-    const purchases = await ReferralRecord.countDocuments({ referrerId: planHolderId, status: { $in: ['purchased', 'rewarded'] } });
+    const [signups, purchases] = await Promise.all([
+        ReferralRecord.countDocuments({ referrerId: planHolderId }),
+        ReferralRecord.countDocuments({
+            referrerId: planHolderId,
+            status: { $in: ['purchased', 'rewarded'] }
+        })
+    ]);
 
     // Get reward info if active
     let referrerReward = null;
@@ -107,7 +152,7 @@ export const getMyReferralInfo = asyncHandler(async (req: any, res: Response) =>
         }
     }
 
-    res.status(200).json({
+    return res.status(200).json({
         success: true,
         data: {
             referralCode: userPlan.referralCode,
@@ -121,13 +166,13 @@ export const getMyReferralInfo = asyncHandler(async (req: any, res: Response) =>
     });
 });
 
-// @desc    Verify referral code and get benefits
+// @desc    Get referral code and get benefits
 // @route   GET /api/referral/verify/:code
 // @access  Public
 export const verifyReferralCode = asyncHandler(async (req: Request, res: Response, next: any) => {
     const { code } = req.params;
 
-    const userPlan = await UserPlan.findOne({ referralCode: code.toUpperCase() });
+    const userPlan = await UserPlan.findOne({ referralCode: code.trim().toUpperCase() });
     if (!userPlan) {
         return next(new AppError('Invalid referral code', 404));
     }
@@ -143,10 +188,11 @@ export const verifyReferralCode = asyncHandler(async (req: Request, res: Respons
     // Fetch referee coupon info
     const coupon = await Coupon.findById(config.refereeCouponId);
 
-    res.status(200).json({
+    return res.status(200).json({
         success: true,
         data: {
             valid: true,
+            referrerName: 'A BeforeU User', // Can optionally fetch user name
             benefits: coupon ? {
                 description: coupon.description,
                 discountValue: coupon.discountValue,
@@ -164,17 +210,38 @@ export const getAdminUserReferralStats = asyncHandler(async (req: Request, res: 
 
     // Ensure a UserPlan record exists and has a referralCode
     let userPlan = await UserPlan.findOne({ userId });
+
     if (!userPlan) {
-        userPlan = await UserPlan.create({ userId });
+        userPlan = await UserPlan.findOneAndUpdate(
+            { userId },
+            { $setOnInsert: { userId } },
+            { upsert: true, new: true }
+        );
+    }
+
+    if (!userPlan) {
+        return res.status(500).json({ success: false, message: 'Failed to find/create referral plan' });
     }
 
     if (!userPlan.referralCode) {
         const user = await User.findById(userId);
         const prefix = (user?.name?.substring(0, 3).replace(/[^a-zA-Z]/g, '').toUpperCase() || 'BU');
-        const random = Math.random().toString(36).substring(2, 5).toUpperCase();
-        const code = prefix + random;
-        userPlan.referralCode = code;
-        await userPlan.save();
+        const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+        const candidateCode = prefix + random;
+
+        // Use atomic update to set it only if still missing
+        const updated = await UserPlan.findOneAndUpdate(
+            { userId, $or: [{ referralCode: null }, { referralCode: { $exists: false } }] },
+            { $set: { referralCode: candidateCode } },
+            { new: true }
+        );
+
+        if (updated) {
+            userPlan = updated;
+        } else {
+            // Re-fetch to get what was set by others
+            userPlan = await UserPlan.findOne({ userId }) || userPlan;
+        }
     }
 
     // Check if this user was referred by someone
@@ -183,7 +250,7 @@ export const getAdminUserReferralStats = asyncHandler(async (req: Request, res: 
     // Check how many people this user (or their plan) has referred
     const referralsTable = await ReferralRecord.find({ referrerId: userId }).populate('refereeId', 'name phone createdAt');
 
-    res.status(200).json({
+    return res.status(200).json({
         success: true,
         data: {
             referralCode: userPlan.referralCode,
