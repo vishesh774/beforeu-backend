@@ -60,7 +60,7 @@ export const generateHealthCardBuffer = async (data: HealthCardData): Promise<Bu
             }
 
             // "HEALTH ID" Label
-            doc.font('Helvetica-Bold').fontSize(14).fillColor(white).text('DIGITAL HEALTH ID', 250, 25, { align: 'right', width: 210 });
+            doc.font('Helvetica-Bold').fontSize(14).fillColor(white).text('BeforeU Care', 250, 25, { align: 'right', width: 210 });
             doc.font('Helvetica').fontSize(8).fillColor('rgba(255,255,255,0.8)').text('One-Tap SOS for Immediate Help.', 250, 45, { align: 'right', width: 210 });
 
             // User Info Section
@@ -80,8 +80,8 @@ export const generateHealthCardBuffer = async (data: HealthCardData): Promise<Bu
 
             // Expiry / Validity
             const validityStr = data.validity ? new Date(data.validity).toLocaleDateString('en-GB') : 'PERMANENT';
-            doc.font('Helvetica').fontSize(8).fillColor(textGray).text('VALID TILL:', 340, contentY + 75);
-            doc.font('Helvetica-Bold').fontSize(9).fillColor(textBlack).text(validityStr, 400, contentY + 75);
+            doc.font('Helvetica').fontSize(8).fillColor(textGray).text('VALID TILL:', 340, contentY + 50);
+            doc.font('Helvetica-Bold').fontSize(9).fillColor(textBlack).text(validityStr, 400, contentY + 50);
 
             // --- Partners Section (Bottom) ---
             doc.rect(0, 220, 486, 86).fill('#f8fafc');
