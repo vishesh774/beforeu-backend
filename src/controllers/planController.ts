@@ -21,6 +21,7 @@ import { assignCRMTask } from '../services/crmTaskService';
 import { notifyAccountsTeamOnPlanPurchase } from '../services/emailService';
 import { generateInvoiceBuffer } from '../utils/pdfGenerator';
 import CompanySettings from '../models/CompanySettings';
+import { processReferralReward } from './referralController';
 
 // @desc    Get all plans
 // @route   GET /api/admin/plans or GET /api/auth/plans
@@ -482,6 +483,11 @@ export const verifyPlanPaymentStatus = asyncHandler(async (req: Request, res: Re
     planTx.paymentId = paymentId;
     planTx.paymentDetails = successfulPayment;
     await planTx.save();
+
+    // --- Referral Integration: Process Rewards ---
+    processReferralReward(planTx.userId as any, planTx._id as any)
+      .catch(err => console.error('[PlanController] Referral reward processing failed:', err));
+    // ---------------------------------------------
 
     // Update Plan and Credits
     const plan = await Plan.findById(planTx.planId);

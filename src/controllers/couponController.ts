@@ -175,23 +175,31 @@ export const getCouponsWithUsers = asyncHandler(async (req: Request, res: Respon
 
     coupons.forEach(coupon => {
         if (coupon.type === 'restricted' && coupon.allowedPhoneNumbers) {
-            const usersList: any[] = [];
+            // Group by phone to handle multiple grants per phone
+            const phoneGroups = new Map<string, any>();
+
             coupon.allowedPhoneNumbers.forEach((ap: any) => {
                 const phone = typeof ap === 'string' ? ap : ap.phone;
                 const expiryDate = typeof ap === 'string' ? coupon.expiryDate : ap.expiryDate;
-
                 const normPhone = normalizePhone(phone);
                 const foundUser = userMapByNormPhone.get(normPhone);
 
-                usersList.push({
-                    name: foundUser?.name || 'Unknown',
-                    email: foundUser?.email || 'N/A',
-                    phone: phone, // Keep original
-                    isRegistered: !!foundUser,
-                    expiryDate: expiryDate
-                });
+                if (phoneGroups.has(normPhone)) {
+                    const group = phoneGroups.get(normPhone);
+                    group.grantCount += 1;
+                } else {
+                    phoneGroups.set(normPhone, {
+                        name: foundUser?.name || 'Unknown',
+                        email: foundUser?.email || 'N/A',
+                        phone: phone, // Keep original
+                        isRegistered: !!foundUser,
+                        expiryDate: expiryDate,
+                        grantCount: 1,
+                        usedCount: coupon.usedBy.filter(u => u.userId.toString() === foundUser?._id?.toString()).length
+                    });
+                }
             });
-            mappedUsers[coupon._id.toString()] = usersList;
+            mappedUsers[coupon._id.toString()] = Array.from(phoneGroups.values());
         }
     });
 
@@ -210,6 +218,8 @@ export const getCouponsWithUsers = asyncHandler(async (req: Request, res: Respon
                     userEmail: u.email,
                     userPhone: u.phone,
                     isRegistered: u.isRegistered,
+                    grants: u.grantCount,
+                    uses: u.usedCount,
                     userExpiry: u.expiryDate ? new Date(u.expiryDate).toLocaleDateString() : 'No expiry'
                 });
             });
@@ -305,31 +315,53 @@ export const getApplicableCoupons = asyncHandler(async (req: any, res: Response,
         if (coupon.type === 'public') {
             return !coupon.expiryDate || new Date(coupon.expiryDate) > currentDate;
         } else {
-            // Find the specific number entry
+            // Find the specific number entries
             const normUserPhone = normalizePhone(userPhone);
-            const entry: any = coupon.allowedPhoneNumbers.find((ap: any) => {
+            const userGrants = coupon.allowedPhoneNumbers.filter((ap: any) => {
                 const phone = typeof ap === 'string' ? ap : ap.phone;
                 return normalizePhone(phone) === normUserPhone;
             });
 
-            if (!entry) return false;
+            if (userGrants.length === 0) return false;
 
-            // Check individual expiry
-            const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
-            return !userExpiry || new Date(userExpiry) > currentDate;
+            // Check if user has used up all their grants
+            const userId = req.user.id;
+            const userUsedCount = coupon.usedBy.filter(u => u.userId.toString() === userId).length;
+            if (userUsedCount >= userGrants.length) return false;
+
+            // Check individual expiry (of at least one grant)
+            const activeGrant = userGrants.find((entry: any) => {
+                const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+                return !userExpiry || new Date(userExpiry) > currentDate;
+            });
+
+            return !!activeGrant;
         }
     }).map(coupon => {
-        const couponObj = coupon.toObject();
+        const couponObj = coupon.toObject() as any;
+        const normUserPhone = normalizePhone(userPhone);
+        const userId = req.user.id;
+
         if (couponObj.type === 'restricted') {
-            const normUserPhone = normalizePhone(userPhone);
-            const entry = couponObj.allowedPhoneNumbers.find((ap: any) => {
+            const userGrants = couponObj.allowedPhoneNumbers.filter((ap: any) => {
                 const phone = typeof ap === 'string' ? ap : ap.phone;
                 return normalizePhone(phone) === normUserPhone;
             });
-            // Overwrite the root expiryDate with the user-specific one for the UI
-            if (entry) {
-                couponObj.expiryDate = typeof entry === 'string' ? couponObj.expiryDate : entry.expiryDate;
+
+            const userUsedCount = couponObj.usedBy.filter((u: any) => u.userId.toString() === userId).length;
+
+            couponObj.totalGrants = userGrants.length;
+            couponObj.usedByMe = userUsedCount;
+            couponObj.availableUses = Math.max(0, userGrants.length - userUsedCount);
+
+            // Find best expiry date among grants
+            const expiries = userGrants.map((entry: any) => typeof entry === 'string' ? couponObj.expiryDate : entry.expiryDate).filter((e: any) => !!e);
+            if (expiries.length > 0) {
+                couponObj.expiryDate = new Date(Math.max(...expiries.map((e: any) => new Date(e).getTime())));
             }
+        } else {
+            couponObj.totalGrants = -1; // Unlimited or global
+            couponObj.availableUses = couponObj.maxUses === -1 ? -1 : couponObj.maxUses - couponObj.usedCount;
         }
         return couponObj;
     });
@@ -359,19 +391,32 @@ export const validateCoupon = asyncHandler(async (req: any, res: Response, next:
     // Check Restricted
     if (coupon.type === 'restricted') {
         const normUserPhone = normalizePhone(userPhone);
-        const entry: any = coupon.allowedPhoneNumbers.find((ap: any) => {
+
+        // Count how many times this phone is in allowed list (total grants)
+        const userGrants = coupon.allowedPhoneNumbers.filter((ap: any) => {
             const phone = typeof ap === 'string' ? ap : ap.phone;
             return normalizePhone(phone) === normUserPhone;
         });
 
-        if (!entry) {
+        if (userGrants.length === 0) {
             return next(new AppError('This coupon is not available for your account', 400));
         }
 
-        // Check Individual Expiry Date
-        const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
-        if (userExpiry && new Date() > userExpiry) {
-            return next(new AppError('Coupon has expired for your number', 400));
+        // Count how many times this user has used it
+        const usedByCount = coupon.usedBy.filter(u => u.userId.toString() === req.user.id).length;
+
+        if (usedByCount >= userGrants.length) {
+            return next(new AppError(`You have already used all ${userGrants.length} rewards for this coupon. Refer more friends to get more rewards!`, 400));
+        }
+
+        // Check if at least one grant is not expired
+        const activeGrant = userGrants.find((entry: any) => {
+            const userExpiry = typeof entry === 'string' ? coupon.expiryDate : entry.expiryDate;
+            return !userExpiry || new Date() <= userExpiry;
+        });
+
+        if (!activeGrant) {
+            return next(new AppError('Your rewards for this coupon have expired', 400));
         }
     } else {
         // For Public coupons, check root expiry

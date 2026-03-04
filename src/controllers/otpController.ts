@@ -9,6 +9,7 @@ import User from '../models/User';
 import { generateToken } from '../utils/generateToken';
 import { aggregateUserData, initializeUserRecords } from '../utils/userHelpers';
 import { normalizePhone } from '../utils/phoneUtils';
+import { signupWithReferral } from './referralController';
 
 // @desc    Send OTP to phone number
 // @route   POST /api/auth/send-otp
@@ -168,7 +169,7 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
 // @route   POST /api/auth/complete-profile
 // @access  Public
 export const completeProfile = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { phone, name, email } = req.body;
+  const { phone, name, email, referralCode } = req.body;
 
   if (!phone || !name) {
     return next(new AppError('Phone and name are required', 400));
@@ -230,6 +231,12 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
 
     // Initialize user-related records
     await initializeUserRecords(user._id);
+
+    // --- Referral Integration ---
+    if (referralCode) {
+      await signupWithReferral(user._id as any, referralCode);
+    }
+    // ----------------------------
   }
 
   // Ensure user exists (TypeScript guard)

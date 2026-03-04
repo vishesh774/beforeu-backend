@@ -8,6 +8,7 @@ import { generateToken } from '../utils/generateToken';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
 import UserPlan from '../models/UserPlan';
+import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
 import { sendAddedAsFamilyMessage } from '../services/whatsappService';
@@ -15,6 +16,7 @@ import Role, { IPermission } from '../models/Role';
 import { createCRMLead } from '../services/crmService';
 import { assignCRMTask } from '../services/crmTaskService';
 import { createAndSendEmailOTP, verifyEmailOTP as verifyOTPService } from '../services/otpService';
+import { signupWithReferral } from './referralController';
 
 interface SignupRequest extends Request {
   body: {
@@ -22,6 +24,7 @@ interface SignupRequest extends Request {
     email: string;
     phone: string;
     password: string;
+    referralCode?: string;
   };
 }
 
@@ -29,7 +32,7 @@ interface SignupRequest extends Request {
 // @route   POST /api/auth/signup
 // @access  Public
 export const signup = asyncHandler(async (req: SignupRequest, res: Response, next: NextFunction) => {
-  const { name, email, phone, password } = req.body;
+  const { name, email, phone, password, referralCode } = req.body;
 
   // Check if user already exists (case-insensitive)
   const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -54,6 +57,12 @@ export const signup = asyncHandler(async (req: SignupRequest, res: Response, nex
 
   // Initialize user-related records (credits and plan)
   await initializeUserRecords(user._id);
+
+  // --- Referral Integration ---
+  if (referralCode) {
+    await signupWithReferral(user._id as any, referralCode);
+  }
+  // ----------------------------
 
   // Aggregate user data
   const userData = await aggregateUserData(user._id);
@@ -624,18 +633,25 @@ export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response
   // 2. Delete all family members
   await FamilyMember.deleteMany({ userId: userIdObj });
 
-  // 3. Anonymize and deactivate user
+  // 3. Delete user plan and credits
+  await UserPlan.deleteMany({ userId: userIdObj });
+  await UserCredits.deleteMany({ userId: userIdObj });
+
+  // 4. Anonymize and deactivate user
   // We append timestamp to phone/email to allow re-registration with same credentials
   const timestamp = Date.now();
+  const anonymizedPhone = `deleted_${timestamp}_${user.phone}`;
+  const anonymizedEmail = user.email ? `deleted_${timestamp}_${user.email}` : undefined;
 
-  user.isActive = false;
-  user.isDeleted = true;
-  user.phone = `deleted_${timestamp}_${user.phone}`;
-  if (user.email) {
-    user.email = `deleted_${timestamp}_${user.email}`;
-  }
-
-  await user.save();
+  // Use findByIdAndUpdate with runValidators: false because the anonymized phone/email 
+  // will fail the regex match validation in the User model.
+  await User.findByIdAndUpdate(userIdObj, {
+    isActive: false,
+    isDeleted: true,
+    phone: anonymizedPhone,
+    email: anonymizedEmail,
+    name: `Deleted User ${timestamp}`
+  }, { runValidators: false });
 
   res.status(200).json({
     success: true,
@@ -656,9 +672,9 @@ export const sendEmailOTP = asyncHandler(async (req: Request, res: Response, nex
   }
 
   // Check if email is already in use by another profile
-  const existingUser = await User.findOne({ 
+  const existingUser = await User.findOne({
     email: email.toLowerCase(),
-    isDeleted: false 
+    isDeleted: false
   });
 
   if (existingUser) {
@@ -730,11 +746,11 @@ export const updateEmail = asyncHandler(async (req: AuthRequest, res: Response, 
   }
 
   // 2. Double check if email is already in use (to prevent race conditions)
-  const existingUser = await User.findOne({ 
+  const existingUser = await User.findOne({
     email: email.toLowerCase(),
     isDeleted: false
   });
-  
+
   if (existingUser && existingUser._id.toString() !== userId) {
     return next(new AppError('This email is already registered with another account', 400));
   }

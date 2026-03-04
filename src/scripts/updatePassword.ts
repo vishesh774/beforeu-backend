@@ -9,7 +9,7 @@ const updatePassword = async () => {
     try {
         await connectDB();
 
-        const email = 'admin@beforeu.com';
+        const email = 'testing@beforeu.in';
         const newPassword = 'admin1';
 
         console.log(`🔍 Finding user with email: ${email}...`);
