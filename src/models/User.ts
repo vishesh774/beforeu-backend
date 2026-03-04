@@ -13,6 +13,7 @@ export interface IUser extends Document {
   crmId?: string; // ID from the CRM system
   isActive: boolean;
   isDeleted: boolean;
+  referralCode?: string;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -79,6 +80,14 @@ const UserSchema = new Schema<IUser>(
     isDeleted: {
       type: Boolean,
       default: false
+    },
+    referralCode: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+      uppercase: true,
+      trim: true
     },
   },
   {
