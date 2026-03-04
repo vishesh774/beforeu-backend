@@ -8,6 +8,7 @@ import { generateToken } from '../utils/generateToken';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
 import UserPlan from '../models/UserPlan';
+import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
 import { sendAddedAsFamilyMessage } from '../services/whatsappService';
@@ -632,18 +633,25 @@ export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response
   // 2. Delete all family members
   await FamilyMember.deleteMany({ userId: userIdObj });
 
-  // 3. Anonymize and deactivate user
+  // 3. Delete user plan and credits
+  await UserPlan.deleteMany({ userId: userIdObj });
+  await UserCredits.deleteMany({ userId: userIdObj });
+
+  // 4. Anonymize and deactivate user
   // We append timestamp to phone/email to allow re-registration with same credentials
   const timestamp = Date.now();
+  const anonymizedPhone = `deleted_${timestamp}_${user.phone}`;
+  const anonymizedEmail = user.email ? `deleted_${timestamp}_${user.email}` : undefined;
 
-  user.isActive = false;
-  user.isDeleted = true;
-  user.phone = `deleted_${timestamp}_${user.phone}`;
-  if (user.email) {
-    user.email = `deleted_${timestamp}_${user.email}`;
-  }
-
-  await user.save();
+  // Use findByIdAndUpdate with runValidators: false because the anonymized phone/email 
+  // will fail the regex match validation in the User model.
+  await User.findByIdAndUpdate(userIdObj, {
+    isActive: false,
+    isDeleted: true,
+    phone: anonymizedPhone,
+    email: anonymizedEmail,
+    name: `Deleted User ${timestamp}`
+  }, { runValidators: false });
 
   res.status(200).json({
     success: true,
