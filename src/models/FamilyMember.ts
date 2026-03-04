@@ -7,6 +7,9 @@ export interface IFamilyMember extends Document {
   relation: string;
   phone: string;
   email?: string;
+  gender?: string;
+  dob?: Date;
+  emergencyContact?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -46,11 +49,25 @@ const FamilyMemberSchema = new Schema<IFamilyMember>(
       trim: true,
       lowercase: true,
       validate: {
-        validator: function(v: string) {
+        validator: function (v: string) {
           return !v || /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/.test(v);
         },
         message: 'Please provide a valid email'
       }
+    },
+    gender: {
+      type: String,
+      enum: ['Male', 'Female', 'Other', 'Prefer not to say'],
+      required: false
+    },
+    dob: {
+      type: Date,
+      required: false
+    },
+    emergencyContact: {
+      type: String,
+      required: false,
+      trim: true
     }
   },
   {

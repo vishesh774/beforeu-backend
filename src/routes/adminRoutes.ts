@@ -100,6 +100,13 @@ import {
 import { updateAppConfig } from '../controllers/configController';
 import { getRazorpayOrderDetails, reconcileExternalPayment } from '../controllers/paymentController';
 import { getCompanySettings, updateCompanySettings } from '../controllers/companySettingsController';
+import {
+  getAllHealthPartners,
+  createHealthPartner,
+  updateHealthPartner,
+  deleteHealthPartner,
+  adminDownloadUserHealthCard
+} from '../controllers/healthPartnerController';
 import { generateInvoicePDF } from '../controllers/invoiceController';
 import { requireAdmin } from '../middleware/adminAuth';
 
@@ -259,5 +266,15 @@ router.get('/invoices/plan-transaction/:id', generateInvoicePDF);
 import { getAllReviews, publishReview } from '../controllers/reviewController';
 router.get('/reviews', getAllReviews);
 router.put('/reviews/:id/publish', publishReview);
+
+// Health Partner routes
+router.get('/health-partners', getAllHealthPartners);
+router.post('/health-partners', createHealthPartner);
+router.put('/health-partners/:id', updateHealthPartner);
+router.delete('/health-partners/:id', deleteHealthPartner);
+
+// Health ID download for users
+router.get('/health-card/user/:userId', adminDownloadUserHealthCard);
+
 export default router;
 

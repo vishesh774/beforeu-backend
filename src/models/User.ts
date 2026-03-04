@@ -14,6 +14,9 @@ export interface IUser extends Document {
   isActive: boolean;
   isDeleted: boolean;
   referralCode?: string;
+  gender?: string;
+  dob?: Date;
+  emergencyContact?: string;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -87,6 +90,20 @@ const UserSchema = new Schema<IUser>(
       sparse: true,
       index: true,
       uppercase: true,
+      trim: true
+    },
+    gender: {
+      type: String,
+      enum: ['Male', 'Female', 'Other', 'Prefer not to say'],
+      required: false
+    },
+    dob: {
+      type: Date,
+      required: false
+    },
+    emergencyContact: {
+      type: String,
+      required: false,
       trim: true
     },
   },

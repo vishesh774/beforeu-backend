@@ -16,6 +16,7 @@ import couponRoutes from './routes/couponRoutes';
 import roleRoutes from './routes/roleRoutes';
 import reviewRoutes from './routes/reviewRoutes';
 import referralRoutes from './routes/referralRoutes';
+import healthRoutes from './routes/healthRoutes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 
 
@@ -140,6 +141,7 @@ app.use('/api', configRoutes);
 app.use('/api/coupons', couponRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/referral', referralRoutes);
+app.use('/api/health', healthRoutes);
 console.log('✅ Routes registered successfully');
 
 // 404 handler
