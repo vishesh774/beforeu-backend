@@ -113,6 +113,11 @@ import { requireAdmin } from '../middleware/adminAuth';
 import {
   waiveExtraCharge
 } from '../controllers/extraChargesController';
+import {
+  getReferralConfig,
+  updateReferralConfig,
+  getAdminUserReferralStats
+} from '../controllers/referralController';
 
 const router = express.Router();
 
@@ -275,6 +280,11 @@ router.delete('/health-partners/:id', deleteHealthPartner);
 
 // Health ID download for users
 router.get('/health-card/user/:userId', adminDownloadUserHealthCard);
+
+// Referral management routes
+router.get('/referral/config', getReferralConfig);
+router.post('/referral/config', updateReferralConfig);
+router.get('/referral/stats/:userId', getAdminUserReferralStats);
 
 export default router;
 
