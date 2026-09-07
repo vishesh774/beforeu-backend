@@ -2,6 +2,7 @@ import ScheduledNotification from '../models/ScheduledNotification';
 import { sendWhatsAppTemplate, sendDailyBusinessReport } from './whatsappService';
 import Booking from '../models/Booking';
 import PlanTransaction from '../models/PlanTransaction';
+import { purgeExpiredAccounts } from '../utils/accountDeletion';
 
 /**
  * Schedule a WhatsApp notification
@@ -183,6 +184,17 @@ export const processScheduledNotifications = async () => {
 
     // Check for Daily Report
     await checkAndSendDailyReport();
+
+    // Purge accounts whose deletion retention window has elapsed. Isolated in its own try/catch so
+    // a failure here can never stop notifications or the daily report from going out.
+    try {
+        const purged = await purgeExpiredAccounts();
+        if (purged > 0) {
+            console.log(`[Scheduler] Purged ${purged} account(s) past their deletion retention window`);
+        }
+    } catch (error) {
+        console.error('[Scheduler] Account purge failed:', error);
+    }
 };
 
 /**

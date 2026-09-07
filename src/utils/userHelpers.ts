@@ -39,6 +39,8 @@ export interface AggregatedUserData {
     relation: string;
     phone: string;
     email?: string;
+    /** Nominated to be phoned during an SOS. See sosCallService.getFamilyCallTargets. */
+    isEmergencyContact?: boolean;
   }>;
   addresses: Array<{
     id: string;
@@ -62,6 +64,24 @@ export interface AggregatedUserData {
 }
 
 /**
+ * The single definition of "this plan is currently usable".
+ *
+ * A plan needs BOTH an `activePlanId` and an unexpired `expiresAt`. A missing `expiresAt` is
+ * treated as never-expiring, which is the pre-existing behaviour for legacy rows. Use this
+ * everywhere instead of testing `activePlanId` alone — the booking flow used to do the latter and
+ * let expired plan holders keep redeeming credits.
+ */
+export const isUserPlanActive = (
+  userPlan: { activePlanId?: unknown; expiresAt?: Date | null } | null | undefined,
+  now: Date = new Date()
+): boolean => {
+  if (!userPlan?.activePlanId) {
+    return false;
+  }
+  return !userPlan.expiresAt || now < userPlan.expiresAt;
+};
+
+/**
  * Find the primary user ID if the current user is a family member of an active plan holder
  */
 export const getPlanHolderId = async (userId: string | mongoose.Types.ObjectId): Promise<mongoose.Types.ObjectId> => {
@@ -72,21 +92,16 @@ export const getPlanHolderId = async (userId: string | mongoose.Types.ObjectId):
 
   // 1. Check if the user has their own active plan first
   const myPlan = await UserPlan.findOne({ userId: user._id });
-  if (myPlan?.activePlanId) {
-    if (!myPlan.expiresAt || new Date() < myPlan.expiresAt) {
-      return user._id;
-    }
+  if (isUserPlanActive(myPlan)) {
+    return user._id;
   }
 
   // 2. Check if this user is a family member of someone who has an active plan
   const familyRef = await FamilyMember.findOne({ phone: user.phone });
   if (familyRef) {
     const primaryPlan = await UserPlan.findOne({ userId: familyRef.userId });
-    if (primaryPlan?.activePlanId) {
-      // Ensure the plan is not expired
-      if (!primaryPlan.expiresAt || new Date() < primaryPlan.expiresAt) {
-        return familyRef.userId;
-      }
+    if (isUserPlanActive(primaryPlan)) {
+      return familyRef.userId;
     }
   }
 
@@ -155,7 +170,8 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
     name: fm.name,
     relation: fm.relation,
     phone: fm.phone,
-    email: fm.email
+    email: fm.email,
+    isEmergencyContact: fm.isEmergencyContact === true
   }));
 
   // Add the Plan Holder to the family members list as 'Primary'
@@ -165,7 +181,9 @@ export const aggregateUserData = async (userId: string | mongoose.Types.ObjectId
     name: planHolderUser.name + ' (Primary)',
     relation: 'Primary Account',
     phone: planHolderUser.phone,
-    email: planHolderUser.email
+    email: planHolderUser.email,
+    // The plan holder is the person raising the SOS, so they are never a call target.
+    isEmergencyContact: false
   });
 
   // Fetch active plan details if activePlanId exists

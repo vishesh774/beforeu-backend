@@ -73,3 +73,40 @@ export const protect = async (req: AuthRequest, _res: Response, next: NextFuncti
   }
 };
 
+/**
+ * Populates `req.user` when a valid token is present, but never rejects the request.
+ *
+ * For endpoints that are public but personalise their response — the plans storefront, for example,
+ * which must stay reachable to logged-out visitors while still revealing restricted plans to the
+ * customers they belong to. An invalid or expired token is treated the same as no token at all.
+ */
+export const optionalAuth = async (req: AuthRequest, _res: Response, next: NextFunction): Promise<void> => {
+  try {
+    if (!req.headers.authorization?.startsWith('Bearer')) {
+      return next();
+    }
+
+    const token = req.headers.authorization.split(' ')[1];
+    if (!token) {
+      return next();
+    }
+
+    const decoded = verifyToken(token);
+    const user = await User.findById(decoded.userId);
+
+    if (user) {
+      req.user = {
+        id: user._id.toString(),
+        email: user?.email || '',
+        phone: user.phone,
+        name: user.name || '',
+        role: user.role || 'customer'
+      };
+    }
+  } catch {
+    // Anonymous is a valid outcome here — fall through without a user.
+  }
+
+  next();
+};
+

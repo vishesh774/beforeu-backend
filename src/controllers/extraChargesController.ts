@@ -9,6 +9,12 @@ import ServicePartner from '../models/ServicePartner';
 import Booking from '../models/Booking';
 import { BookingStatus, COMPLETED_BOOKING_STATUSES } from '../constants/bookingStatus';
 import { getRazorpayInstance } from './paymentController';
+import {
+    calculateExtraChargeGst,
+    getChargePayableAmount,
+    getExtraChargeGstRate,
+    sumChargePayableAmounts
+} from '../utils/extraChargeUtils';
 
 // ============================================================
 // SERVICE PARTNER EXTRA CHARGES ENDPOINTS
@@ -19,12 +25,15 @@ import { getRazorpayInstance } from './paymentController';
 // @access  Private (ServicePartner)
 export const addExtraCharge = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
     const { id } = req.params;
-    const { amount, description, notes } = req.body;
+    const { amount, description, notes, gstIncluded } = req.body;
     const user = req.user;
 
     // Validation
     if (!amount || amount <= 0) {
         return next(new AppError('Amount must be a positive number', 400));
+    }
+    if (gstIncluded !== undefined && typeof gstIncluded !== 'boolean') {
+        return next(new AppError('gstIncluded must be a boolean', 400));
     }
     if (!description || description.trim().length < 3) {
         return next(new AppError('Description is required (minimum 3 characters)', 400));
@@ -55,10 +64,24 @@ export const addExtraCharge = asyncHandler(async (req: AuthRequest, res: Respons
         return next(new AppError('Extra charges can only be added when job is in progress or reached', 400));
     }
 
+    // Extra charges are GST-exclusive by default — that is how they have always been collected.
+    // Opting in snapshots the rate so a later CheckoutField change can't restate a settled charge.
+    const baseAmount = Math.round(amount * 100) / 100;
+    const applyGst = gstIncluded === true;
+    const gst = calculateExtraChargeGst(
+        baseAmount,
+        applyGst,
+        applyGst ? await getExtraChargeGstRate() : 0
+    );
+
     // Create new extra charge
     const extraCharge: IExtraCharge = {
         id: uuidv4(),
-        amount: Math.round(amount * 100) / 100, // Round to 2 decimal places
+        amount: baseAmount,
+        gstIncluded: applyGst,
+        gstRate: gst.gstRate,
+        gstAmount: gst.gstAmount,
+        totalAmount: gst.totalAmount,
         description: description.trim(),
         status: 'pending',
         addedBy: partner._id,
@@ -81,7 +104,7 @@ export const addExtraCharge = asyncHandler(async (req: AuthRequest, res: Respons
             action: 'EXTRA_CHARGE_ADDED',
             performedBy: partner.name,
             timestamp: new Date(),
-            details: `Added extra charge of ₹${amount}: ${description}`
+            details: `Added extra charge of ₹${gst.totalAmount}${applyGst ? ` (₹${baseAmount} + ${gst.gstRate}% GST)` : ''}: ${description}`
         });
         await booking.save();
     }
@@ -121,8 +144,8 @@ export const getExtraCharges = asyncHandler(async (req: AuthRequest, res: Respon
     const charges = job.extraCharges || [];
     const pendingCharges = charges.filter(c => c.status === 'pending');
     const paidCharges = charges.filter(c => c.status === 'paid');
-    const totalPending = pendingCharges.reduce((sum, c) => sum + c.amount, 0);
-    const totalPaid = paidCharges.reduce((sum, c) => sum + c.amount, 0);
+    const totalPending = sumChargePayableAmounts(pendingCharges);
+    const totalPaid = sumChargePayableAmounts(paidCharges);
 
     res.status(200).json({
         success: true,
@@ -287,7 +310,10 @@ export const createExtraChargeOrder = asyncHandler(async (req: AuthRequest, res:
                         data: {
                             qrId: qrData.id,
                             qrCodeImageUrl: qrData.image_url,
-                            amount: charge.amount,
+                            amount: getChargePayableAmount(charge),
+                            baseAmount: charge.amount,
+                            gstAmount: charge.gstAmount || 0,
+                            gstRate: charge.gstRate || 0,
                             description: charge.description,
                             bookingId: booking?.bookingId || 'Unknown',
                             expiresAt: qrData.close_by ? new Date(qrData.close_by * 1000).toISOString() : null
@@ -316,7 +342,7 @@ export const createExtraChargeOrder = asyncHandler(async (req: AuthRequest, res:
                 name: `Extra Charge - ${booking?.bookingId || 'Job'}`,
                 usage: 'single_use',
                 fixed_amount: true,
-                payment_amount: Math.round(charge.amount * 100), // Amount in paise
+                payment_amount: Math.round(getChargePayableAmount(charge) * 100), // Amount in paise (incl. GST when opted in)
                 description: charge.description.substring(0, 40), // Max 40 chars
                 // NOTE: customer_id is intentionally omitted — passing null causes Razorpay
                 // to throw "customer_id field is required" validation error.
@@ -349,7 +375,10 @@ export const createExtraChargeOrder = asyncHandler(async (req: AuthRequest, res:
             data: {
                 qrId: qrData.id,
                 qrCodeImageUrl: qrData.image_url,
-                amount: charge.amount,
+                amount: getChargePayableAmount(charge),
+                baseAmount: charge.amount,
+                gstAmount: charge.gstAmount || 0,
+                gstRate: charge.gstRate || 0,
                 description: charge.description,
                 bookingId: booking?.bookingId || 'Unknown',
                 expiresAt: new Date(closeBy * 1000).toISOString()
@@ -537,7 +566,7 @@ export const canCompleteJob = asyncHandler(async (req: AuthRequest, res: Respons
 
     const pendingCharges = (job.extraCharges || []).filter(c => c.status === 'pending');
     const canComplete = pendingCharges.length === 0;
-    const pendingAmount = pendingCharges.reduce((sum, c) => sum + c.amount, 0);
+    const pendingAmount = sumChargePayableAmounts(pendingCharges);
 
     res.status(200).json({
         success: true,
@@ -724,7 +753,10 @@ export const getCustomerPendingPayments = asyncHandler(async (req: AuthRequest, 
                 bookingMongoId: booking?._id,
                 serviceName: item.serviceName,
                 variantName: item.variantName,
-                amount: charge.amount,
+                amount: getChargePayableAmount(charge),
+                baseAmount: charge.amount,
+                gstAmount: charge.gstAmount || 0,
+                gstRate: charge.gstRate || 0,
                 description: charge.description,
                 addedByName: charge.addedByName,
                 addedAt: charge.addedAt
@@ -736,7 +768,7 @@ export const getCustomerPendingPayments = asyncHandler(async (req: AuthRequest, 
         success: true,
         data: {
             pendingPayments,
-            totalPending: pendingPayments.reduce((sum, p) => sum + p.amount, 0),
+            totalPending: sumChargePayableAmounts(pendingPayments),
             count: pendingPayments.length
         }
     });
@@ -791,7 +823,7 @@ export const createCustomerPaymentOrder = asyncHandler(async (req: AuthRequest, 
         const razorpay = getRazorpayInstance();
 
         const order = await razorpay.orders.create({
-            amount: Math.round(charge.amount * 100), // Convert to paise
+            amount: Math.round(getChargePayableAmount(charge) * 100), // Convert to paise (incl. GST when opted in)
             currency: 'INR',
             receipt: `ECU-${chargeId.substring(0, 8)}`,
             notes: {
@@ -811,7 +843,7 @@ export const createCustomerPaymentOrder = asyncHandler(async (req: AuthRequest, 
             data: {
                 orderId: order.id,
                 amount: order.amount,
-                amountDisplay: charge.amount,
+                amountDisplay: getChargePayableAmount(charge),
                 currency: order.currency,
                 description: charge.description,
                 keyId: process.env.RAZORPAY_KEY_ID,

@@ -25,13 +25,28 @@ import { autoAssignServicePartner, isPartnerAvailableAtTime, syncBookingStatus }
 import { BookingStatus, COMPLETED_BOOKING_STATUSES, ONGOING_BOOKING_STATUSES } from '../constants/bookingStatus';
 import User from '../models/User';
 import { getSOSService } from '../utils/systemServices';
-import { getPlanHolderId } from '../utils/userHelpers';
+import { getPlanHolderId, isUserPlanActive } from '../utils/userHelpers';
 import { sendBookingAssignmentMessage } from '../services/whatsappService';
 import FamilyMember from '../models/FamilyMember';
 import { formatTimeToIST } from '../utils/dateUtils';
 import CustomerAppSettings from '../models/CustomerAppSettings';
 import { sendSosNotification, sendJobNotification } from '../services/pushNotificationService';
 import { triggerSOSCallsToPartners } from '../services/sosCallService';
+import { calculateCouponDiscount, couponAppliesToServices } from '../utils/couponUtils';
+import { buildBookingTimeline } from '../utils/bookingTimeline';
+
+/**
+ * The single definition of "a customer is allowed to see this sub-service".
+ *
+ * `isActive` is the hard on/off. `availableForPurchase` is what ops toggles from the dashboard to
+ * pull a sub-service off the storefront, and it has to be honoured server-side: previously only the
+ * mobile app filtered on it, so the variant still came back over the API and the parent service
+ * still rendered a tile in the app. Keep every customer-facing listing using this one filter.
+ */
+const CUSTOMER_VISIBLE_VARIANT_FILTER = {
+  isActive: true,
+  availableForPurchase: { $ne: false }
+} as const;
 
 
 // @desc    Get all active services (without location requirement)
@@ -43,11 +58,13 @@ export const getAllServices = asyncHandler(async (_req: Request, res: Response, 
     isActive: true
   }).sort({ name: 1 });
 
-  // Get all variants for these services
+  // Get all variants for these services.
+  // `availableForPurchase: false` is how ops takes a sub-service off the storefront, so it must be
+  // filtered here and not only in the client — otherwise the parent service still renders a tile.
   const serviceIds = services.map(s => s._id);
   const variants = await ServiceVariant.find({
     serviceId: { $in: serviceIds },
-    isActive: true
+    ...CUSTOMER_VISIBLE_VARIANT_FILTER
   }).sort({ name: 1 });
 
   // Group variants by service
@@ -73,7 +90,7 @@ export const getAllServices = asyncHandler(async (_req: Request, res: Response, 
       subServicesNames: subServicesNames, // SubServices Names (legacy)
       tags: service.tags || [] // Service Tags
     };
-  }).filter(service => service.subServicesNames.length > 0); // Only return services with active variants
+  }).filter(service => service.subServicesNames.length > 0); // Only return services with visible variants
 
   res.status(200).json({
     success: true,
@@ -122,11 +139,11 @@ export const getServicesByLocation = asyncHandler(async (req: Request, res: Resp
     ]
   }).sort({ name: 1 });
 
-  // Get all variants for these services
+  // Get all variants for these services (same visibility rule as GET /api/services/all)
   const serviceIds = services.map(s => s._id);
   const variants = await ServiceVariant.find({
     serviceId: { $in: serviceIds },
-    isActive: true
+    ...CUSTOMER_VISIBLE_VARIANT_FILTER
   }).sort({ name: 1 });
 
   // Group variants by service
@@ -179,10 +196,10 @@ export const getSubServicesByServiceId = asyncHandler(async (req: Request, res: 
     return next(new AppError('Service not found or inactive', 404));
   }
 
-  // Get all active variants (sub-services) for this service
+  // Get all customer-visible variants (sub-services) for this service
   const variants = await ServiceVariant.find({
     serviceId: service._id,
-    isActive: true
+    ...CUSTOMER_VISIBLE_VARIANT_FILTER
   }).sort({ name: 1 });
 
   // Map variants to include all details
@@ -269,9 +286,10 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
   const userCredits = await UserCredits.findOne({ userId: userIdObj });
   let availableCredits = userCredits?.credits || 0;
 
-  // Check if user has an active plan
+  // Check if user has an active plan. Must go through isUserPlanActive() — testing activePlanId
+  // alone let customers keep redeeming plan credits after their plan had expired.
   const userPlan = await UserPlan.findOne({ userId: userIdObj, activePlanId: { $ne: null } });
-  const hasActivePlan = !!userPlan;
+  const hasActivePlan = isUserPlanActive(userPlan);
 
   let creditsUsed = 0;
 
@@ -393,20 +411,16 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
       if (bookingType === 'PLAN_PURCHASE') {
         return next(new AppError('Coupon is only for services', 400));
       }
-      if (appliedCoupon.serviceId) {
-        // Check if any item matches serviceId
-        const hasService = orderItems.some(item => item.serviceId.toString() === appliedCoupon.serviceId);
-        if (!hasService) {
-          return next(new AppError('Coupon not applicable for these services', 400));
-        }
+      // A coupon can list several services (one code covering electrician + plumber + carpenter);
+      // an empty list means it applies to everything.
+      const cartServiceIds = orderItems.map(item => item.serviceId.toString());
+      if (!couponAppliesToServices(appliedCoupon, cartServiceIds)) {
+        return next(new AppError('Coupon not applicable for these services', 400));
       }
     }
 
-    // Calculate Discount
-    // Logic matches Frontend: (itemTotal * value) / 100
-    if (appliedCoupon.discountType === 'percentage') {
-      couponDiscount = (itemTotal * appliedCoupon.discountValue) / 100;
-    }
+    // Calculate Discount — percentage or flat rupee amount, capped at the item total.
+    couponDiscount = calculateCouponDiscount(appliedCoupon, itemTotal);
 
     // Update Total
     calculationResult.total = Math.max(0, calculationResult.total - couponDiscount);
@@ -434,7 +448,7 @@ export const createBooking = asyncHandler(async (req: AuthRequest, res: Response
     paymentBreakdown.push({
       fieldName: 'coupon_discount',
       fieldDisplayName: `Coupon (${appliedCoupon.code})`,
-      chargeType: 'percentage', // It is percentage based
+      chargeType: appliedCoupon.discountType === 'fixed' ? 'fixed' : 'percentage',
       value: appliedCoupon.discountValue,
       amount: couponDiscount
     });
@@ -1423,10 +1437,24 @@ export const getBookingById = asyncHandler(async (req: Request, res: Response, n
     rescheduleCount: booking.rescheduleCount
   };
 
+  // Merged, chronological service-call timeline for the admin booking page. `actionLog` alone is
+  // not the full history — job start/completion, holds and extra charges live on the order items.
+  // `assignedPartnerId` is populated above, so read the name off the populated doc.
+  const partnerNames = new Map<string, string>();
+  displayItems.forEach(item => {
+    const partner = item.assignedPartnerId as any;
+    if (partner?._id) {
+      partnerNames.set(partner._id.toString(), partner.name);
+    }
+  });
+
+  const timeline = buildBookingTimeline(booking, displayItems, partnerNames);
+
   res.status(200).json({
     success: true,
     data: {
-      booking: bookingData
+      booking: bookingData,
+      timeline
     }
   });
 });
@@ -2496,7 +2524,7 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
     addressId,
     customAddress,
     couponCode,
-    paymentMethod, // 'CREDITS' or 'MANUAL'
+    paymentMethod, // 'CREDITS' | 'MANUAL' (cash / bank / UPI collected offline) | 'ONLINE' (customer pays in-app)
     bankDetails,   // { bankName, transactionNumber, paymentType } - for MANUAL
     scheduledDate,
     scheduledTime,
@@ -2508,6 +2536,17 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
 
   if (!userId || !serviceId || !variantId || !paymentMethod) {
     return next(new AppError('Customer, Service, Variant and Payment Method are required', 400));
+  }
+
+  if (!['CREDITS', 'MANUAL', 'ONLINE'].includes(paymentMethod)) {
+    return next(new AppError('Payment method must be CREDITS, MANUAL or ONLINE', 400));
+  }
+
+  // Cash is collected in person, so it has no transaction reference. Every other offline method
+  // (bank transfer, UPI) must carry one or the payment cannot be reconciled later.
+  const manualPaymentType = bankDetails?.paymentType || 'Bank Transfer';
+  if (paymentMethod === 'MANUAL' && manualPaymentType !== 'Cash' && !bankDetails?.transactionNumber) {
+    return next(new AppError('A transaction number is required for non-cash offline payments', 400));
   }
 
   // 1. Fetch data
@@ -2584,7 +2623,7 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
       const hasUsageLeft = coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses;
 
       if (isAllowed && isNotExpired && hasUsageLeft) {
-        discountAmount = (variant.finalPrice * coupon.discountValue) / 100;
+        discountAmount = calculateCouponDiscount(coupon, variant.finalPrice);
         finalAppliedCoupon = coupon.code;
       } else {
         return next(new AppError('Coupon is not applicable for this customer or has expired.', 400));
@@ -2640,24 +2679,26 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
         value: field?.value || 0
       };
     }) : undefined,
-    status: BookingStatus.CONFIRMED,
-    paymentStatus: 'paid', // Admin created bookings are assumed reconciled
+    // CREDITS and MANUAL are money already collected, so they are reconciled on creation.
+    // ONLINE means the customer still has to pay in the app — it must not be marked paid here.
+    status: paymentMethod === 'ONLINE' ? BookingStatus.PENDING : BookingStatus.CONFIRMED,
+    paymentStatus: paymentMethod === 'ONLINE' ? 'pending' : 'paid',
     paymentMethod,
     notes: `ADMIN_CREATED: ${notes || 'No notes provided'}`,
     actionLog: [{
       action: 'ADMIN_CREATED',
       performedBy: adminName,
       timestamp: now,
-      details: `Created on behalf of ${user.name}. Payment: ${paymentMethod}`
+      details: `Created on behalf of ${user.name}. Payment: ${paymentMethod === 'MANUAL' ? `${paymentMethod} (${manualPaymentType})` : paymentMethod}`
     }]
   };
 
-  if (paymentMethod === 'MANUAL' && bankDetails) {
+  if (paymentMethod === 'MANUAL') {
     bookingData.manualPaymentDetails = {
-      bankName: bankDetails.bankName,
-      transactionNumber: bankDetails.transactionNumber,
+      bankName: bankDetails?.bankName,
+      transactionNumber: bankDetails?.transactionNumber,
       amount: calculationResult.total,
-      paymentType: bankDetails.paymentType || 'Bank Transfer',
+      paymentType: manualPaymentType,
       recordedBy: adminName,
       recordedAt: now
     };
@@ -2692,7 +2733,9 @@ export const createBookingOnBehalf = asyncHandler(async (req: AuthRequest, res: 
   }
 
   // 10. Handle Assignment if partner ID provided
-  if (assignedPartnerId) {
+  // Don't dispatch a partner for a booking the customer hasn't paid for yet — an ONLINE booking
+  // becomes assignable once payment lands through the normal verify-payment flow.
+  if (assignedPartnerId && paymentMethod !== 'ONLINE') {
     const partner = await ServicePartner.findById(assignedPartnerId);
     if (partner && partner.isActive) {
       booking.status = BookingStatus.ASSIGNED;

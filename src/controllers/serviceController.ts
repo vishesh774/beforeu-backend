@@ -115,6 +115,7 @@ export const getAllServices = asyncHandler(async (req: Request, res: Response, _
         description: service.description,
         highlight: service.highlight,
         isActive: service.isActive,
+        fulfilmentType: service.fulfilmentType || 'in_house',
         variantCount: variantCountMap[service._id.toString()] || 0,
         variants: includeVariants ? variantMap[service._id.toString()] || [] : undefined,
         serviceRegions: service.serviceRegions || [],
@@ -156,6 +157,7 @@ export const getService = asyncHandler(async (req: Request, res: Response, next:
         description: service.description,
         highlight: service.highlight,
         isActive: service.isActive,
+        fulfilmentType: service.fulfilmentType || 'in_house',
         variants: variants.map(v => ({
           id: v.id,
           name: v.name,
@@ -188,7 +190,7 @@ export const getService = asyncHandler(async (req: Request, res: Response, next:
 // @route   POST /api/admin/services
 // @access  Private/Admin
 export const createService = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
-  const { id, name, icon, description, highlight, isActive, variants, serviceRegions, tags } = req.body;
+  const { id, name, icon, description, highlight, isActive, variants, serviceRegions, tags, fulfilmentType } = req.body;
 
   // Validate required fields
   if (!id || !name || !icon || variants === undefined) {
@@ -281,6 +283,7 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
     description: description !== undefined ? description : '',
     highlight: highlight !== undefined ? highlight : '',
     isActive: isActive !== undefined ? isActive : true,
+    fulfilmentType: fulfilmentType === 'third_party' ? 'third_party' : 'in_house',
     serviceRegions: serviceRegions || [],
     tags: tags || []
   });
@@ -332,6 +335,7 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
         description: service.description,
         highlight: service.highlight,
         isActive: service.isActive,
+        fulfilmentType: service.fulfilmentType || 'in_house',
         variants: createdVariants.map(v => ({
           id: v.id,
           name: v.name,
@@ -363,7 +367,7 @@ export const createService = asyncHandler(async (req: Request, res: Response, ne
 // @access  Private/Admin
 export const updateService = asyncHandler(async (req: Request, res: Response, next: NextFunction) => {
   const { id } = req.params;
-  const { name, icon, description, highlight, isActive, variants, serviceRegions, tags } = req.body;
+  const { name, icon, description, highlight, isActive, variants, serviceRegions, tags, fulfilmentType } = req.body;
 
   const service = await Service.findOne({ id });
   if (!service) {
@@ -374,6 +378,12 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
   if (name !== undefined) service.name = name;
   if (icon !== undefined) service.icon = icon;
   if (isActive !== undefined) service.isActive = isActive;
+  if (fulfilmentType !== undefined) {
+    if (!['in_house', 'third_party'].includes(fulfilmentType)) {
+      return next(new AppError('fulfilmentType must be in_house or third_party', 400));
+    }
+    service.fulfilmentType = fulfilmentType;
+  }
   if (description !== undefined) {
     if (typeof description !== 'string' || description.length > 200) {
       return next(new AppError('Service description must be a string up to 200 characters', 400));
@@ -483,18 +493,24 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
         isActive: variantData.isActive
       };
 
-      // Handle optional icon field - only include if it has a value
-      // Omit the field entirely if null, undefined, or empty string
-      // The schema setter will handle normalization
-      if (variantData.icon !== null && variantData.icon !== undefined && String(variantData.icon).trim() !== '') {
-        updateData.icon = String(variantData.icon).trim();
+      // Optional icon field. Distinguish three cases, because collapsing the last two made it
+      // impossible to ever remove a sub-service logo once one had been set:
+      //   - key absent           → leave whatever is stored alone
+      //   - key present + value  → set it
+      //   - key present + null/"" → explicitly clear it ($unset)
+      const iconWasSubmitted = Object.prototype.hasOwnProperty.call(variantData, 'icon');
+      const trimmedIcon = iconWasSubmitted && variantData.icon !== null && variantData.icon !== undefined
+        ? String(variantData.icon).trim()
+        : '';
+      const clearIcon = iconWasSubmitted && trimmedIcon === '';
+
+      if (trimmedIcon !== '') {
+        updateData.icon = trimmedIcon;
       }
-      // If icon is null/empty/undefined, we don't include it in updateData
-      // This means the field won't be updated (existing value remains) or will be omitted on create
 
       await ServiceVariant.findOneAndUpdate(
         { serviceId: service._id, id: variantData.id },
-        updateData,
+        clearIcon ? { $set: updateData, $unset: { icon: '' } } : updateData,
         { upsert: true, new: true }
       );
     }
@@ -514,6 +530,7 @@ export const updateService = asyncHandler(async (req: Request, res: Response, ne
         description: service.description,
         highlight: service.highlight,
         isActive: service.isActive,
+        fulfilmentType: service.fulfilmentType || 'in_house',
         variants: updatedVariants.map(v => ({
           id: v.id,
           name: v.name,
@@ -585,6 +602,7 @@ export const toggleServiceStatus = asyncHandler(async (req: Request, res: Respon
         name: service.name,
         icon: service.icon,
         isActive: service.isActive,
+        fulfilmentType: service.fulfilmentType || 'in_house',
         variants: variants.map(v => ({
           id: v.id,
           name: v.name,

@@ -12,7 +12,19 @@ export interface IHoldEntry {
 // Extra charges added by service partner during a job
 export interface IExtraCharge {
   id: string; // UUID for unique identification
+  /** The base amount the partner entered, always GST-exclusive. */
   amount: number;
+  /**
+   * Whether GST is added on top of `amount`. Extra charges have historically been collected
+   * GST-exclusive (no tax at all), which stays the default. Ops/partners can opt a charge in.
+   */
+  gstIncluded: boolean;
+  /** Percentage applied when gstIncluded is true. Snapshotted so a later rate change can't restate history. */
+  gstRate: number;
+  /** Rupee tax on `amount`. Zero when gstIncluded is false. */
+  gstAmount: number;
+  /** What the customer actually pays: amount + gstAmount. Every collection path uses this. */
+  totalAmount: number;
   description: string;
   status: 'pending' | 'paid' | 'cancelled' | 'waived';
   paymentMethod?: 'cash' | 'upi' | 'razorpay';
@@ -148,6 +160,12 @@ const OrderItemSchema = new Schema<IOrderItem>(
       type: [{
         id: { type: String, required: true },
         amount: { type: Number, required: true, min: 1 },
+        // Defaults keep every pre-existing charge behaving exactly as before: no GST, and a
+        // totalAmount that falls back to the base amount when the field is absent on old documents.
+        gstIncluded: { type: Boolean, default: false },
+        gstRate: { type: Number, default: 0 },
+        gstAmount: { type: Number, default: 0 },
+        totalAmount: { type: Number },
         description: { type: String, required: true, minlength: 3 },
         status: {
           type: String,

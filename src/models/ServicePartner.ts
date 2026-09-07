@@ -20,6 +20,16 @@ export interface IServicePartner extends Document {
   rating: number;
   ratingCount: number;
   lastAssignedAt?: Date;
+  /**
+   * Most recent position reported by the partner app while on an active job.
+   * Live only — this is a single current position, not a history trail.
+   */
+  lastLocation?: {
+    latitude: number;
+    longitude: number;
+    accuracy?: number;
+    updatedAt: Date;
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -117,6 +127,12 @@ const ServicePartnerSchema = new Schema<IServicePartner>(
     },
     lastAssignedAt: {
       type: Date
+    },
+    lastLocation: {
+      latitude: { type: Number },
+      longitude: { type: Number },
+      accuracy: { type: Number },
+      updatedAt: { type: Date }
     },
   },
   {

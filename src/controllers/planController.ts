@@ -12,12 +12,15 @@ import OrderItem from '../models/OrderItem';
 import mongoose from 'mongoose';
 import { getPlanPurchaseService } from '../utils/systemServices';
 import { getRazorpayInstance } from './paymentController';
-import { getFamilyGroupIds, getPlanHolderId } from '../utils/userHelpers';
+import { getFamilyGroupIds, getPlanHolderId, isUserPlanActive } from '../utils/userHelpers';
 import { sendPlanPurchaseMessage, sendInternalPlanPurchaseNotification } from '../services/whatsappService';
 import { scheduleWhatsAppMessage } from '../services/schedulerService';
 import FamilyMember from '../models/FamilyMember';
 import Address from '../models/Address';
 import { assignCRMTask } from '../services/crmTaskService';
+import { filterPlansForCustomer, isPlanOnChannel, isPlanVisibleToPhone } from '../utils/planVisibility';
+import ServiceRegion from '../models/ServiceRegion';
+import { isPointInPolygon } from '../utils/pointInPolygon';
 import { notifyAccountsTeamOnPlanPurchase } from '../services/emailService';
 import { generateInvoiceBuffer } from '../utils/pdfGenerator';
 import CompanySettings from '../models/CompanySettings';
@@ -41,8 +44,33 @@ export const getAllPlans = asyncHandler(async (req: Request, res: Response) => {
   const plans = await Plan.find(filter)
     .sort({ finalPrice: -1 });
 
+  // On the customer storefront, apply the full visibility rule: restricted allow-list, online
+  // sale channel, and the customer's service region. Admins keep seeing every plan to manage them.
+  let visiblePlans = plans;
+  if (isCustomerRoute) {
+    const requesterId = (req as AuthRequest).user?.id;
+    const requester = requesterId ? await User.findById(requesterId).select('phone') : null;
+
+    // Region comes either from explicit coordinates on the query or, failing that, is skipped.
+    const lat = parseFloat(req.query.lat as string);
+    const lng = parseFloat(req.query.lng as string);
+    let matchingRegionIds: string[] | null = null;
+
+    if (!isNaN(lat) && !isNaN(lng)) {
+      const activeRegions = await ServiceRegion.find({ isActive: true });
+      matchingRegionIds = activeRegions
+        .filter(region => isPointInPolygon({ lat, lng }, region.polygon))
+        .map(region => region._id.toString());
+    }
+
+    visiblePlans = filterPlansForCustomer(plans, {
+      phone: requester?.phone,
+      matchingRegionIds
+    });
+  }
+
   // Transform _id to id for frontend
-  const transformedPlans = plans.map(plan => ({
+  const transformedPlans = visiblePlans.map(plan => ({
     ...plan.toObject(),
     id: plan._id.toString()
   }));
@@ -723,7 +751,7 @@ export const getPlan = asyncHandler(async (req: Request, res: Response, next: an
 // @route   POST /api/admin/plans
 // @access  Private/Admin
 export const createPlan = asyncHandler(async (req: Request, res: Response, next: any) => {
-  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, validity, extraDiscount } = req.body;
+  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, validity, extraDiscount, visibility, allowedPhoneNumbers, serviceRegions, saleChannel } = req.body;
 
   if (!planName || !planName.trim()) {
     return next(new AppError('Plan name is required', 400));
@@ -783,7 +811,15 @@ export const createPlan = asyncHandler(async (req: Request, res: Response, next:
     finalPrice,
     totalMembers,
     validity: validity || 365,
-    extraDiscount: extraDiscount !== undefined && extraDiscount !== null ? extraDiscount : undefined
+    extraDiscount: extraDiscount !== undefined && extraDiscount !== null ? extraDiscount : undefined,
+    visibility: visibility === 'restricted' ? 'restricted' : 'public',
+    allowedPhoneNumbers: Array.isArray(allowedPhoneNumbers)
+      ? allowedPhoneNumbers.filter((p: unknown) => typeof p === 'string' && p.trim().length > 0)
+      : [],
+    serviceRegions: Array.isArray(serviceRegions)
+      ? serviceRegions.filter((r: unknown) => typeof r === 'string' && r.trim().length > 0)
+      : [],
+    saleChannel: ['online', 'offline', 'both'].includes(saleChannel) ? saleChannel : 'both'
   });
 
   res.status(201).json({
@@ -802,7 +838,7 @@ export const createPlan = asyncHandler(async (req: Request, res: Response, next:
 // @access  Private/Admin
 export const updatePlan = asyncHandler(async (req: Request, res: Response, next: any) => {
   const { id } = req.params;
-  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, validity, extraDiscount } = req.body;
+  const { planName, planTitle, planSubTitle, planStatus, allowSOS, totalCredits, services, originalPrice, finalPrice, totalMembers, validity, extraDiscount, visibility, allowedPhoneNumbers, serviceRegions, saleChannel } = req.body;
 
   const plan = await Plan.findById(id);
 
@@ -876,6 +912,35 @@ export const updatePlan = asyncHandler(async (req: Request, res: Response, next:
       return next(new AppError('Validity must be a positive number', 400));
     }
     plan.validity = validity;
+  }
+
+  if (visibility !== undefined) {
+    plan.visibility = visibility === 'restricted' ? 'restricted' : 'public';
+  }
+
+  if (serviceRegions !== undefined) {
+    if (!Array.isArray(serviceRegions)) {
+      return next(new AppError('serviceRegions must be an array', 400));
+    }
+    plan.serviceRegions = serviceRegions.filter(
+      (r: unknown) => typeof r === 'string' && r.trim().length > 0
+    );
+  }
+
+  if (saleChannel !== undefined) {
+    if (!['online', 'offline', 'both'].includes(saleChannel)) {
+      return next(new AppError('saleChannel must be online, offline or both', 400));
+    }
+    plan.saleChannel = saleChannel;
+  }
+
+  if (allowedPhoneNumbers !== undefined) {
+    if (!Array.isArray(allowedPhoneNumbers)) {
+      return next(new AppError('allowedPhoneNumbers must be an array', 400));
+    }
+    plan.allowedPhoneNumbers = allowedPhoneNumbers.filter(
+      (p: unknown) => typeof p === 'string' && p.trim().length > 0
+    );
   }
 
   if (extraDiscount !== undefined) {
@@ -1005,6 +1070,18 @@ export const purchasePlan = asyncHandler(async (req: AuthRequest, res: Response,
     return next(new AppError('User not found', 404));
   }
 
+  // Restricted plans must be enforced here, not only hidden from the listing — the plan id is
+  // guessable and this endpoint is what actually grants credits.
+  if (!isPlanVisibleToPhone(plan, user.phone)) {
+    return next(new AppError('This plan is not available for your account', 403));
+  }
+
+  // purchasePlan is the customer-facing route; offline plans are field-sales only and are sold
+  // through the admin dashboard instead.
+  if (!isPlanOnChannel(plan, 'online')) {
+    return next(new AppError('This plan is not available for online purchase', 403));
+  }
+
   // --- NEW: Create Booking and OrderItem for Plan Purchase ---
   try {
     const { service, variant } = await getPlanPurchaseService();
@@ -1102,12 +1179,16 @@ export const getMyPlanDetails = asyncHandler(async (req: AuthRequest, res: Respo
   // Get user's active plan (from plan holder)
   const userPlan = await UserPlan.findOne({ userId: planHolderId });
 
-  if (!userPlan || !userPlan.activePlanId) {
+  // An expired plan must report hasPlan: false — the clients gate the whole plan UI (and the
+  // "book with credits" path) on this flag, so reporting true kept expired customers booking.
+  if (!userPlan || !isUserPlanActive(userPlan)) {
+    const hadPlan = !!userPlan?.activePlanId;
     return res.status(200).json({
       success: true,
       data: {
         hasPlan: false,
-        message: 'No active plan found'
+        expiredAt: hadPlan ? userPlan?.expiresAt : undefined,
+        message: hadPlan ? 'Your plan has expired' : 'No active plan found'
       }
     });
   }

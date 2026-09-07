@@ -70,7 +70,9 @@ jest.mock('../services/bookingService', () => ({
     syncBookingStatus: jest.fn()
 }));
 jest.mock('../utils/userHelpers', () => ({
-    getPlanHolderId: jest.fn()
+    getPlanHolderId: jest.fn(),
+    // Pure predicate with no DB access — exercise the real plan-expiry rule rather than a stub.
+    isUserPlanActive: (jest.requireActual('../utils/userHelpers') as typeof import('../utils/userHelpers')).isUserPlanActive
 }));
 jest.mock('../services/whatsappService', () => ({
     sendBookingAssignmentMessage: jest.fn()

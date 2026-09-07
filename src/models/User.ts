@@ -13,6 +13,21 @@ export interface IUser extends Document {
   crmId?: string; // ID from the CRM system
   isActive: boolean;
   isDeleted: boolean;
+  /**
+   * Expo push token for the customer app.
+   *
+   * NOT an FCM token — the customer app registers through expo-notifications, so this must be
+   * delivered via the Expo Push API. The partner app's `ServicePartner.pushToken` is a raw FCM
+   * token and goes through firebase-admin. The two are not interchangeable.
+   */
+  pushToken?: string;
+  pushTokenUpdatedAt?: Date;
+  /** When the customer asked for deletion. Set on request, cleared if they cancel. */
+  deletionRequestedAt?: Date;
+  /** End of the retention window — the account is purged on the first scheduler run after this. */
+  deletionScheduledFor?: Date;
+  /** Optional free-text reason captured at request time, for win-back analysis. */
+  deletionReason?: string;
   referralCode?: string;
   gender?: string;
   dob?: Date;
@@ -83,6 +98,27 @@ const UserSchema = new Schema<IUser>(
     isDeleted: {
       type: Boolean,
       default: false
+    },
+    pushToken: {
+      type: String,
+      trim: true
+    },
+    pushTokenUpdatedAt: {
+      type: Date
+    },
+    // Deletion is a two-step flow: request now, purge after the retention window. See
+    // controllers/authController.ts (requestAccountDeletion) and services/schedulerService.ts.
+    deletionRequestedAt: {
+      type: Date
+    },
+    deletionScheduledFor: {
+      type: Date,
+      index: true
+    },
+    deletionReason: {
+      type: String,
+      trim: true,
+      maxlength: [500, 'Deletion reason cannot exceed 500 characters']
     },
     referralCode: {
       type: String,

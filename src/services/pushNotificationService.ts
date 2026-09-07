@@ -1,11 +1,20 @@
 /**
- * Push Notification Service
- * Handles sending push notifications via Firebase Cloud Messaging (FCM)
- * 
- * IMPORTANT: To ensure notifications work when app is killed:
- * - SOS notifications use BOTH notification + data payloads
- * - When app is killed, Android displays the notification payload
- * - When app is in foreground/background, the data payload is used
+ * Push Notification Service — FCM delivery to the **partner** app.
+ *
+ * (The customer app uses Expo push tokens and goes through `expoPushService.ts`; the two are not
+ * interchangeable.)
+ *
+ * Every message here is **data-only** — deliberately no `notification` block. A message containing
+ * a `notification` block is handed to the Android system tray and the app's own code never runs
+ * when it is backgrounded, which makes a custom full-screen alarm impossible. Data-only hands the
+ * message to the app's background handler instead, so it can raise the alarm UI itself.
+ *
+ * The corollary: a data-only message MUST be sent at `priority: 'high'`, or Doze defers it and the
+ * partner sees it whenever the device next wakes — useless for dispatch. Both senders below use
+ * high priority for that reason.
+ *
+ * This only works if the partner app registers a background message handler at module scope in its
+ * `index.ts`. Without that, everything here is delivered and silently discarded.
  */
 
 import * as admin from 'firebase-admin';
@@ -202,13 +211,18 @@ export async function sendJobNotification(
                 title,
                 body,
                 sound: 'default',
+                // Read by the client to pick alarm vs standard treatment — distinct from the FCM
+                // transport priority above, which is high for both so delivery is prompt.
                 priority: 'normal',
                 timestamp: Date.now().toString()
             },
 
             // Android-specific configuration
             android: {
-                priority: 'normal',
+                // High, not normal: this is a data-only message, and Doze defers normal-priority
+                // data messages indefinitely. A job assignment the partner sees an hour late is a
+                // missed job, so it qualifies as time-sensitive and user-visible.
+                priority: 'high',
                 ttl: 3600000, // 1 hour TTL for regular jobs
                 restrictedPackageName: 'com.beforeu.serviceprovider',
             }

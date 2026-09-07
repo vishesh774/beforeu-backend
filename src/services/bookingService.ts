@@ -8,6 +8,7 @@ import { BookingStatus } from '../constants/bookingStatus';
 import { SOSAlert, SOSStatus } from '../models/SOSAlert';
 import { socketService } from './socketService';
 import { sendSosNotification, sendJobNotification } from './pushNotificationService';
+import { getISTWeekday } from '../utils/dateUtils';
 
 /**
  * Helper function to check if a service partner is available at a given time
@@ -27,12 +28,10 @@ export function isPartnerAvailableAtTime(
         // Ensure scheduledDate is a Date object
         const dateObj = new Date(scheduledDate);
 
-        // Get day of week (0 = Sunday, 1 = Monday, ..., 6 = Saturday)
-        // Use getUTCDay() instead of getDay() to avoid server timezone shifts 
-        // if date is stored as UTC midnight (standard for date-only fields)
-        const dayOfWeek = dateObj.getUTCDay();
-        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-        const dayName = dayNames[dayOfWeek];
+        // Weekday must be derived in IST. getUTCDay() is right for date-only values (UTC midnight)
+        // but wrong for ASAP bookings, which store a full timestamp — anything booked after
+        // 18:30 IST resolved to the previous weekday and matched no availability at all.
+        const dayName = getISTWeekday(dateObj);
 
         console.log(`[Availability] Checking ${partner.name} for ${dayName} (Date: ${dateObj.toISOString()}, Time: ${scheduledTime})`);
 
@@ -260,6 +259,14 @@ export async function autoAssignServicePartner(booking: any, orderItems: any[]):
             const service = await Service.findById(item.serviceId);
             if (!service) {
                 console.log(`[autoAssignServicePartner] Service not found for item ${item._id}, skipping`);
+                continue;
+            }
+
+            // Third-party services are delivered by an external provider, so there is no partner to
+            // dispatch and partner availability must not gate the booking. Ops coordinates these
+            // out of band; the item simply stays unassigned.
+            if (service.fulfilmentType === 'third_party') {
+                console.log(`[autoAssignServicePartner] ${service.name} is third-party — skipping partner assignment for item ${item._id}`);
                 continue;
             }
 

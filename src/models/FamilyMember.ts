@@ -10,6 +10,13 @@ export interface IFamilyMember extends Document {
   gender?: string;
   dob?: Date;
   emergencyContact?: string;
+  /**
+   * Whether this member should be phoned when the plan's SOS is raised.
+   *
+   * Read through `getFamilyCallTargets()` — the rule is "flagged members if any are flagged,
+   * otherwise everyone", so an account that has never set this still reaches the whole family.
+   */
+  isEmergencyContact: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,6 +61,10 @@ const FamilyMemberSchema = new Schema<IFamilyMember>(
         },
         message: 'Please provide a valid email'
       }
+    },
+    isEmergencyContact: {
+      type: Boolean,
+      default: false
     },
     gender: {
       type: String,

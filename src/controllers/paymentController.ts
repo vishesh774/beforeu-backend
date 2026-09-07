@@ -21,7 +21,11 @@ import { autoAssignServicePartner } from '../services/bookingService';
 import { BookingStatus } from '../constants/bookingStatus';
 import { getPlanHolderId } from '../utils/userHelpers';
 import { assignCRMTask } from '../services/crmTaskService';
-import { notifyAccountsTeamOnPlanPurchase } from '../services/emailService';
+import { notifyAccountsTeamOnPlanPurchase, notifyTeamOnBookingInvoice } from '../services/emailService';
+import { prepareInvoiceData } from './invoiceController';
+import { isPlanOnChannel, isPlanVisibleToPhone } from '../utils/planVisibility';
+import { formatTimeToIST } from '../utils/dateUtils';
+import { calculateCouponDiscount } from '../utils/couponUtils';
 import { generateInvoiceBuffer } from '../utils/pdfGenerator';
 import CompanySettings from '../models/CompanySettings';
 import { processReferralReward } from './referralController';
@@ -116,6 +120,16 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
         return next(new AppError('Plan not found', 404));
       }
 
+      // Restricted plans are enforced at every entry point that can start a purchase, not just
+      // the plans listing — the plan id is guessable.
+      if (!isPlanVisibleToPhone(plan, req.user?.phone)) {
+        return next(new AppError('This plan is not available for your account', 403));
+      }
+
+      if (!isPlanOnChannel(plan, 'online')) {
+        return next(new AppError('This plan is not available for online purchase', 403));
+      }
+
       // Handle Coupon
       let discountAmount = 0;
       if (planData.couponCode) {
@@ -150,7 +164,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           }
 
           if (isAllowed && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
-            discountAmount = (plan.finalPrice * coupon.discountValue) / 100;
+            discountAmount = calculateCouponDiscount(coupon, plan.finalPrice);
           }
         }
       }
@@ -485,7 +499,7 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
           }
 
           if (isAllowed && isRelevant && (coupon.maxUses === -1 || coupon.usedCount < coupon.maxUses)) {
-            discountAmount = (totalAmount * coupon.discountValue) / 100;
+            discountAmount = calculateCouponDiscount(coupon, totalAmount);
             appliedCouponCode = coupon.code;
           }
         }
@@ -567,13 +581,17 @@ export const createOrder = asyncHandler(async (req: AuthRequest, res: Response, 
             d.setHours(d.getHours() + 1);
             return d;
           })(),
+        // ASAP falls back to the next whole hour. This MUST be formatted in IST: the process pins
+        // no TZ and Fly runs the container in UTC, so the previous bare toLocaleTimeString() wrote
+        // the UTC wall-clock into scheduledTime — which is why instant bookings showed a time
+        // 5h30m behind the one the customer actually got.
         scheduledTime: bookingData.bookingType === 'SCHEDULED'
           ? bookingData.scheduledTime
           : (() => {
             const d = new Date();
             d.setMinutes(0, 0, 0);
             d.setHours(d.getHours() + 1);
-            return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+            return formatTimeToIST(d);
           })(),
         totalAmount: calculationResult.total,
         itemTotal: totalAmount,
@@ -787,57 +805,63 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
                   priority: 'High',
                   targetDate: new Date().toISOString().split('T')[0]
                 });
-
-                // --- NEW: Email Notification to Accounts Team ---
-                try {
-                  const companySettings = (await CompanySettings.findOne()) || {
-                    invoicePrefix: "BU"
-                  };
-                  const settings = companySettings as any;
-                  const invoiceNumber = planTx.invoiceNumber || `${settings.invoicePrefix}-${planTx.transactionId}`;
-
-                  const invoiceDataForEmail = {
-                    invoiceNumber,
-                    date: planTx.createdAt,
-                    customerName: buyer.name,
-                    customerPhone: buyer.phone,
-                    customerEmail: buyer.email || 'N/A',
-                    customerAddress: "N/A",
-                    items: [{
-                      description: `Plan Purchase: ${plan.planName}`,
-                      quantity: 1,
-                      price: plan.finalPrice,
-                      total: plan.finalPrice
-                    }],
-                    subtotal: plan.finalPrice,
-                    discount: planTx.discountAmount || 0,
-                    creditsUsed: 0,
-                    taxBreakdown: planTx.paymentBreakdown || [],
-                    total: planTx.amount || 0,
-                    paymentStatus: 'completed',
-                    paymentId: planTx.paymentId,
-                    paymentMethod: 'Online' // In verifyPayment it's usually online
-                  };
-
-                  const pdfBuffer = await generateInvoiceBuffer(invoiceDataForEmail as any);
-
-                  await notifyAccountsTeamOnPlanPurchase({
-                    customerName: buyer.name,
-                    customerPhone: buyer.phone,
-                    customerEmail: buyer.email || 'N/A',
-                    planName: plan.planName,
-                    amount: planTx.amount,
-                    invoiceNumber,
-                    purchaseDate: planTx.createdAt,
-                    pdfBuffer
-                  });
-                } catch (emailError) {
-                  console.error('[PaymentController] Error in email notification:', emailError);
-                }
               }
             }
           } catch (err) {
             console.error('[PaymentController] CRM Task assignment failed:', err);
+          }
+        })();
+
+        // --- Invoice copy to the accounts/operations team (non-blocking) ---
+        // Deliberately a sibling of the CRM block, not nested inside it. This used to live inside
+        // `if (assigneeCrmId && buyer)`, so a missing GuestCare/CRM setup silently suppressed every
+        // sales-invoice email.
+        (async () => {
+          try {
+            const buyer = await User.findById(userIdObj);
+            if (!buyer) return;
+
+            const companySettings = (await CompanySettings.findOne()) || { invoicePrefix: 'BU' };
+            const settings = companySettings as any;
+            const invoiceNumber = planTx.invoiceNumber || `${settings.invoicePrefix}-${planTx.transactionId}`;
+
+            const invoiceDataForEmail = {
+              invoiceNumber,
+              date: planTx.createdAt,
+              customerName: buyer.name,
+              customerPhone: buyer.phone,
+              customerEmail: buyer.email || 'N/A',
+              customerAddress: 'N/A',
+              items: [{
+                description: `Plan Purchase: ${plan.planName}`,
+                quantity: 1,
+                price: plan.finalPrice,
+                total: plan.finalPrice
+              }],
+              subtotal: plan.finalPrice,
+              discount: planTx.discountAmount || 0,
+              creditsUsed: 0,
+              taxBreakdown: planTx.paymentBreakdown || [],
+              total: planTx.amount || 0,
+              paymentStatus: 'completed',
+              paymentId: planTx.paymentId,
+              paymentMethod: 'Online' // In verifyPayment it's usually online
+            };
+
+            const pdfBuffer = await generateInvoiceBuffer(invoiceDataForEmail as any);
+
+            await notifyAccountsTeamOnPlanPurchase({
+              customerName: buyer.name,
+              customerPhone: buyer.phone,
+              customerEmail: buyer.email || 'N/A',
+              planName: plan.planName,
+              amount: planTx.amount,
+              invoiceNumber,
+              purchaseDate: planTx.createdAt,
+              pdfBuffer
+            });
+          } catch (emailError) {
+            console.error('[PaymentController] Error in accounts invoice email:', emailError);
           }
         })();
       }
@@ -904,6 +928,33 @@ export const verifyPayment = asyncHandler(async (req: AuthRequest, res: Response
 
       // 2. Fetch Order Items for this booking
       const orderItems = await OrderItem.find({ bookingId: booking._id });
+
+      // 2b. Sales invoice copy to accounts + operations (non-blocking).
+      // Service bookings previously had no invoice email at all — only plan purchases did.
+      (async () => {
+        try {
+          const companySettings = (await CompanySettings.findOne()) || { invoicePrefix: 'BU' };
+          const settings = companySettings as any;
+          const customer = await User.findById(booking.userId);
+          const invoiceData = prepareInvoiceData(booking, orderItems, settings);
+          const pdfBuffer = await generateInvoiceBuffer(invoiceData as any);
+
+          await notifyTeamOnBookingInvoice({
+            bookingRef: booking.bookingId,
+            customerName: customer?.name || invoiceData.customerName || 'N/A',
+            customerPhone: customer?.phone || invoiceData.customerPhone || 'N/A',
+            customerEmail: customer?.email || 'N/A',
+            serviceSummary: orderItems.map(i => i.serviceName || i.variantName).filter(Boolean).join(', ') || 'Service booking',
+            amount: booking.totalAmount || 0,
+            paymentMethod: booking.paymentMethod || 'Online',
+            invoiceNumber: invoiceData.invoiceNumber,
+            bookingDate: booking.createdAt,
+            pdfBuffer
+          });
+        } catch (emailError) {
+          console.error('[PaymentController] Error sending booking invoice to team:', emailError);
+        }
+      })();
 
       // 3. Auto-Assign
       try {
@@ -1156,7 +1207,7 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
             appliesTo: 'plan'
           });
           if (coupon) {
-            discountAmount = (plan.finalPrice * coupon.discountValue) / 100;
+            discountAmount = calculateCouponDiscount(coupon, plan.finalPrice);
           }
         }
 
@@ -1323,7 +1374,7 @@ export const reconcileExternalPayment = asyncHandler(async (req: any, res: Respo
       let discountAmount = 0;
       if (couponCode) {
         const coupon = await Coupon.findOne({ code: couponCode.toUpperCase(), isActive: true, appliesTo: 'service' });
-        if (coupon) discountAmount = (totalAmount * coupon.discountValue) / 100;
+        if (coupon) discountAmount = calculateCouponDiscount(coupon, totalAmount);
       }
 
       const checkoutFields = await getActiveCheckoutFields();

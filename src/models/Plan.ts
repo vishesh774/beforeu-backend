@@ -20,6 +20,25 @@ export interface IPlan extends Document {
   totalMembers: number;
   validity: number;
   extraDiscount?: number; // Optional discount percentage (0-100)
+  /**
+   * `public` (default) = anyone can see and buy this plan.
+   * `restricted` = only the phone numbers in `allowedPhoneNumbers` can. Used for fully-discounted
+   * (₹0) plans that must not be visible to the general customer base.
+   */
+  visibility: 'public' | 'restricted';
+  /** E.164 numbers allowed to see/buy a restricted plan. Ignored when visibility is 'public'. */
+  allowedPhoneNumbers: string[];
+  /**
+   * ServiceRegion ids this plan is sold in. Empty = available everywhere.
+   * Matched against the customer's coordinates by point-in-polygon, same as partner dispatch.
+   */
+  serviceRegions: string[];
+  /**
+   * Where the plan can be bought.
+   * `online` = customer app/web only, `offline` = admin dashboard only (field sales),
+   * `both` = either. Offline plans never appear on the customer storefront.
+   */
+  saleChannel: 'online' | 'offline' | 'both';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -123,6 +142,28 @@ const PlanSchema = new Schema<IPlan>(
       required: false,
       min: [0, 'Extra discount cannot be negative'],
       max: [100, 'Extra discount cannot exceed 100']
+    },
+    // Defaults keep every existing plan publicly visible — nothing changes until ops opts a plan in.
+    visibility: {
+      type: String,
+      enum: ['public', 'restricted'],
+      default: 'public',
+      required: true
+    },
+    allowedPhoneNumbers: {
+      type: [String],
+      default: []
+    },
+    // Empty = sold in every region, which is how every existing plan behaves.
+    serviceRegions: {
+      type: [String],
+      default: []
+    },
+    saleChannel: {
+      type: String,
+      enum: ['online', 'offline', 'both'],
+      default: 'both',
+      required: true
     }
   },
   {

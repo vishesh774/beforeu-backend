@@ -27,7 +27,7 @@ const normalizeBookingId = (id: string): string => {
 /**
  * Common logic to prepare invoice data from a booking and its items
  */
-const prepareInvoiceData = (booking: any, orderItems: any[], settings: any) => {
+export const prepareInvoiceData = (booking: any, orderItems: any[], settings: any) => {
     // Gather paid extra charges from all items
     const paidExtraCharges = orderItems.flatMap(item =>
         (item.extraCharges || [])

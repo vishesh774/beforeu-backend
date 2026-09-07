@@ -344,5 +344,57 @@ describe('Auth Controller', () => {
                 statusCode: 404
             }));
         });
+
+        it('should schedule deletion rather than destroy data immediately', async () => {
+            const mockUser = { _id: VALID_ID, phone: '+919999999999', isDeleted: false };
+            (User.findById as any).mockResolvedValue(mockUser);
+            (User.findByIdAndUpdate as any).mockResolvedValue(mockUser);
+
+            await authController.deleteAccount(mockReq, mockRes, mockNext);
+
+            // The retention window is the whole point: nothing may be purged at request time.
+            expect(Address.deleteMany).not.toHaveBeenCalled();
+            expect(FamilyMember.deleteMany).not.toHaveBeenCalled();
+
+            const update = (User.findByIdAndUpdate as any).mock.calls.at(-1)[1];
+            expect(update.isActive).toBe(false);
+            expect(update.deletionScheduledFor).toBeInstanceOf(Date);
+            // Still recoverable — the row must not be marked deleted yet.
+            expect(update.isDeleted).toBeUndefined();
+        });
+
+        it('should reject deletion for an already purged account', async () => {
+            (User.findById as any).mockResolvedValue({ _id: VALID_ID, isDeleted: true });
+
+            await authController.deleteAccount(mockReq, mockRes, mockNext);
+
+            expect(mockNext).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+        });
+    });
+
+    describe('cancelAccountDeletion', () => {
+        it('should restore an account with a pending deletion', async () => {
+            (User.findById as any).mockResolvedValue({
+                _id: VALID_ID,
+                isDeleted: false,
+                deletionScheduledFor: new Date()
+            });
+            (User.findByIdAndUpdate as any).mockResolvedValue({});
+
+            await authController.cancelAccountDeletion(mockReq, mockRes, mockNext);
+
+            const update = (User.findByIdAndUpdate as any).mock.calls.at(-1)[1];
+            expect(update.isActive).toBe(true);
+            expect(update.$unset).toHaveProperty('deletionScheduledFor');
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+        });
+
+        it('should fail when there is no pending deletion', async () => {
+            (User.findById as any).mockResolvedValue({ _id: VALID_ID, isDeleted: false });
+
+            await authController.cancelAccountDeletion(mockReq, mockRes, mockNext);
+
+            expect(mockNext).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 400 }));
+        });
     });
 });

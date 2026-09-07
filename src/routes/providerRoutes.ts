@@ -11,7 +11,9 @@ import {
     getUnassignedSOSAlerts,
     acceptSOSAlert,
     holdJob,
-    resumeJob
+    resumeJob,
+    updateMyLocation,
+    updatePushToken
 } from '../controllers/providerController';
 import {
     addExtraCharge,
@@ -40,6 +42,8 @@ router.post('/jobs/:id/end', endJob);
 router.post('/jobs/:id/hold', holdJob);
 router.post('/jobs/:id/resume', resumeJob);
 router.get('/profile', getProfile);
+router.post('/location', updateMyLocation); // Live position while working
+router.post('/push-token', updatePushToken); // FCM token for SOS + job alerts
 
 // SOS routes (for partners assigned to SOS service)
 router.get('/sos/unassigned', getUnassignedSOSAlerts);

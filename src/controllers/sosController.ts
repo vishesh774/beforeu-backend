@@ -12,9 +12,14 @@ import UserPlan from '../models/UserPlan';
 import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
 import { formatTimeToIST } from '../utils/dateUtils';
-import { triggerSOSCallsToPartners } from '../services/sosCallService';
+import { triggerSOSCallsToPartners, triggerSOSCallsToFamily, getFamilyCallTargets } from '../services/sosCallService';
 
 import CustomerAppSettings from '../models/CustomerAppSettings';
+import User from '../models/User';
+import FamilyMember from '../models/FamilyMember';
+import { sendSOSAlertToFamily } from '../services/whatsappService';
+import { sendSOSPushToFamily } from '../services/expoPushService';
+import { normalizePhone } from '../utils/phoneUtils';
 
 export const triggerSOS = async (req: AuthRequest, res: Response) => {
     try {
@@ -221,6 +226,105 @@ export const triggerSOS = async (req: AuthRequest, res: Response) => {
 
         // Emit socket event to admins
         socketService.emitToAdmin('sos:alert', populatedAlert);
+
+        // Alert the customer's family members (fire-and-forget, never block the emergency).
+        // The plan holder is the owner of the family group, so resolve family off planHolderId
+        // rather than the triggering user — a family member raising an SOS must still reach
+        // everyone else on the plan.
+        (async () => {
+            try {
+                const triggeringUser = await User.findById(userIdObj).select('name phone');
+                const senderName = triggeringUser?.name || 'A BeforeU member';
+                const emergencyType = location.emergencyType || 'General Emergency';
+                const locationText = location.fullAddress || location.address
+                    || `${location.latitude}, ${location.longitude}`;
+
+                const familyMembers = await FamilyMember.find({ userId: planHolderId });
+
+                // WhatsApp and push go to everyone; the phone call goes only to the members the
+                // customer nominated as emergency contacts (or everyone, if none are nominated).
+                const callableMembers = getFamilyCallTargets(familyMembers);
+
+                // Also notify the plan holder themselves when someone else triggered the SOS.
+                const recipients: Array<{ name: string; phone: string }> = familyMembers
+                    .map(m => ({ name: m.name, phone: m.phone }));
+
+                if (!planHolderId.equals(userIdObj)) {
+                    const planHolder = await User.findById(planHolderId).select('name phone');
+                    if (planHolder?.phone) {
+                        recipients.push({ name: planHolder.name, phone: planHolder.phone });
+                    }
+                }
+
+                // Don't message the person who pressed the button.
+                const triggeringPhone = triggeringUser?.phone
+                    ? normalizePhone(triggeringUser.phone)
+                    : null;
+
+                const seen = new Set<string>();
+                const targets = recipients.filter(r => {
+                    if (!r.phone) return false;
+                    const normalized = normalizePhone(r.phone);
+                    if (!normalized || normalized === triggeringPhone || seen.has(normalized)) return false;
+                    seen.add(normalized);
+                    return true;
+                });
+
+                if (targets.length === 0) {
+                    console.log(`[triggerSOS] No family members to alert for SOS ${sosIdStr}`);
+                    return;
+                }
+
+                const results = await Promise.allSettled(
+                    targets.map(t => sendSOSAlertToFamily(t.phone, t.name, senderName, emergencyType, locationText))
+                );
+
+                const delivered = results.filter(r => r.status === 'fulfilled' && r.value).length;
+                console.log(`[triggerSOS] Family WhatsApp alerts for ${sosIdStr}: ${delivered}/${targets.length} sent`);
+
+                // In-app push to any family member who is also an app user. Family members are
+                // stored by phone, so match them back to User records to find their push tokens.
+                const targetPhones = targets.map(t => normalizePhone(t.phone)).filter(Boolean);
+                const familyUsers = await User.find({
+                    phone: { $in: targetPhones },
+                    pushToken: { $exists: true, $ne: null },
+                    isDeleted: false
+                }).select('pushToken');
+
+                const tokens = familyUsers
+                    .map(u => u.pushToken)
+                    .filter((token): token is string => !!token);
+
+                if (tokens.length > 0) {
+                    const pushResult = await sendSOSPushToFamily(tokens, {
+                        senderName,
+                        emergencyType,
+                        location: locationText,
+                        sosId: sosIdStr
+                    });
+                    console.log(`[triggerSOS] Family push alerts for ${sosIdStr}: ${pushResult.sent} sent, ${pushResult.failed} failed`);
+                }
+
+                // Voice call to the nominated emergency contacts. Rings in parallel, same as the
+                // partner dispatch. Deliberately last: a phone call is the loudest channel and
+                // must not delay the WhatsApp/push that reach everyone.
+                const callTargetPhones = new Set(
+                    callableMembers.map(m => normalizePhone(m.phone)).filter(Boolean)
+                );
+                const voiceTargets = targets.filter(t => callTargetPhones.has(normalizePhone(t.phone)));
+
+                if (voiceTargets.length > 0) {
+                    const callResult = await triggerSOSCallsToFamily(voiceTargets, sosIdStr);
+                    console.log(
+                        `[triggerSOS] Family calls for ${sosIdStr}: ` +
+                        `${callResult.callsTriggered}/${callResult.totalTargets} triggered` +
+                        `${callResult.usedFallbackFlow ? ' (using PARTNER IVR flow — family flow not configured)' : ''}`
+                    );
+                }
+            } catch (familyError) {
+                console.error(`[triggerSOS] Family SOS alert failed for ${sosIdStr}:`, familyError);
+            }
+        })();
 
         // Trigger phone calls to eligible SOS partners (fire-and-forget, non-blocking)
         triggerSOSCallsToPartners(

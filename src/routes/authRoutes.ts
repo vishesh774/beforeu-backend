@@ -1,5 +1,5 @@
 import express from 'express';
-import { signup, login, adminLogin, getMe, addAddress, updateAddress, deleteAddress, addFamilyMember, deleteFamilyMember, deleteAccount, sendEmailOTP, verifyEmailOTP, updateEmail } from '../controllers/authController';
+import { signup, login, adminLogin, getMe, addAddress, updateAddress, deleteAddress, addFamilyMember, updateFamilyMember, deleteFamilyMember, deleteAccount, cancelAccountDeletion, getAccountDeletionStatus, savePushToken, sendEmailOTP, verifyEmailOTP, updateEmail } from '../controllers/authController';
 import { sendOTP, verifyOTPController, completeProfile } from '../controllers/otpController';
 import { getAllPlans, purchasePlan, getMyPlanDetails } from '../controllers/planController';
 import { getAllFAQs } from '../controllers/faqController';
@@ -8,7 +8,7 @@ import { getAllRules } from '../controllers/serviceDefinitionsVisitRulesControll
 import { getAllTerms } from '../controllers/termsAndConditionsController';
 import { signupValidator, loginValidator } from '../validators/authValidator';
 import { validate } from '../middleware/validate';
-import { protect } from '../middleware/auth';
+import { protect, optionalAuth } from '../middleware/auth';
 
 const router = express.Router();
 
@@ -39,7 +39,7 @@ router.post('/admin/login', validate(loginValidator), adminLogin);
 
 // Protected routes
 router.get('/me', protect, getMe);
-router.get('/plans', getAllPlans); // Customer-facing plans endpoint (only active plans)
+router.get('/plans', optionalAuth, getAllPlans); // Customer-facing plans (active only; restricted plans shown only to their allow-list)
 router.post('/plans/purchase', protect, purchasePlan); // Purchase a plan
 router.get('/my-plan', protect, getMyPlanDetails); // Get current user's plan details with credits and savings
 router.get('/faqs', getAllFAQs); // Customer-facing FAQs endpoint (only active FAQs)
@@ -50,8 +50,12 @@ router.post('/addresses', protect, addAddress);
 router.put('/addresses/:id', protect, updateAddress);
 router.delete('/addresses/:id', protect, deleteAddress);
 router.post('/family-members', protect, addFamilyMember);
+router.patch('/family-members/:id', protect, updateFamilyMember);
 router.delete('/family-members/:id', protect, deleteFamilyMember);
-router.delete('/delete-account', protect, deleteAccount);
+router.delete('/delete-account', protect, deleteAccount); // Schedules deletion after a retention window
+router.post('/cancel-account-deletion', protect, cancelAccountDeletion);
+router.get('/account-deletion-status', protect, getAccountDeletionStatus);
+router.post('/push-token', protect, savePushToken); // Customer app Expo push token
 
 export default router;
 

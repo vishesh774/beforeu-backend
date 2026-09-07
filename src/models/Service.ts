@@ -9,6 +9,15 @@ export interface IService extends Document {
   rating: number;
   ratingCount: number;
   isActive: boolean;
+  /**
+   * Who actually delivers the service.
+   *
+   * `in_house` (default) = fulfilled by a BeforeU service partner, so a booking needs an available
+   * partner in the region. `third_party` = delivered by an external provider (a diagnostics lab,
+   * an eye-care chain), so bookings are accepted regardless of partner availability and no partner
+   * is auto-assigned. Ops coordinates those out of band.
+   */
+  fulfilmentType: 'in_house' | 'third_party';
   serviceRegions: string[]; // Array of service region IDs
   tags: string[]; // Array of service-level tags
   createdAt: Date;
@@ -62,6 +71,13 @@ const ServiceSchema = new Schema<IService>(
     isActive: {
       type: Boolean,
       default: true,
+      required: true
+    },
+    // Defaults keep every existing service in-house — behaviour is unchanged until ops opts one in.
+    fulfilmentType: {
+      type: String,
+      enum: ['in_house', 'third_party'],
+      default: 'in_house',
       required: true
     },
     serviceRegions: {

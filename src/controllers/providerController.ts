@@ -635,30 +635,47 @@ export const acceptSOSAlert = asyncHandler(async (req: AuthRequest, res: Respons
         return next(new AppError('This SOS has already been assigned or resolved', 400));
     }
 
-    // Check if already assigned
+    // Claim the job atomically.
+    //
+    // This used to read the order item, check `assignedPartnerId`, then save. Two partners tapping
+    // Accept at the same moment both saw it unassigned, both wrote, and both got a 200 — so two
+    // partners believed they owned the same emergency. The guard has to live in the query.
     if (alert.bookingId) {
-        const orderItem = await OrderItem.findOne({ bookingId: alert.bookingId });
-        if (orderItem?.assignedPartnerId) {
-            return next(new AppError('This SOS has already been accepted by another partner', 400));
-        }
+        const claimed = await OrderItem.findOneAndUpdate(
+            { bookingId: alert.bookingId, assignedPartnerId: null },
+            { $set: { assignedPartnerId: partner._id, status: BookingStatus.ASSIGNED } },
+            { new: true }
+        );
 
-        // Assign partner to the order item
-        if (orderItem) {
-            orderItem.assignedPartnerId = partner._id;
-            orderItem.status = BookingStatus.ASSIGNED;
-            await orderItem.save();
+        if (!claimed) {
+            // 409, not 400: the request was valid, it just lost the race. The app uses this to show
+            // "already taken" and refresh rather than treating it as an error.
+            return next(new AppError('This SOS has already been accepted by another partner', 409));
         }
     }
 
-    // Update SOS alert status
-    alert.status = SOSStatus.PARTNER_ASSIGNED;
-    alert.logs.push({
-        action: 'PARTNER_SELF_ASSIGNED',
-        timestamp: new Date(),
-        performedBy: partner._id as any,
-        details: `Partner ${partner.name} self-assigned via app`
-    });
-    await alert.save();
+    // Move the alert on, guarded on it still being open so a late second writer cannot regress it.
+    const alertClaimed = await SOSAlert.findOneAndUpdate(
+        { _id: alert._id, status: { $in: [SOSStatus.TRIGGERED, SOSStatus.ACKNOWLEDGED] } },
+        {
+            $set: { status: SOSStatus.PARTNER_ASSIGNED },
+            $push: {
+                logs: {
+                    action: 'PARTNER_SELF_ASSIGNED',
+                    timestamp: new Date(),
+                    performedBy: partner._id,
+                    details: `Partner ${partner.name} self-assigned via app`
+                }
+            }
+        },
+        { new: true }
+    );
+
+    if (!alertClaimed) {
+        return next(new AppError('This SOS has already been accepted by another partner', 409));
+    }
+
+    Object.assign(alert, alertClaimed.toObject());
 
     // Update partner's lastAssignedAt
     partner.lastAssignedAt = new Date();
@@ -748,5 +765,85 @@ export const resumeJob = asyncHandler(async (req: AuthRequest, res: Response, ne
     res.status(200).json({
         success: true,
         data: { job }
+    });
+});
+
+// @desc    Report the partner's current position while working
+// @route   POST /api/provider/location
+// @access  Private (ServicePartner)
+export const updateMyLocation = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const { latitude, longitude, accuracy } = req.body;
+    const user = req.user;
+
+    if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+        return next(new AppError('latitude and longitude are required and must be numbers', 400));
+    }
+
+    // Reject obviously bad fixes rather than storing them — (0,0) in particular is the classic
+    // "no GPS lock yet" value and would drop the partner into the Gulf of Guinea on the map.
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        return next(new AppError('Coordinates are out of range', 400));
+    }
+    if (latitude === 0 && longitude === 0) {
+        return next(new AppError('Invalid coordinates', 400));
+    }
+
+    const partner = await ServicePartner.findOne({ phone: user?.phone });
+    if (!partner) {
+        return next(new AppError('Partner profile not found', 404));
+    }
+
+    const updatedAt = new Date();
+    partner.lastLocation = { latitude, longitude, accuracy, updatedAt };
+    await partner.save();
+
+    // The partner's own active jobs, so the dashboard can place the pin against a booking.
+    const activeJobs = await OrderItem.find({
+        assignedPartnerId: partner._id,
+        status: { $in: ONGOING_BOOKING_STATUSES }
+    }).select('_id bookingId');
+
+    socketService.emitToAdmin('partner:location', {
+        partnerId: partner._id.toString(),
+        partnerName: partner.name,
+        latitude,
+        longitude,
+        accuracy,
+        updatedAt,
+        activeJobIds: activeJobs.map(j => j._id.toString()),
+        bookingIds: activeJobs.map(j => j.bookingId.toString())
+    });
+
+    res.status(200).json({
+        success: true,
+        data: { lastLocation: partner.lastLocation }
+    });
+});
+
+// @desc    Register/refresh the partner app's FCM push token
+// @route   POST /api/provider/push-token
+// @access  Private (ServicePartner)
+export const updatePushToken = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+    const { pushToken } = req.body;
+    const user = req.user;
+
+    if (!pushToken || typeof pushToken !== 'string' || pushToken.trim().length === 0) {
+        return next(new AppError('pushToken is required', 400));
+    }
+
+    // This is a raw FCM token, delivered through firebase-admin. Distinct from the customer app's
+    // Expo token on `User.pushToken`, which goes through the Expo Push API — do not mix them up.
+    const partner = await ServicePartner.findOne({ phone: user?.phone });
+    if (!partner) {
+        return next(new AppError('Partner profile not found', 404));
+    }
+
+    partner.pushToken = pushToken.trim();
+    partner.pushTokenUpdatedAt = new Date();
+    await partner.save();
+
+    res.status(200).json({
+        success: true,
+        message: 'Push token registered'
     });
 });

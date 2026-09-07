@@ -3,6 +3,7 @@ import { asyncHandler } from '../middleware/asyncHandler';
 import { AppError } from '../middleware/errorHandler';
 import Coupon from '../models/Coupon';
 import User from '../models/User';
+import { couponAppliesToServices, formatCouponDiscount, getCouponServiceIds } from '../utils/couponUtils';
 
 const normalizePhone = (p: any) => {
     if (!p || typeof p !== 'string') return '';
@@ -18,21 +19,31 @@ export const createCoupon = asyncHandler(async (req: Request, res: Response, nex
         code,
         description,
         type,
+        discountType,
         discountValue,
         appliesTo,
         serviceId,
+        serviceIds,
         allowedPhoneNumbers,
         maxUses,
         expiryDate,
         isActive
     } = req.body;
 
-    // Basic validation that might not be caught by mongoose
-    if (appliesTo === 'service' && !serviceId) {
-        return next(new AppError('Service ID is required when coupon applies to service', 400));
+    // Accept either the legacy single serviceId or the newer serviceIds array.
+    // An empty list is valid and means "applies to every service".
+    const resolvedServiceIds: string[] = Array.isArray(serviceIds)
+        ? serviceIds.filter((id: unknown) => typeof id === 'string' && id.trim().length > 0)
+        : (serviceId ? [serviceId] : []);
+
+    const resolvedDiscountType = discountType === 'fixed' ? 'fixed' : 'percentage';
+
+    if (typeof discountValue !== 'number' || discountValue < 0) {
+        return next(new AppError('discountValue must be a non-negative number', 400));
     }
-
-
+    if (resolvedDiscountType === 'percentage' && discountValue > 100) {
+        return next(new AppError('Percentage discount cannot exceed 100', 400));
+    }
 
     const couponExists = await Coupon.findOne({ code });
     if (couponExists) {
@@ -43,9 +54,10 @@ export const createCoupon = asyncHandler(async (req: Request, res: Response, nex
         code,
         description,
         type,
+        discountType: resolvedDiscountType,
         discountValue,
         appliesTo,
-        serviceId,
+        serviceIds: resolvedServiceIds,
         allowedPhoneNumbers: allowedPhoneNumbers ? allowedPhoneNumbers.map((p: string) => ({
             phone: normalizePhone(p),
             expiryDate: expiryDate ? new Date(expiryDate) : undefined
@@ -213,7 +225,7 @@ export const getCouponsWithUsers = asyncHandler(async (req: Request, res: Respon
                     couponCode: coupon.code,
                     couponType: 'restricted',
                     appliesTo: coupon.appliesTo,
-                    discount: `${coupon.discountValue}%`,
+                    discount: formatCouponDiscount(coupon),
                     userName: u.name,
                     userEmail: u.email,
                     userPhone: u.phone,
@@ -228,7 +240,7 @@ export const getCouponsWithUsers = asyncHandler(async (req: Request, res: Respon
                 couponCode: coupon.code,
                 couponType: 'public',
                 appliesTo: coupon.appliesTo,
-                discount: `${coupon.discountValue}%`,
+                discount: formatCouponDiscount(coupon),
                 userName: 'Public Use',
                 userEmail: 'N/A',
                 userPhone: 'N/A',
@@ -434,13 +446,9 @@ export const validateCoupon = asyncHandler(async (req: any, res: Response, next:
         // If coupon.serviceId is set, inputs must match.
         // However, if the cart has multiple items, validation logic might be complex.
         // Assuming single service checkout or strictly passing the serviceId being validated.
-        if (serviceId && coupon.serviceId && coupon.serviceId !== serviceId) {
+        // A coupon may cover several services; an empty list means it applies to all of them.
+        if (serviceId && !couponAppliesToServices(coupon, [serviceId])) {
             return next(new AppError('This coupon is not applicable for this service.', 400));
-        }
-        // If serviceId not provided in request but coupon is specific
-        if (!serviceId && coupon.serviceId) {
-            // Frontend might call validate generally. We can warn.
-            // But usually validation happens at cart.
         }
     } else if (coupon.appliesTo === 'plan') {
         if (!isPlanPurchase) {
@@ -456,6 +464,8 @@ export const validateCoupon = asyncHandler(async (req: any, res: Response, next:
                 code: coupon.code,
                 discountType: coupon.discountType,
                 discountValue: coupon.discountValue,
+                discountLabel: formatCouponDiscount(coupon),
+                serviceIds: getCouponServiceIds(coupon),
                 appliesTo: coupon.appliesTo
             }
         }
@@ -534,9 +544,11 @@ export const updateCoupon = asyncHandler(async (req: Request, res: Response, nex
         code,
         description,
         type,
+        discountType,
         discountValue,
         appliesTo,
         serviceId,
+        serviceIds,
         allowedPhoneNumbers,
         maxUses,
         expiryDate,
@@ -547,6 +559,18 @@ export const updateCoupon = asyncHandler(async (req: Request, res: Response, nex
 
     if (!coupon) {
         return next(new AppError('Coupon not found', 404));
+    }
+
+    const effectiveDiscountType = discountType !== undefined
+        ? (discountType === 'fixed' ? 'fixed' : 'percentage')
+        : coupon.discountType;
+    const effectiveDiscountValue = discountValue !== undefined ? discountValue : coupon.discountValue;
+
+    if (discountValue !== undefined && (typeof discountValue !== 'number' || discountValue < 0)) {
+        return next(new AppError('discountValue must be a non-negative number', 400));
+    }
+    if (effectiveDiscountType === 'percentage' && effectiveDiscountValue > 100) {
+        return next(new AppError('Percentage discount cannot exceed 100', 400));
     }
 
     // If code is being changed, check if new code already exists
@@ -560,9 +584,17 @@ export const updateCoupon = asyncHandler(async (req: Request, res: Response, nex
 
     if (description !== undefined) coupon.description = description;
     if (type !== undefined) coupon.type = type;
+    if (discountType !== undefined) coupon.discountType = effectiveDiscountType;
     if (discountValue !== undefined) coupon.discountValue = discountValue;
     if (appliesTo !== undefined) coupon.appliesTo = appliesTo;
-    if (serviceId !== undefined) coupon.serviceId = serviceId;
+    // Writing serviceIds clears the legacy single-service field so the two can't disagree.
+    if (serviceIds !== undefined && Array.isArray(serviceIds)) {
+        coupon.serviceIds = serviceIds.filter((id: unknown) => typeof id === 'string' && id.trim().length > 0);
+        coupon.serviceId = undefined;
+    } else if (serviceId !== undefined) {
+        coupon.serviceIds = serviceId ? [serviceId] : [];
+        coupon.serviceId = undefined;
+    }
     if (maxUses !== undefined) coupon.maxUses = maxUses;
     if (expiryDate !== undefined) coupon.expiryDate = expiryDate;
     if (isActive !== undefined) coupon.isActive = isActive;

@@ -4,10 +4,16 @@ export interface ICoupon extends Document {
     code: string;
     description?: string;
     type: 'public' | 'restricted'; // public = FreeToUse, restricted = Assigned to phone numbers
-    discountType: 'percentage'; // We only support percentage for now (including 100%)
-    discountValue: number; // 0-100
+    discountType: 'percentage' | 'fixed'; // percentage = 0-100, fixed = flat rupee amount
+    discountValue: number; // 0-100 when percentage, a rupee amount when fixed
     appliesTo: 'plan' | 'service';
-    serviceId?: string; // Required if appliesTo === 'service'
+    /**
+     * Services this coupon applies to. Empty means "every service".
+     * `serviceId` is the legacy single-service field, kept so existing coupons keep working;
+     * read through getCouponServiceIds() rather than either field directly.
+     */
+    serviceIds: string[];
+    serviceId?: string;
     allowedPhoneNumbers: Array<{
         phone: string;
         expiryDate?: Date;
@@ -48,7 +54,7 @@ const CouponSchema = new Schema<ICoupon>(
         },
         discountType: {
             type: String,
-            enum: ['percentage'],
+            enum: ['percentage', 'fixed'],
             required: true,
             default: 'percentage'
         },
@@ -56,17 +62,30 @@ const CouponSchema = new Schema<ICoupon>(
             type: Number,
             required: true,
             min: [0, 'Discount value cannot be negative'],
-            max: [100, 'Discount value cannot exceed 100']
+            validate: {
+                validator: function (this: unknown, value: number) {
+                    // A percentage is capped at 100; a fixed rupee amount is not.
+                    const doc = this as { discountType?: string } | null;
+                    return doc?.discountType !== 'percentage' || value <= 100;
+                },
+                message: 'Percentage discount cannot exceed 100'
+            }
         },
         appliesTo: {
             type: String,
             enum: ['plan', 'service'],
             required: true
         },
+        // Empty array = applies to every service. One coupon can now cover several services
+        // (e.g. a single code for electrician + plumber + carpenter).
+        serviceIds: {
+            type: [String],
+            default: []
+        },
+        // Legacy single-service field. New writes populate serviceIds; this stays for old documents.
         serviceId: {
             type: String,
-            trim: true,
-            required: function (this: ICoupon) { return this.appliesTo === 'service'; }
+            trim: true
         },
         allowedPhoneNumbers: {
             type: [Schema.Types.Mixed],

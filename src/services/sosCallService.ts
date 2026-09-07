@@ -20,6 +20,17 @@ import { isPointInPolygon } from '../utils/pointInPolygon';
 // Tata Teleservices SmartFlo config
 const SMARTFLO_API_URL = 'https://api-smartflo.tatateleservices.com/v1/click_to_call_support';
 const SMARTFLO_API_KEY = process.env.SMARTFLO_API_KEY;
+
+/**
+ * Separate key for the family-alert IVR.
+ *
+ * The click-to-call request carries no payload — the script the recipient hears is decided by the
+ * SmartFlo flow bound to the API key. So a distinct family script ("your family member has raised
+ * an emergency") requires a distinct key. Until one is provisioned this falls back to the partner
+ * key, which means family members hear the *partner* script; the fallback is logged loudly rather
+ * than silently, because it is wrong-sounding rather than broken.
+ */
+const SMARTFLO_FAMILY_API_KEY = process.env.SMARTFLO_FAMILY_API_KEY;
 const CUSTOMER_RING_TIMEOUT = 30;
 
 interface SOSCallLocation {
@@ -61,7 +72,7 @@ function normalizePhoneFor91(phone: string): string {
 /**
  * Trigger a single click-to-call via Tata Teleservices SmartFlo API
  */
-async function triggerClickToCall(phoneNumber: string): Promise<void> {
+async function triggerClickToCall(phoneNumber: string, apiKey = SMARTFLO_API_KEY): Promise<void> {
     const normalizedNumber = normalizePhoneFor91(phoneNumber);
     console.log(`[SOSCallService] Triggering click-to-call for: ${normalizedNumber}`);
 
@@ -71,7 +82,7 @@ async function triggerClickToCall(phoneNumber: string): Promise<void> {
             customer_number: normalizedNumber,
             customer_ring_timeout: CUSTOMER_RING_TIMEOUT,
             async: 1,
-            api_key: SMARTFLO_API_KEY
+            api_key: apiKey
         },
         {
             headers: {
@@ -262,6 +273,113 @@ export async function triggerSOSCallsToPartners(
     } catch (error: any) {
         console.error('[SOSCallService] Critical error in SOS call workflow:', error);
     }
+
+    return result;
+}
+
+// ============================================================
+// FAMILY ALERT CALLS
+// ============================================================
+
+export interface FamilyCallTarget {
+    name: string;
+    phone: string;
+    relation?: string;
+}
+
+export interface FamilyCallResult {
+    totalTargets: number;
+    callsTriggered: number;
+    callsFailed: number;
+    usedFallbackFlow: boolean;
+    details: Array<{
+        name: string;
+        phone: string;
+        success: boolean;
+        error?: string;
+    }>;
+}
+
+/**
+ * Decide which family members to phone.
+ *
+ * If the customer has flagged anyone as an emergency contact, only those are called — that is an
+ * explicit choice and should be honoured. If nobody is flagged (the common case, since the flag is
+ * new), everyone is called. Failing open matters more than precision in an emergency.
+ */
+export function getFamilyCallTargets<T extends { isEmergencyContact?: boolean }>(members: T[]): T[] {
+    const flagged = members.filter(m => m.isEmergencyContact === true);
+    return flagged.length > 0 ? flagged : members;
+}
+
+/**
+ * Phone the customer's family members about an active SOS.
+ *
+ * Rings everyone in parallel — the same shape as the partner workflow. Sequential ring-until-answer
+ * would need SmartFlo call-status callbacks, which we do not receive today.
+ *
+ * Never throws: this runs fire-and-forget from triggerSOS and must not be able to interrupt the
+ * emergency, which is already being dispatched to partners.
+ */
+export async function triggerSOSCallsToFamily(
+    targets: FamilyCallTarget[],
+    sosId?: string
+): Promise<FamilyCallResult> {
+    const usedFallbackFlow = !SMARTFLO_FAMILY_API_KEY;
+
+    const result: FamilyCallResult = {
+        totalTargets: targets.length,
+        callsTriggered: 0,
+        callsFailed: 0,
+        usedFallbackFlow,
+        details: []
+    };
+
+    if (targets.length === 0) {
+        console.log(`[SOSCallService] No family members to call${sosId ? ` for SOS ${sosId}` : ''}.`);
+        return result;
+    }
+
+    if (usedFallbackFlow) {
+        console.warn(
+            '[SOSCallService] SMARTFLO_FAMILY_API_KEY is not set — family members will hear the ' +
+            'PARTNER IVR script. Provision a family flow in SmartFlo and set the key.'
+        );
+    }
+
+    const apiKey = SMARTFLO_FAMILY_API_KEY || SMARTFLO_API_KEY;
+
+    console.log(
+        `[SOSCallService] Calling ${targets.length} family member(s)` +
+        `${sosId ? ` for SOS ${sosId}` : ''}...`
+    );
+
+    await Promise.all(targets.map(async target => {
+        const detail = {
+            name: target.name,
+            phone: target.phone,
+            success: false,
+            error: undefined as string | undefined
+        };
+
+        try {
+            await triggerClickToCall(target.phone, apiKey);
+            detail.success = true;
+            result.callsTriggered++;
+            console.log(`[SOSCallService] ✅ Family call triggered to ${target.name} (${target.phone})`);
+        } catch (error: any) {
+            detail.error = error?.message || 'Unknown error';
+            result.callsFailed++;
+            console.error(`[SOSCallService] ❌ Failed to call family member ${target.name}:`, detail.error);
+        }
+
+        result.details.push(detail);
+    }));
+
+    console.log(
+        `[SOSCallService] Family call workflow complete. ` +
+        `Triggered: ${result.callsTriggered}, Failed: ${result.callsFailed}`
+    );
 
     return result;
 }

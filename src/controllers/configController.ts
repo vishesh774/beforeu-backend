@@ -5,6 +5,23 @@ import AppConfig from '../models/AppConfig';
 import CompanySettings from '../models/CompanySettings';
 import { AdminRequest } from '../middleware/adminAuth';
 
+/**
+ * Render a slot's wall-clock label, e.g. "9:00 AM".
+ *
+ * Reads the same local fields `setHours()` wrote rather than going through toLocaleTimeString().
+ * The slot Dates here are built with the shifted-IST trick (`getISTTime`), so their *instant* is
+ * meaningless — only their local fields carry the intended IST wall clock. Formatting them with a
+ * locale formatter silently depended on the server running in UTC, which nothing guarantees.
+ */
+const formatSlotLabel = (date: Date): string => {
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const period = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 || 12;
+  return `${displayHours}:${String(minutes).padStart(2, '0')} ${period}`;
+};
+
+
 // @desc    Get app configuration (public endpoint)
 // @route   GET /api/config
 // @access  Public
@@ -154,7 +171,7 @@ export const getBookingSlots = asyncHandler(async (_req: Request, res: Response)
 
       // Use numeric comparison
       if (currentSlotTime.getTime() > nowIST.getTime() + bufferMs) {
-        slotLabels.push(currentSlotTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }));
+        slotLabels.push(formatSlotLabel(currentSlotTime));
       } else if (currentSlotTime.getDate() !== nowIST.getDate()) {
         // Future dates: always add (since we loop from today forward)
         // Actually, "currentDate" loop covers this.
@@ -163,7 +180,7 @@ export const getBookingSlots = asyncHandler(async (_req: Request, res: Response)
         // If i=1 (tomorrow), currentSlotTime > nowIST is definitively true.
         // But we need to make sure we don't filter out 9am tomorrow just because 9am < 14pm today?
         // No, getTime() handles full timestamp.
-        slotLabels.push(currentSlotTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }));
+        slotLabels.push(formatSlotLabel(currentSlotTime));
       }
 
       // Increment

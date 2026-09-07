@@ -8,7 +8,6 @@ import { generateToken } from '../utils/generateToken';
 import { AppError } from '../middleware/errorHandler';
 import { AuthRequest } from '../middleware/auth';
 import UserPlan from '../models/UserPlan';
-import UserCredits from '../models/UserCredits';
 import Plan from '../models/Plan';
 import { aggregateUserData, initializeUserRecords, getPlanHolderId } from '../utils/userHelpers';
 import { sendAddedAsFamilyMessage } from '../services/whatsappService';
@@ -17,6 +16,9 @@ import { createCRMLead } from '../services/crmService';
 import { assignCRMTask } from '../services/crmTaskService';
 import { createAndSendEmailOTP, verifyEmailOTP as verifyOTPService } from '../services/otpService';
 import { signupWithReferral } from './referralController';
+import { getRetentionDays } from '../utils/accountDeletion';
+import { formatDateToIST } from '../utils/dateUtils';
+import { isExpoPushToken } from '../services/expoPushService';
 
 interface SignupRequest extends Request {
   body: {
@@ -487,7 +489,7 @@ export const deleteAddress = asyncHandler(async (req: AuthRequest, res: Response
 // @route   POST /api/auth/family-members
 // @access  Private
 export const addFamilyMember = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
-  const { name, relation, phone, email } = req.body;
+  const { name, relation, phone, email, isEmergencyContact } = req.body;
   const userId = req.user?.id;
 
   if (!userId) {
@@ -534,7 +536,8 @@ export const addFamilyMember = asyncHandler(async (req: AuthRequest, res: Respon
     name,
     relation,
     phone,
-    email: email || undefined
+    email: email || undefined,
+    isEmergencyContact: isEmergencyContact === true
   });
 
   // Aggregate updated user data for the current user
@@ -627,35 +630,100 @@ export const deleteAccount = asyncHandler(async (req: AuthRequest, res: Response
     return next(new AppError('User not found', 404));
   }
 
-  // 1. Delete all addresses
-  await Address.deleteMany({ userId: userIdObj });
+  if (user.isDeleted) {
+    return next(new AppError('This account has already been deleted', 400));
+  }
 
-  // 2. Delete all family members
-  await FamilyMember.deleteMany({ userId: userIdObj });
+  // Deletion is deferred, not immediate. Nothing is destroyed here — the account is deactivated and
+  // scheduled, and the scheduler purges it once the retention window elapses. This gives the
+  // customer a cancellation window and keeps records available for billing questions in the interim.
+  const retentionDays = getRetentionDays();
+  const requestedAt = new Date();
+  const scheduledFor = new Date(requestedAt);
+  scheduledFor.setDate(scheduledFor.getDate() + retentionDays);
 
-  // 3. Delete user plan and credits
-  await UserPlan.deleteMany({ userId: userIdObj });
-  await UserCredits.deleteMany({ userId: userIdObj });
+  const { reason } = req.body || {};
 
-  // 4. Anonymize and deactivate user
-  // We append timestamp to phone/email to allow re-registration with same credentials
-  const timestamp = Date.now();
-  const anonymizedPhone = `deleted_${timestamp}_${user.phone}`;
-  const anonymizedEmail = user.email ? `deleted_${timestamp}_${user.email}` : undefined;
-
-  // Use findByIdAndUpdate with runValidators: false because the anonymized phone/email 
-  // will fail the regex match validation in the User model.
   await User.findByIdAndUpdate(userIdObj, {
     isActive: false,
-    isDeleted: true,
-    phone: anonymizedPhone,
-    email: anonymizedEmail,
-    name: `Deleted User ${timestamp}`
+    deletionRequestedAt: requestedAt,
+    deletionScheduledFor: scheduledFor,
+    deletionReason: typeof reason === 'string' ? reason.trim().slice(0, 500) : undefined
   }, { runValidators: false });
 
   res.status(200).json({
     success: true,
-    message: 'Account deleted successfully'
+    message: `Account scheduled for deletion. You can restore it by logging in before ${formatDateToIST(scheduledFor)}.`,
+    data: {
+      deletionRequestedAt: requestedAt,
+      deletionScheduledFor: scheduledFor,
+      retentionDays,
+      cancellable: true
+    }
+  });
+});
+
+// @desc    Cancel a pending account deletion and reactivate the account
+// @route   POST /api/auth/cancel-account-deletion
+// @access  Private
+export const cancelAccountDeletion = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  const userIdObj = new mongoose.Types.ObjectId(userId);
+  const user = await User.findById(userIdObj);
+
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  // Past the window the data is already gone, so there is nothing to restore.
+  if (user.isDeleted) {
+    return next(new AppError('This account has already been permanently deleted', 400));
+  }
+
+  if (!user.deletionScheduledFor) {
+    return next(new AppError('No pending deletion request for this account', 400));
+  }
+
+  await User.findByIdAndUpdate(userIdObj, {
+    isActive: true,
+    $unset: { deletionRequestedAt: '', deletionScheduledFor: '', deletionReason: '' }
+  }, { runValidators: false });
+
+  res.status(200).json({
+    success: true,
+    message: 'Account restored. Welcome back.'
+  });
+});
+
+// @desc    Account deletion status and the retention policy the app should display
+// @route   GET /api/auth/account-deletion-status
+// @access  Private
+export const getAccountDeletionStatus = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  const user = await User.findById(new mongoose.Types.ObjectId(userId));
+  if (!user) {
+    return next(new AppError('User not found', 404));
+  }
+
+  res.status(200).json({
+    success: true,
+    data: {
+      retentionDays: getRetentionDays(),
+      deletionRequested: !!user.deletionScheduledFor,
+      deletionRequestedAt: user.deletionRequestedAt || null,
+      deletionScheduledFor: user.deletionScheduledFor || null,
+      cancellable: !!user.deletionScheduledFor && !user.isDeleted
+    }
   });
 });
 
@@ -776,3 +844,79 @@ export const updateEmail = asyncHandler(async (req: AuthRequest, res: Response, 
   });
 });
 
+// @desc    Register/refresh the customer app's Expo push token
+// @route   POST /api/auth/push-token
+// @access  Private
+export const savePushToken = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  const { pushToken } = req.body;
+
+  if (!pushToken || typeof pushToken !== 'string') {
+    return next(new AppError('pushToken is required', 400));
+  }
+
+  // The customer app registers via expo-notifications, so this is an Expo token, not FCM.
+  // Reject anything else early rather than storing a token we can never deliver to.
+  if (!isExpoPushToken(pushToken)) {
+    return next(new AppError('pushToken must be an Expo push token', 400));
+  }
+
+  await User.findByIdAndUpdate(
+    new mongoose.Types.ObjectId(userId),
+    { pushToken, pushTokenUpdatedAt: new Date() },
+    { runValidators: false }
+  );
+
+  res.status(200).json({
+    success: true,
+    message: 'Push token saved'
+  });
+});
+
+// @desc    Update a family member (currently only the emergency-contact flag)
+// @route   PATCH /api/auth/family-members/:id
+// @access  Private
+export const updateFamilyMember = asyncHandler(async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const userId = req.user?.id;
+  if (!userId) {
+    return next(new AppError('User not authenticated', 401));
+  }
+
+  const { isEmergencyContact } = req.body;
+
+  if (isEmergencyContact !== undefined && typeof isEmergencyContact !== 'boolean') {
+    return next(new AppError('isEmergencyContact must be a boolean', 400));
+  }
+
+  // Family members hang off the plan holder, so resolve that before looking up.
+  const planHolderId = await getPlanHolderId(new mongoose.Types.ObjectId(userId));
+
+  const familyMember = await FamilyMember.findOne({ userId: planHolderId, id: req.params.id });
+  if (!familyMember) {
+    return next(new AppError('Family member not found', 404));
+  }
+
+  if (isEmergencyContact !== undefined) {
+    familyMember.isEmergencyContact = isEmergencyContact;
+  }
+
+  await familyMember.save();
+
+  res.status(200).json({
+    success: true,
+    data: {
+      familyMember: {
+        id: familyMember.id,
+        name: familyMember.name,
+        relation: familyMember.relation,
+        phone: familyMember.phone,
+        email: familyMember.email,
+        isEmergencyContact: familyMember.isEmergencyContact
+      }
+    }
+  });
+});

@@ -103,8 +103,9 @@ export const verifyOTPController = asyncHandler(async (req: Request, res: Respon
     return;
   }
 
-  // Check if user is active
-  if (!user.isActive) {
+  // Check if user is active. An account inside its deletion retention window is intentionally
+  // let through: logging back in is how the customer cancels the deletion and restores it.
+  if (!user.isActive && !user.deletionScheduledFor) {
     return next(new AppError('Your account has been deactivated. Please contact support.', 403));
   }
 
@@ -182,8 +183,8 @@ export const completeProfile = asyncHandler(async (req: Request, res: Response, 
   let user = await User.findOne({ phone: normalizedPhone });
 
   if (user) {
-    // Check if user is active
-    if (!user.isActive) {
+    // Check if user is active (see the note above about pending-deletion accounts).
+    if (!user.isActive && !user.deletionScheduledFor) {
       return next(new AppError('Your account has been deactivated. Please contact support.', 403));
     }
 
