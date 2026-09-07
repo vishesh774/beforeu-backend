@@ -50,7 +50,8 @@ const defaultOrigins = [
   'http://localhost:5173',
   'http://localhost:5174',
   'http://localhost:19000', // Expo
-  'http://localhost:8081'   // React Native/Metro
+  'http://localhost:8081',   // React Native/Metro
+  'https://beforeu-admin-dashboard-staging.vercel.app'
 ];
 
 const allowedOrigins = process.env.CORS_ORIGIN
