@@ -25,6 +25,14 @@ import { errorHandler, notFound } from './middleware/errorHandler';
 // Load environment variables
 dotenv.config();
 
+// TEMPORARY DEBUG — full, unredacted environment dump.
+//
+// This prints every secret the process holds (JWT_SECRET, the MONGODB_URI credentials,
+// RAZORPAY_API_SECRET, FIREBASE_PRIVATE_KEY, SMTP_PASS, WhatsApp/SmartFlo/CRM tokens) to stdout,
+// which on Fly is the retained platform log stream. Remove before merging, and rotate anything it
+// prints once you are done debugging.
+console.log('🔎 process.env:', JSON.stringify(process.env, null, 2));
+
 console.log('🚀 Starting BeforeU Backend Server...');
 console.log(`📁 Environment: ${process.env.NODE_ENV || 'development'}`);
 console.log(`🔌 Port: ${process.env.PORT || 5000}`);
